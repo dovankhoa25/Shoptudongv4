@@ -129,9 +129,12 @@ class GemOrderController extends Controller
         $result = DB::transaction(function () use ($order, $validated): array {
             $lockedOrder = GemTransaction::query()->lockForUpdate()->findOrFail($order->id);
 
-            if ($lockedOrder->status === GemTransaction::STATUS_REFUNDED || $lockedOrder->refunded_at !== null) {
+            if (! in_array($lockedOrder->status, [
+                GemTransaction::STATUS_PENDING,
+                GemTransaction::STATUS_PROCESSING,
+            ], true) || $lockedOrder->refunded_at !== null) {
                 throw ValidationException::withMessages([
-                    'status' => 'Đơn này đã được hoàn tiền trước đó.',
+                    'status' => 'Chỉ có thể hoàn tiền cho đơn ngọc đang chờ hoặc đang xử lý.',
                 ]);
             }
 

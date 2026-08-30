@@ -43,7 +43,7 @@ class GemOrderResource extends JsonResource
             'status' => $this->status,
             'status_label' => $this->getStatusLabel(),
             'status_color' => $this->getStatusColor(),
-            'can_refund' => $this->status !== 'refunded'
+            'can_refund' => in_array($this->status, ['pending', 'processing'], true)
                 && $this->refunded_at === null
                 && (int) $this->amount_vnd > 0,
             'can_complete' => $this->status === 'processing',

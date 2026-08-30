@@ -10,6 +10,7 @@ use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Event;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Spatie\Permission\Models\Role;
 use Tests\TestCase;
 
@@ -120,7 +121,8 @@ class GemOrderWorkflowTest extends TestCase
         ]);
     }
 
-    public function test_admin_can_refund_any_unrefunded_gem_order_only_once(): void
+    #[DataProvider('refundableStatuses')]
+    public function test_admin_can_refund_pending_or_processing_gem_order_only_once(string $status): void
     {
         Role::findOrCreate('super-admin', 'web');
         $admin = User::factory()->create();
@@ -128,7 +130,7 @@ class GemOrderWorkflowTest extends TestCase
         $server = $this->server();
         $customer = User::factory()->create(['balance' => 50000]);
         $order = $this->gemOrder($customer, $server, [
-            'status' => GemTransaction::STATUS_COMPLETED,
+            'status' => $status,
             'updated_by' => 'app',
         ]);
 
@@ -169,6 +171,43 @@ class GemOrderWorkflowTest extends TestCase
         $this->assertSame(1, Transaction::query()
             ->where('idempotency_key', "gem-order-refund:{$order->id}")
             ->count());
+    }
+
+    public function test_admin_cannot_refund_a_completed_gem_order(): void
+    {
+        Role::findOrCreate('super-admin', 'web');
+        $admin = User::factory()->create();
+        $admin->assignRole('super-admin');
+        $server = $this->server();
+        $customer = User::factory()->create(['balance' => 50000]);
+        $order = $this->gemOrder($customer, $server, [
+            'status' => GemTransaction::STATUS_COMPLETED,
+            'updated_by' => 'app',
+        ]);
+
+        $this->actingAs($admin)
+            ->from("/admin/gem-orders/{$order->id}")
+            ->post("/admin/gem-orders/{$order->id}/refund", [
+                'refund_reason' => 'Thử hoàn đơn đã hoàn thành',
+                'refund_amount' => 10000,
+            ])
+            ->assertRedirect("/admin/gem-orders/{$order->id}")
+            ->assertSessionHasErrors('status');
+
+        $this->assertSame(GemTransaction::STATUS_COMPLETED, $order->refresh()->status);
+        $this->assertNull($order->refunded_at);
+        $this->assertSame(50000, (int) $customer->refresh()->balance);
+        $this->assertDatabaseMissing('transactions', [
+            'idempotency_key' => "gem-order-refund:{$order->id}",
+        ]);
+    }
+
+    public static function refundableStatuses(): array
+    {
+        return [
+            'pending' => [GemTransaction::STATUS_PENDING],
+            'processing' => [GemTransaction::STATUS_PROCESSING],
+        ];
     }
 
     private function server(): Server
