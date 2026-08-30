@@ -1,0 +1,239 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+    --bg-tertiary: #e2e8f0;
+    --text-muted: #94a3b8;
+    --text-secondary: #64748b;
+  }
+
+  .dark {
+    color-scheme: dark;
+    --bg-tertiary: #0f172a;
+    --text-muted: #475569;
+    --text-secondary: #64748b;
+  }
+
+   /* Custom scrollbar for better UX */
+/* Thêm vào global CSS */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 5px; /* Cho horizontal scrollbar */
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-tertiary);
+  border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--text-muted);
+  border-radius: 2px; /* Fix typo: 1x -> 1px */
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}
+
+/* Cho corner khi có cả 2 scrollbar */
+::-webkit-scrollbar-corner {
+  background: var(--bg-tertiary);
+}
+
+
+
+
+}
+
+
+
+/* resources/css/app.css */
+
+/* Admin Header Tabs Styling */
+.admin-header-tabs {
+    margin: 0 !important;
+}
+
+.admin-header-tabs .ant-tabs-nav {
+    margin: 0 !important;
+    padding: 6px 0 !important;
+}
+
+.admin-header-tabs .ant-tabs-nav::before {
+    border: none !important;
+}
+
+.admin-header-tabs .ant-tabs-tab {
+    padding: 6px 14px !important;
+    margin: 0 4px !important;
+    border-radius: 8px !important;
+    border: 1px solid transparent !important;
+    background: transparent !important;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    font-size: 12px !important;
+}
+
+.admin-header-tabs .ant-tabs-tab:hover {
+    background: rgba(59, 130, 246, 0.08) !important;
+    border-color: rgba(59, 130, 246, 0.2) !important;
+}
+
+.admin-header-tabs .ant-tabs-tab-active {
+    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%) !important;
+    border-color: transparent !important;
+    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.25) !important;
+}
+
+.admin-header-tabs .ant-tabs-tab-active .ant-tabs-tab-btn {
+    color: white !important;
+}
+
+.admin-header-tabs .ant-tabs-tab-remove {
+    margin-left: 6px !important;
+    padding: 2px !important;
+    color: inherit !important;
+    opacity: 0 !important;
+    transition: all 0.2s !important;
+    border-radius: 4px !important;
+}
+
+.admin-header-tabs .ant-tabs-tab:hover .ant-tabs-tab-remove {
+    opacity: 0.7 !important;
+}
+
+.admin-header-tabs .ant-tabs-tab:hover .ant-tabs-tab-remove:hover {
+    opacity: 1 !important;
+    background: rgba(0, 0, 0, 0.06) !important;
+}
+
+.admin-header-tabs .ant-tabs-tab-active .ant-tabs-tab-remove {
+    color: white !important;
+}
+
+.admin-header-tabs .ant-tabs-tab-active .ant-tabs-tab-remove:hover {
+    background: rgba(255, 255, 255, 0.2) !important;
+    opacity: 1 !important;
+}
+
+.admin-header-tabs .ant-tabs-nav-operations {
+    display: none !important;
+}
+
+.admin-header-tabs .ant-tabs-ink-bar {
+    display: none !important;
+}
+
+.admin-header-tabs .ant-tabs-content-holder {
+    display: none !important;
+}
+
+/* Dark mode */
+.dark .admin-header-tabs .ant-tabs-tab {
+    color: #94a3b8;
+}
+
+.dark .admin-header-tabs .ant-tabs-tab:hover {
+    color: #e2e8f0;
+    background: rgba(59, 130, 246, 0.12) !important;
+    border-color: rgba(59, 130, 246, 0.3) !important;
+}
+
+.dark .admin-header-tabs .ant-tabs-tab-active {
+    color: white !important;
+}
+
+.dark .admin-header-tabs .ant-tabs-tab:hover .ant-tabs-tab-remove:hover {
+    background: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Scrollbar hidden */
+.scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+    display: none;
+}
+
+/*
+ * Dark-mode compatibility for legacy admin screens.
+ * New components should keep declaring their own dark:* utilities; these rules
+ * only fill the gap when an older component has no explicit dark variant.
+ */
+.dark .admin-shell .text-gray-900:not([class*="dark:text-"]) {
+    color: #f1f5f9;
+}
+
+.dark .admin-shell .text-gray-800:not([class*="dark:text-"]) {
+    color: #e2e8f0;
+}
+
+.dark .admin-shell .text-gray-700:not([class*="dark:text-"]) {
+    color: #cbd5e1;
+}
+
+.dark .admin-shell .text-gray-600:not([class*="dark:text-"]) {
+    color: #94a3b8;
+}
+
+.dark .admin-shell .text-slate-900:not([class*="dark:text-"]) {
+    color: #f1f5f9;
+}
+
+.dark .admin-shell .text-slate-800:not([class*="dark:text-"]) {
+    color: #e2e8f0;
+}
+
+.dark .admin-shell .text-slate-700:not([class*="dark:text-"]) {
+    color: #cbd5e1;
+}
+
+.dark .admin-shell .text-slate-600:not([class*="dark:text-"]) {
+    color: #94a3b8;
+}
+
+.dark .admin-shell .bg-white:not([class*="dark:bg-"]) {
+    background-color: #0f172a;
+}
+
+.dark .admin-shell .bg-gray-50:not([class*="dark:bg-"]) {
+    background-color: #111827;
+}
+
+.dark .admin-shell .bg-gray-100:not([class*="dark:bg-"]) {
+    background-color: #1e293b;
+}
+
+.dark .admin-shell .bg-slate-50:not([class*="dark:bg-"]) {
+    background-color: #111827;
+}
+
+.dark .admin-shell .bg-slate-100:not([class*="dark:bg-"]) {
+    background-color: #1e293b;
+}
+
+.dark .admin-shell .border-gray-100:not([class*="dark:border-"]),
+.dark .admin-shell .border-gray-200:not([class*="dark:border-"]),
+.dark .admin-shell .border-gray-300:not([class*="dark:border-"]) {
+    border-color: #334155;
+}
+
+.dark .admin-shell .border-slate-100:not([class*="dark:border-"]),
+.dark .admin-shell .border-slate-200:not([class*="dark:border-"]),
+.dark .admin-shell .border-slate-300:not([class*="dark:border-"]) {
+    border-color: #334155;
+}
+
+.dark .admin-shell .divide-gray-100:not([class*="dark:divide-"]) > :not([hidden]) ~ :not([hidden]),
+.dark .admin-shell .divide-gray-200:not([class*="dark:divide-"]) > :not([hidden]) ~ :not([hidden]) {
+    border-color: #334155;
+}
+
+.dark .admin-shell .hover\:bg-gray-50:hover:not([class*="dark:hover:bg-"]),
+.dark .admin-shell .hover\:bg-gray-100:hover:not([class*="dark:hover:bg-"]) {
+    background-color: #1e293b;
+}

@@ -1,0 +1,40 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('bots', function (Blueprint $table): void {
+
+            $table->bigIncrements('id');
+            $table->string('name', 191)->nullable();
+            $table->string('account_name', 191);
+            $table->string('account_password', 191);
+            $table->string('type', 150);
+            $table->unsignedBigInteger('server_id');
+            $table->tinyInteger('server_game_id')->nullable();
+            $table->bigInteger('gold_bar_qty')->default(0);
+            $table->bigInteger('gold_qty')->default(0);
+            $table->string('map_name', 191)->nullable();
+            $table->string('map_id', 191);
+            $table->string('area_number', 191);
+            $table->string('coordinates', 100)->nullable();
+            $table->string('proxy', 150)->nullable();
+            $table->enum('updated_by', ['web', 'app'])->default('web');
+            $table->timestamp('last_synced_at')->nullable();
+            $table->boolean('status')->default(true);
+            $table->timestamp('created_at')->nullable();
+            $table->timestamp('updated_at')->nullable();
+            $table->index(['server_id'], 'bots_server_id_index');
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('bots');
+    }
+};
