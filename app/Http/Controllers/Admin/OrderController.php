@@ -334,7 +334,7 @@ class OrderController extends Controller
     {
         $idempotencyKey = 'gold-order-refund:'.$order->id;
 
-        if (Transaction::query()->where('idempotency_key', $idempotencyKey)->lockForUpdate()->exists()) {
+        if (Transaction::withoutUserOwnedScope()->where('idempotency_key', $idempotencyKey)->lockForUpdate()->exists()) {
             if ($order->refunded_at === null) {
                 $order->forceFill(['refunded_at' => now()])->save();
             }
@@ -364,7 +364,7 @@ class OrderController extends Controller
         $user->forceFill(['balance' => $balanceAfter])->save();
         $order->forceFill(['refunded_at' => now()])->save();
 
-        Transaction::query()->create([
+        Transaction::withoutUserOwnedScope()->create([
             'user_id' => $user->id,
             'performed_by' => auth()->id(),
             'type' => Transaction::TYPE_GOLD_ORDER_REFUND,

@@ -192,7 +192,7 @@ class ApiOrderController extends Controller
                 'gold_qty' => $actualGoldQty, // ✅ Sử dụng actualGoldQty
                 'gold_bar_qty' => $goldBarQty,
                 // 'pure_gold_qty'       => $pureGoldQty,
-                'pure_gold_qty' => $pureGoldQty,
+                'pure_gold_qty' => 0,
                 'price_at_transaction' => $pricePer,
                 'status' => 'pending',
                 'bot_id' => null,

@@ -456,7 +456,7 @@ class GemOrderController extends Controller
         string $reason,
         string $idempotencyKey,
     ): array {
-        $existing = Transaction::query()
+        $existing = Transaction::withoutUserOwnedScope()
             ->where('idempotency_key', $idempotencyKey)
             ->lockForUpdate()
             ->first();

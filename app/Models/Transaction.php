@@ -2,12 +2,15 @@
 
 namespace App\Models;
 
+use App\Traits\HasUserOwnedScope;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 
 class Transaction extends Model
 {
+    use HasUserOwnedScope;
+
     public const TYPE_ADMIN_CREDIT = 'admin_credit';
 
     public const TYPE_ADMIN_DEBIT = 'admin_debit';

@@ -9,5 +9,21 @@ use Illuminate\Support\Facades\Auth;
 
 class ReceiverOwnedScope implements Scope
 {
-    public function apply(Builder $builder, Model $model) {}
+    public function apply(Builder $builder, Model $model): void
+    {
+        if (! Auth::check() || ! request()->is('admin', 'admin/*')) {
+            return;
+        }
+
+        $user = Auth::user();
+
+        if ($user->canViewAllAdminData()) {
+            return;
+        }
+
+        $builder->where(
+            $model->qualifyColumn('receiver_id'),
+            $user->getAuthIdentifier(),
+        );
+    }
 }

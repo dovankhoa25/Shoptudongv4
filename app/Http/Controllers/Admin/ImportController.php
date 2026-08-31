@@ -272,7 +272,7 @@ class ImportController extends Controller
     {
         $idempotencyKey = 'gold-import-credit:'.$order->id;
 
-        if (Transaction::query()->where('idempotency_key', $idempotencyKey)->lockForUpdate()->exists()) {
+        if (Transaction::withoutUserOwnedScope()->where('idempotency_key', $idempotencyKey)->lockForUpdate()->exists()) {
             return;
         }
 
@@ -289,7 +289,7 @@ class ImportController extends Controller
         $balanceAfter = $balanceBefore + $amount;
         $user->forceFill(['balance' => $balanceAfter])->save();
 
-        Transaction::query()->create([
+        Transaction::withoutUserOwnedScope()->create([
             'user_id' => $user->id,
             'performed_by' => auth()->id(),
             'type' => Transaction::TYPE_GOLD_IMPORT_CREDIT,

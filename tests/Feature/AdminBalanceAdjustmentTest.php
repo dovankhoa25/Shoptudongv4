@@ -206,6 +206,56 @@ class AdminBalanceAdjustmentTest extends TestCase
                 ->where('transactions.data.0.balance_after', 15000));
     }
 
+    public function test_non_admin_with_transaction_permission_only_sees_their_own_history(): void
+    {
+        $viewer = User::factory()->create();
+        $otherUser = User::factory()->create();
+        $viewer->assignRole('ctv');
+        $viewer->givePermissionTo(AppPermission::TransactionsView->value);
+
+        $ownTransaction = $this->recordTransaction($viewer, 5000);
+        $this->recordTransaction($otherUser, 999999);
+
+        $this->actingAs($viewer)
+            ->get(route('admin.transactions.index'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Admin/Transactions/Index')
+                ->has('transactions.data', 1)
+                ->where('transactions.data.0.id', $ownTransaction->id)
+                ->where('transactions.data.0.user.id', $viewer->id));
+    }
+
+    public function test_super_admin_can_view_every_users_transaction_history(): void
+    {
+        $superAdmin = User::factory()->create();
+        $superAdmin->assignRole(Role::findOrCreate('super-admin', 'web'));
+        $firstUser = User::factory()->create();
+        $secondUser = User::factory()->create();
+
+        $this->recordTransaction($firstUser, 5000);
+        $this->recordTransaction($secondUser, 10000);
+
+        $this->actingAs($superAdmin)
+            ->get(route('admin.transactions.index'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Admin/Transactions/Index')
+                ->has('transactions.data', 2));
+    }
+
+    private function recordTransaction(User $user, int $amount): Transaction
+    {
+        return Transaction::query()->create([
+            'user_id' => $user->id,
+            'type' => Transaction::TYPE_ADMIN_CREDIT,
+            'amount' => $amount,
+            'balance_before' => 0,
+            'balance_after' => $amount,
+            'description' => 'Giao dịch kiểm thử phạm vi dữ liệu.',
+        ]);
+    }
+
     /** @return array{User, User} */
     private function actorAndTarget(int $balance): array
     {

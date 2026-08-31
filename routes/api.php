@@ -145,7 +145,9 @@ Route::middleware(['auth:api', 'throttle:60,1'])->group(function (): void {
         Route::get('/history-card', [CardHistoryController::class, 'index'])
             ->middleware(CheckToken::using('profile:read'))
             ->name('history-card');
-        Route::get('/balance-history', [UserController::class, 'getUserBalanceHistory'])->name('balance-history');
+        Route::get('/balance-history', [UserController::class, 'getUserBalanceHistory'])
+            ->middleware(CheckToken::using('profile:read'))
+            ->name('balance-history');
         Route::get('/services', [UserController::class, 'getUserServiceHistory'])->name('services');
         Route::get('/service-orders/stats', [UserController::class, 'getUserServiceStats'])
             ->name('service-orders.stats');

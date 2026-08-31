@@ -77,7 +77,7 @@ class AuthenticatedSessionController extends Controller
             'meta' => ['provider' => 'password', 'channel' => 'web'],
         ]);
 
-        return redirect()->intended(route('admin.dashboard', absolute: false));
+        return redirect()->intended(route('admin.home', absolute: false));
     }
 
     public function destroy(Request $request): RedirectResponse

@@ -82,6 +82,24 @@ class BalanceTransactionApiTest extends TestCase
         $this->getJson('/api/profile/balance-transactions')->assertForbidden();
     }
 
+    public function test_legacy_balance_history_only_returns_the_authenticated_users_transactions(): void
+    {
+        $user = User::factory()->create();
+        $otherUser = User::factory()->create();
+        $ownTransaction = $this->transaction($user, null, Transaction::TYPE_BANK_DEPOSIT, 5000, 0, 5000);
+        $this->transaction($otherUser, null, Transaction::TYPE_BANK_DEPOSIT, 999999, 0, 999999);
+
+        Passport::actingAs($user, ['profile:read']);
+
+        $this->getJson('/api/profile/balance-history')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $ownTransaction->id);
+
+        Passport::actingAs(User::factory()->create(), ['balance:deposit']);
+        $this->getJson('/api/profile/balance-history')->assertForbidden();
+    }
+
     private function transaction(
         User $user,
         ?User $performer,

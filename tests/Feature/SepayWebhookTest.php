@@ -92,6 +92,27 @@ class SepayWebhookTest extends TestCase
         $this->assertSame(20000, (int) $user->refresh()->balance);
     }
 
+    public function test_multiple_payment_prefixes_can_be_configured(): void
+    {
+        config()->set('services.sepay.transfer_prefix', 'shop, vang');
+        $shopUser = User::factory()->create(['balance' => 0]);
+        $vangUser = User::factory()->create(['balance' => 0]);
+
+        $shopPayload = $this->payload($shopUser, 100, 20000);
+        $vangPayload = $this->payload($vangUser, 101, 30000);
+        $vangPayload['code'] = 'vang'.$vangUser->id;
+
+        $this->postJson('/api/webhook/sepay', $shopPayload, $this->authorization())
+            ->assertOk()
+            ->assertJsonPath('success', true);
+        $this->postJson('/api/webhook/sepay', $vangPayload, $this->authorization())
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertSame(20000, (int) $shopUser->refresh()->balance);
+        $this->assertSame(30000, (int) $vangUser->refresh()->balance);
+    }
+
     public function test_webhook_rejects_bad_credentials_outgoing_money_and_invalid_code(): void
     {
         $user = User::factory()->create(['balance' => 0]);

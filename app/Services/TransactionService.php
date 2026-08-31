@@ -57,10 +57,10 @@ class TransactionService
         ];
 
         if ($idempotencyKey === null || trim($idempotencyKey) === '') {
-            return Transaction::query()->create($attributes);
+            return Transaction::withoutUserOwnedScope()->create($attributes);
         }
 
-        $transaction = Transaction::query()->createOrFirst(
+        $transaction = Transaction::withoutUserOwnedScope()->createOrFirst(
             ['idempotency_key' => trim($idempotencyKey)],
             $attributes,
         );
@@ -120,7 +120,7 @@ class TransactionService
             $signedAmount = $direction === 'credit' ? $amount : -$amount;
             $description = trim($description);
 
-            $existing = Transaction::query()
+            $existing = Transaction::withoutUserOwnedScope()
                 ->where('idempotency_key', $idempotencyKey)
                 ->lockForUpdate()
                 ->first();
@@ -156,7 +156,7 @@ class TransactionService
             $balanceAfter = $balanceBefore + $signedAmount;
             $user->forceFill(['balance' => $balanceAfter])->save();
 
-            $transaction = Transaction::query()->create([
+            $transaction = Transaction::withoutUserOwnedScope()->create([
                 'user_id' => $user->id,
                 'performed_by' => $actor->id,
                 'type' => $type,

@@ -79,7 +79,7 @@ class SepayWebhookService
                 'amount' => $amount,
                 'balance_before' => $balanceBefore,
                 'balance_after' => $balanceAfter,
-                'description' => 'Nạp tiền qua '.$payload['gateway'].' - SePay #'.$providerTransactionId.'.',
+                'description' => 'Nạp tiền qua '.$payload['gateway'].' - atm #'.$providerTransactionId.'.',
                 'related_type' => AtmTopup::class,
                 'related_id' => (string) $topup->id,
                 'idempotency_key' => 'sepay:'.$providerTransactionId,
@@ -100,15 +100,22 @@ class SepayWebhookService
 
     private function userIdFromPaymentCode(string $code): int
     {
-        $prefix = trim((string) config('services.sepay.transfer_prefix', 'shop'));
+        $prefixes = array_values(array_unique(array_filter(
+            array_map('trim', explode(',', (string) config('services.sepay.transfer_prefix', 'shop'))),
+            static fn (string $prefix): bool => $prefix !== '',
+        )));
 
-        if ($prefix === '') {
+        if ($prefixes === []) {
             throw ValidationException::withMessages([
                 'code' => 'Tiền tố mã thanh toán chưa được cấu hình.',
             ]);
         }
 
-        $pattern = '/^'.preg_quote($prefix, '/').'([1-9][0-9]{0,18})$/i';
+        $escapedPrefixes = array_map(
+            static fn (string $prefix): string => preg_quote($prefix, '/'),
+            $prefixes,
+        );
+        $pattern = '/^(?:'.implode('|', $escapedPrefixes).')([1-9][0-9]{0,18})$/i';
 
         if (preg_match($pattern, trim($code), $matches) !== 1) {
             throw ValidationException::withMessages([
