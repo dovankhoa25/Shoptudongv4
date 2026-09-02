@@ -34,6 +34,11 @@ class Card extends Model
         'note',
         'loaded_type',
         'difference',
+        'partner_status',
+        'partner_message',
+        'partner_http_status',
+        'partner_response_at',
+        'callback_received_at',
     ];
 
     protected $casts = [
@@ -44,6 +49,10 @@ class Card extends Model
         'difference' => 'decimal:2',
         'discount_rate_at_time' => 'decimal:2',
         'loaded_type' => 'boolean',
+        'partner_status' => 'integer',
+        'partner_http_status' => 'integer',
+        'partner_response_at' => 'datetime',
+        'callback_received_at' => 'datetime',
     ];
 
     public function cardType(): BelongsTo

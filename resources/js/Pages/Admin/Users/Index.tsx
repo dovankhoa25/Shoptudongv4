@@ -77,6 +77,12 @@ export default function UserPage() {
 
     const columns: Column<IUser>[] = useMemo(() => [
         {
+            key: 'id',
+            title: 'ID',
+            width: 90,
+            render: (value: number) => <span className="font-mono text-xs font-medium text-slate-500 dark:text-slate-400">#{value}</span>,
+        },
+        {
             key: 'username',
             title: 'Người dùng',
             width: 260,
@@ -152,7 +158,7 @@ export default function UserPage() {
                 columns={columns}
                 loading={loading}
                 searchValue={filters.search}
-                searchPlaceholder="Tìm theo username hoặc email..."
+                searchPlaceholder="Tìm username, email hoặc #ID chính xác..."
                 title="Quản lý người dùng"
                 description={`${users.meta.total.toLocaleString('vi-VN')} tài khoản trong hệ thống`}
                 addButtonText="Thêm người dùng"

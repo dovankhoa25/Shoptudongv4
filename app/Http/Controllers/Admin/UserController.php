@@ -34,6 +34,14 @@ class UserController extends Controller
         $users = User::query()
             ->with('roles:id,name')
             ->when($filters['search'] ?? null, function ($query, string $search) {
+                $search = trim($search);
+
+                if (preg_match('/^#(\d+)$/', $search, $matches) === 1) {
+                    $query->whereKey((int) $matches[1]);
+
+                    return;
+                }
+
                 $query->where(function ($query) use ($search) {
                     $query->where('username', 'like', "%{$search}%")
                         ->orWhere('email', 'like', "%{$search}%");

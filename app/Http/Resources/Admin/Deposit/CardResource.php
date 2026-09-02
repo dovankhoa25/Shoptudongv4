@@ -32,6 +32,11 @@ class CardResource extends JsonResource
             'status' => $this->status,
             'loaded_type' => (bool) $this->loaded_type,
             'note' => $this->note,
+            'partner_status' => $this->partner_status,
+            'partner_message' => $this->partner_message,
+            'partner_http_status' => $this->partner_http_status,
+            'partner_response_at' => $this->partner_response_at?->toISOString(),
+            'callback_received_at' => $this->callback_received_at?->toISOString(),
             'created_at' => $this->created_at?->toISOString(),
             'updated_at' => $this->updated_at?->toISOString(),
         ];

@@ -12,6 +12,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 use RuntimeException;
@@ -65,31 +66,69 @@ class CardRechargeService
             'command' => 'charging',
         ];
 
+        $startedAt = microtime(true);
+        $httpStatus = null;
+        $responseSuccessful = false;
+
         try {
             $response = Http::timeout((int) config('services.card_partner.timeout', 30))
                 ->asForm()
                 ->post($url, $payload);
+            $httpStatus = $response->status();
+            $responseSuccessful = $response->successful();
             $result = $response->json();
 
-            if (! $response->successful() || ! is_array($result)) {
-                $result = ['status' => 100, 'message' => 'Đối tác không phản hồi hợp lệ.'];
+            if (! is_array($result)) {
+                $result = ['message' => 'Đối tác không phản hồi JSON hợp lệ.'];
             }
         } catch (Throwable $exception) {
             Log::warning('Card partner request failed', [
                 'card_id' => $card->id,
-                'error' => $exception->getMessage(),
+                'exception' => $exception::class,
+                'error' => Str::limit($exception->getMessage(), 500, ''),
             ]);
             $result = ['status' => 100, 'message' => 'Không thể kết nối đối tác.'];
         }
 
-        $partnerStatus = (int) ($result['status'] ?? 99);
+        $reportedPartnerStatus = is_numeric($result['status'] ?? null)
+            ? (int) $result['status']
+            : null;
+        $partnerStatus = $responseSuccessful
+            ? ($reportedPartnerStatus ?? 100)
+            : 100;
+        $partnerMessage = $this->normalizePartnerMessage(
+            $result['message'] ?? null,
+            [$card->code, $card->serial],
+        );
+        $transId = is_scalar($result['trans_id'] ?? null)
+            ? (string) $result['trans_id']
+            : null;
+
+        $card->update([
+            'partner_status' => $reportedPartnerStatus ?? $partnerStatus,
+            'partner_message' => $partnerMessage,
+            'partner_http_status' => $httpStatus,
+            'partner_response_at' => now(),
+        ]);
+
+        Log::info('Card partner response received', [
+            'card_id' => $card->id,
+            'request_id' => $card->id,
+            'http_status' => $httpStatus,
+            'partner_status' => $reportedPartnerStatus,
+            'partner_message' => $partnerMessage,
+            'trans_id' => $transId,
+            'response_time_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+        ]);
+
+        $result['status'] = $partnerStatus;
 
         if ($partnerStatus === 1 || $partnerStatus === 2) {
             return $this->applyResult($card->id, $result)['card'];
         }
 
         $card->update([
-            'trans_id' => $result['trans_id'] ?? null,
+            'trans_id' => $transId,
             'status' => $this->mapStatus($partnerStatus),
             'value' => $result['value'] ?? null,
             'amount_api' => $result['amount'] ?? null,
@@ -114,6 +153,11 @@ class CardRechargeService
         $expectedSign = md5($partnerKey.$payload['code'].$payload['serial']);
 
         if (! hash_equals($expectedSign, (string) $payload['callback_sign'])) {
+            Log::warning('Card partner callback signature rejected', [
+                'request_id' => $payload['request_id'] ?? null,
+                'partner_status' => $payload['status'] ?? null,
+            ]);
+
             throw new InvalidArgumentException('Invalid signature');
         }
 
@@ -127,20 +171,48 @@ class CardRechargeService
             ->first();
 
         if (! $card) {
+            Log::warning('Card partner callback card not found', [
+                'request_id' => $payload['request_id'] ?? null,
+                'partner_status' => $payload['status'] ?? null,
+            ]);
+
             throw (new ModelNotFoundException)->setModel(Card::class);
         }
 
-        return $this->applyResult($card->id, $payload);
+        $result = $this->applyResult($card->id, $payload, true);
+
+        Log::info('Card partner callback processed', [
+            'card_id' => $card->id,
+            'request_id' => $payload['request_id'] ?? null,
+            'partner_status' => (int) $payload['status'],
+            'partner_message' => $result['card']->partner_message,
+            'trans_id' => is_scalar($payload['trans_id'] ?? null) ? (string) $payload['trans_id'] : null,
+            'credited' => $result['credited'],
+            'duplicate' => $result['duplicate'],
+        ]);
+
+        return $result;
     }
 
     /**
      * @param  array<string, mixed>  $result
      * @return array{card: Card, credited: bool, duplicate: bool, balance: int|null}
      */
-    private function applyResult(int $cardId, array $result): array
+    private function applyResult(int $cardId, array $result, bool $fromCallback = false): array
     {
-        return DB::transaction(function () use ($cardId, $result): array {
+        return DB::transaction(function () use ($cardId, $result, $fromCallback): array {
             $card = Card::query()->with('cardType')->lockForUpdate()->findOrFail($cardId);
+
+            if ($fromCallback) {
+                $card->forceFill([
+                    'partner_status' => (int) ($result['status'] ?? 100),
+                    'partner_message' => $this->normalizePartnerMessage(
+                        $result['message'] ?? null,
+                        [$card->code, $card->serial],
+                    ),
+                    'callback_received_at' => now(),
+                ])->save();
+            }
 
             if ($card->status === Card::STATUS_COMPLETED || (int) $card->amount_user > 0) {
                 return [
@@ -232,8 +304,8 @@ class CardRechargeService
         return match ($partnerStatus) {
             1 => Card::STATUS_COMPLETED,
             2 => Card::STATUS_CONFIRMED,
-            3, 100 => Card::STATUS_FAILED,
-            default => Card::STATUS_PENDING,
+            99 => Card::STATUS_PENDING,
+            default => Card::STATUS_FAILED,
         };
     }
 
@@ -248,8 +320,26 @@ class CardRechargeService
             4 => 'Hệ thống đối tác đang bảo trì',
             99 => 'Thẻ đang chờ xử lý',
             100 => 'Gửi thẻ thất bại',
-            default => $message ?: 'Trạng thái không xác định',
+            default => 'Đối tác từ chối xử lý thẻ',
         };
+    }
+
+    /** @param  array<int, mixed>  $sensitiveValues */
+    private function normalizePartnerMessage(mixed $message, array $sensitiveValues = []): ?string
+    {
+        if (! is_scalar($message)) {
+            return null;
+        }
+
+        $normalized = trim(preg_replace('/\s+/', ' ', (string) $message) ?? '');
+
+        foreach ($sensitiveValues as $sensitiveValue) {
+            if (is_scalar($sensitiveValue) && (string) $sensitiveValue !== '') {
+                $normalized = str_replace((string) $sensitiveValue, '[REDACTED]', $normalized);
+            }
+        }
+
+        return $normalized === '' ? null : Str::limit($normalized, 1000, '');
     }
 
     private function isDuplicateCard(QueryException $exception): bool

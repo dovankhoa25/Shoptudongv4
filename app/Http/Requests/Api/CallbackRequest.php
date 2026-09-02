@@ -3,7 +3,6 @@
 namespace App\Http\Requests\Api;
 
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Validation\Rule;
 
 class CallbackRequest extends FormRequest
 {
@@ -19,7 +18,7 @@ class CallbackRequest extends FormRequest
             'code' => ['required', 'string', 'max:255'],
             'serial' => ['required', 'string', 'max:255'],
             'callback_sign' => ['required', 'string', 'size:32'],
-            'status' => ['required', 'integer', Rule::in([1, 2, 3, 4, 99, 100])],
+            'status' => ['required', 'integer', 'between:0,999'],
             'value' => ['nullable', 'integer', 'min:0', 'max:999999999999'],
             'amount' => ['nullable', 'integer', 'min:0', 'max:999999999999'],
             'declared_value' => ['nullable', 'integer', 'min:0', 'max:999999999999'],

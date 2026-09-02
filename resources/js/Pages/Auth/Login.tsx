@@ -188,7 +188,7 @@ export default function Login({
                                         type="text"
                                         name="username"
                                         value={data.username}
-                                        className={`block w-full rounded-xl border bg-slate-50 py-3.5 pl-12 pr-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:bg-white focus:ring-4 ${
+                                        className={`block w-full rounded-xl border bg-slate-50 py-3.5 pl-12 pr-4 text-base text-slate-900 outline-none transition placeholder:text-slate-400 focus:bg-white focus:ring-4 sm:text-sm ${
                                             errors.username
                                                 ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-100'
                                                 : 'border-slate-200 hover:border-slate-300 focus:border-blue-500 focus:ring-blue-100'
@@ -228,7 +228,7 @@ export default function Login({
                                         type={showPassword ? 'text' : 'password'}
                                         name="password"
                                         value={data.password}
-                                        className={`block w-full rounded-xl border bg-slate-50 py-3.5 pl-12 pr-12 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:bg-white focus:ring-4 ${
+                                        className={`block w-full rounded-xl border bg-slate-50 py-3.5 pl-12 pr-12 text-base text-slate-900 outline-none transition placeholder:text-slate-400 focus:bg-white focus:ring-4 sm:text-sm ${
                                             errors.password
                                                 ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-100'
                                                 : 'border-slate-200 hover:border-slate-300 focus:border-blue-500 focus:ring-blue-100'

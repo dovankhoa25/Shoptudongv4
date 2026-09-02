@@ -49,6 +49,11 @@ class AdminDepositManagementTest extends TestCase
             'trans_id' => 'CARD-PARTNER-1',
             'status' => Card::STATUS_COMPLETED,
             'loaded_type' => false,
+            'partner_status' => 1,
+            'partner_message' => 'SUCCESS',
+            'partner_http_status' => 200,
+            'partner_response_at' => now()->subSecond(),
+            'callback_received_at' => now(),
         ]);
         $topup = $this->bankTopup($customer);
 
@@ -63,6 +68,11 @@ class AdminDepositManagementTest extends TestCase
                 ->where('cards.data.0.user.id', $customer->id)
                 ->where('cards.data.0.code', '******7890')
                 ->where('cards.data.0.serial', '********3456')
+                ->where('cards.data.0.partner_status', 1)
+                ->where('cards.data.0.partner_message', 'SUCCESS')
+                ->where('cards.data.0.partner_http_status', 200)
+                ->has('cards.data.0.partner_response_at')
+                ->has('cards.data.0.callback_received_at')
                 ->where('bankTopups.data.0.id', $topup->id)
                 ->where('bankTopups.data.0.account_number', '******2845')
                 ->where('stats.card_total', 80000)

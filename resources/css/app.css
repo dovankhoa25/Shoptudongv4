@@ -237,3 +237,55 @@
 .dark .admin-shell .hover\:bg-gray-100:hover:not([class*="dark:hover:bg-"]) {
     background-color: #1e293b;
 }
+
+/*
+ * Ant Design and Headless UI render modals in portals below <body>, outside
+ * .admin-shell. Keep legacy Tailwind colors readable there until each older
+ * modal has its own dark:* utilities.
+ */
+.dark :is(.ant-modal-root, [data-headlessui-portal]) .text-gray-900:not([class*="dark:text-"]),
+.dark :is(.ant-modal-root, [data-headlessui-portal]) .text-slate-900:not([class*="dark:text-"]) {
+    color: #f1f5f9;
+}
+
+.dark :is(.ant-modal-root, [data-headlessui-portal]) .text-gray-800:not([class*="dark:text-"]),
+.dark :is(.ant-modal-root, [data-headlessui-portal]) .text-slate-800:not([class*="dark:text-"]) {
+    color: #e2e8f0;
+}
+
+.dark :is(.ant-modal-root, [data-headlessui-portal]) .text-gray-700:not([class*="dark:text-"]),
+.dark :is(.ant-modal-root, [data-headlessui-portal]) .text-slate-700:not([class*="dark:text-"]) {
+    color: #cbd5e1;
+}
+
+.dark :is(.ant-modal-root, [data-headlessui-portal]) .text-gray-600:not([class*="dark:text-"]),
+.dark :is(.ant-modal-root, [data-headlessui-portal]) .text-slate-600:not([class*="dark:text-"]) {
+    color: #94a3b8;
+}
+
+.dark :is(.ant-modal-root, [data-headlessui-portal]) .bg-white:not([class*="dark:bg-"]) {
+    background-color: #0f172a;
+}
+
+.dark :is(.ant-modal-root, [data-headlessui-portal]) .bg-gray-50:not([class*="dark:bg-"]),
+.dark :is(.ant-modal-root, [data-headlessui-portal]) .bg-slate-50:not([class*="dark:bg-"]) {
+    background-color: #111827;
+}
+
+.dark :is(.ant-modal-root, [data-headlessui-portal]) .bg-gray-100:not([class*="dark:bg-"]),
+.dark :is(.ant-modal-root, [data-headlessui-portal]) .bg-slate-100:not([class*="dark:bg-"]) {
+    background-color: #1e293b;
+}
+
+.dark :is(.ant-modal-root, [data-headlessui-portal]) .border-gray-100:not([class*="dark:border-"]),
+.dark :is(.ant-modal-root, [data-headlessui-portal]) .border-gray-200:not([class*="dark:border-"]),
+.dark :is(.ant-modal-root, [data-headlessui-portal]) .border-gray-300:not([class*="dark:border-"]),
+.dark :is(.ant-modal-root, [data-headlessui-portal]) .border-slate-100:not([class*="dark:border-"]),
+.dark :is(.ant-modal-root, [data-headlessui-portal]) .border-slate-200:not([class*="dark:border-"]),
+.dark :is(.ant-modal-root, [data-headlessui-portal]) .border-slate-300:not([class*="dark:border-"]) {
+    border-color: #334155;
+}
+
+.dark :is(.ant-modal-root, [data-headlessui-portal]) [class*="bg-gradient-"] {
+    background-image: linear-gradient(to right, #1e293b, #0f172a);
+}

@@ -33,6 +33,11 @@ class CardHistoryApiTest extends TestCase
             'code' => 'USER-CODE-002',
             'serial' => 'USER-SERIAL-002',
             'status' => Card::STATUS_PENDING,
+            'partner_status' => 99,
+            'partner_message' => 'PENDING',
+            'partner_http_status' => 200,
+            'partner_response_at' => now(),
+            'callback_received_at' => now(),
         ]);
         $this->createCard($otherUser, $cardType, [
             'code' => 'OTHER-CODE-001',
@@ -53,6 +58,11 @@ class CardHistoryApiTest extends TestCase
             ->assertJsonPath('data.0.status.value', Card::STATUS_PENDING)
             ->assertJsonPath('data.0.status.label', 'Đang chờ xử lý')
             ->assertJsonPath('data.0.code', 'USER-CODE-002')
+            ->assertJsonMissingPath('data.0.partner_status')
+            ->assertJsonMissingPath('data.0.partner_message')
+            ->assertJsonMissingPath('data.0.partner_http_status')
+            ->assertJsonMissingPath('data.0.partner_response_at')
+            ->assertJsonMissingPath('data.0.callback_received_at')
             ->assertJsonPath('meta.total', 2)
             ->assertJsonMissing(['code' => 'OTHER-CODE-001']);
 

@@ -261,7 +261,11 @@ Route::prefix('admin')
 
                 // Route::get('/{category}/attributes', [CategoryController::class, 'getAttributes']);
                 Route::get('/{category}/attributes', [CategoryController::class, 'getAttributes'])
-                    ->middleware(Permission::middleware(Permission::AttributesView, Permission::AttributesManage))
+                    ->middleware(Permission::middleware(
+                        Permission::AttributesView,
+                        Permission::AttributesManage,
+                        Permission::NicksManage,
+                    ))
                     ->name('attributes');
             });
 

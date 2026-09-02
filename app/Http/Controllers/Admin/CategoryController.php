@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Enums\Permission as AppPermission;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Category\StoreCategoryRequest;
 use App\Http\Requests\Category\UpdateCategoryRequest;
@@ -106,8 +107,24 @@ class CategoryController extends Controller
         return response()->json(GameTypeResource::collection($gameTypes));
     }
 
-    public function getAttributes(Category $category)
+    public function getAttributes(Request $request, Category $category)
     {
+        $user = $request->user();
+        $canViewAllAttributes = $user->canViewAllAdminData()
+            || $user->hasAnyPermission([
+                AppPermission::AttributesView->value,
+                AppPermission::AttributesManage->value,
+            ]);
+
+        if (! $canViewAllAttributes) {
+            $canPostToCategory = $user->categories()
+                ->whereKey($category->id)
+                ->wherePivot('can_post', true)
+                ->exists();
+
+            abort_unless($canPostToCategory, 403, 'Bạn không được đăng nick vào danh mục này.');
+        }
+
         // Lấy các attributes đã được gán cho category này, kèm theo options
         $attributes = $category->attributes()
             ->with(['options' => function ($query) {

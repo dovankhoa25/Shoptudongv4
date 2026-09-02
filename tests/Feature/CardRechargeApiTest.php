@@ -62,6 +62,11 @@ class CardRechargeApiTest extends TestCase
         $card = Card::query()->sole();
         $this->assertSame($cardType->id, $card->card_type_id);
         $this->assertFalse($card->loaded_type);
+        $this->assertSame(99, $card->partner_status);
+        $this->assertSame('Pending', $card->partner_message);
+        $this->assertSame(200, $card->partner_http_status);
+        $this->assertNotNull($card->partner_response_at);
+        $this->assertNull($card->callback_received_at);
 
         Http::assertSent(fn (Request $request): bool => $request->url() === 'https://partner.test/charging'
             && $request['request_id'] === $card->id
@@ -104,6 +109,50 @@ class CardRechargeApiTest extends TestCase
 
         $this->assertSame(90000, (int) $user->refresh()->balance);
         $this->assertDatabaseCount('transactions', 1);
+        $this->assertSame(1, $card->refresh()->partner_status);
+        $this->assertNotNull($card->callback_received_at);
+    }
+
+    public function test_unknown_partner_status_is_failed_and_diagnostics_are_preserved(): void
+    {
+        Http::fake([
+            'https://partner.test/charging' => Http::response([
+                'status' => 102,
+                'message' => 'INPUT_DATA_INCORRECT',
+            ]),
+        ]);
+
+        CardType::query()->create([
+            'telco' => 'viettel',
+            'discount_rate' => 20,
+            'status' => true,
+        ]);
+        Passport::actingAs(User::factory()->create(), ['balance:deposit']);
+
+        $this->postJson('/api/recharge/card', [
+            'telco' => 'viettel',
+            'amount' => 100000,
+            'card_code' => '9999999999',
+            'card_serial' => 'SERIAL999999',
+        ])->assertCreated()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('message', 'Đối tác từ chối xử lý thẻ')
+            ->assertJsonPath('data.status', Card::STATUS_FAILED)
+            ->assertJsonPath('data.note', 'Đối tác từ chối xử lý thẻ')
+            ->assertJsonMissingPath('data.partner_status')
+            ->assertJsonMissingPath('data.partner_message')
+            ->assertJsonMissingPath('data.partner_http_status')
+            ->assertJsonMissingPath('data.partner_response_at')
+            ->assertJsonMissingPath('data.callback_received_at');
+
+        $card = Card::query()->sole();
+
+        $this->assertSame(Card::STATUS_FAILED, $card->status);
+        $this->assertSame(102, $card->partner_status);
+        $this->assertSame('INPUT_DATA_INCORRECT', $card->partner_message);
+        $this->assertSame(200, $card->partner_http_status);
+        $this->assertNotNull($card->partner_response_at);
+        $this->assertNull($card->callback_received_at);
     }
 
     public function test_card_endpoints_validate_scope_active_telco_duplicate_and_signature(): void

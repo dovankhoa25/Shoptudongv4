@@ -184,6 +184,37 @@ class AdminBalanceAdjustmentTest extends TestCase
                 ->where('users.data.0.can.adjust_balance', true));
     }
 
+    public function test_user_index_searches_an_exact_id_with_hash_prefix_and_keeps_text_search(): void
+    {
+        $actor = User::factory()->create();
+        $actor->assignRole('admin');
+        $actor->givePermissionTo(AppPermission::UsersView->value);
+
+        $target = User::factory()->create([
+            'username' => 'exact-id-target',
+            'email' => 'target@example.test',
+        ]);
+        $decoy = User::factory()->create([
+            'username' => 'member-'.$target->id,
+            'email' => 'decoy@example.test',
+        ]);
+
+        $this->actingAs($actor)
+            ->get(route('admin.users.index', ['search' => '#'.$target->id]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Admin/Users/Index')
+                ->has('users.data', 1)
+                ->where('users.data.0.id', $target->id));
+
+        $this->actingAs($actor)
+            ->get(route('admin.users.index', ['search' => 'member-'.$target->id]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->has('users.data', 1)
+                ->where('users.data.0.id', $decoy->id));
+    }
+
     public function test_authorized_admin_can_view_the_recorded_transaction_history(): void
     {
         [$actor, $target] = $this->actorAndTarget(10000);

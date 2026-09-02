@@ -6,6 +6,7 @@ use App\Events\UserEvent;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\CallbackRequest;
 use App\Http\Requests\Api\RechargeRequest;
+use App\Models\Card;
 use App\Models\CardType;
 use App\Services\Deposit\CardRechargeService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -41,7 +42,7 @@ class RechargeController extends Controller
 
         return response()->json([
             'success' => true,
-            'message' => 'Đã tiếp nhận thẻ nạp.',
+            'message' => $this->submissionMessage($card),
             'data' => [
                 'id' => $card->id,
                 'telco' => $cardType->telco,
@@ -110,5 +111,15 @@ class RechargeController extends Controller
             'status' => $result['card']->status,
             'credited_amount' => (int) $result['card']->amount_user,
         ]);
+    }
+
+    private function submissionMessage(Card $card): string
+    {
+        return match ($card->status) {
+            Card::STATUS_COMPLETED => 'Nạp thẻ thành công.',
+            Card::STATUS_CONFIRMED => 'Thẻ sai mệnh giá, đang chờ xử lý thủ công.',
+            Card::STATUS_FAILED => $card->note ?: 'Đối tác từ chối tiếp nhận thẻ.',
+            default => 'Đã tiếp nhận thẻ, đang chờ đối tác xử lý.',
+        };
     }
 }

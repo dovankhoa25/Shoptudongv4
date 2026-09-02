@@ -26,6 +26,8 @@ class AdminNickOwnershipTest extends TestCase
 
         Permission::findOrCreate(AppPermission::NicksView->value, 'web');
         Permission::findOrCreate(AppPermission::NicksManage->value, 'web');
+        Permission::findOrCreate(AppPermission::AttributesView->value, 'web');
+        Permission::findOrCreate(AppPermission::AttributesManage->value, 'web');
         Role::findOrCreate('super-admin', 'web');
         Role::findOrCreate('admin', 'web');
         Role::findOrCreate('ctv', 'web');
@@ -106,6 +108,39 @@ class AdminNickOwnershipTest extends TestCase
             ->get('/api/categories/'.$ownNick->category->slug.'/nicks')
             ->assertOk()
             ->assertJsonCount(2, 'data');
+    }
+
+    public function test_ctv_can_load_attributes_only_for_categories_they_can_post_to(): void
+    {
+        $ctv = User::factory()->create();
+        $ctv->assignRole('ctv');
+        $ctv->givePermissionTo(AppPermission::NicksManage->value);
+
+        $gameType = GameType::query()->create(['name' => 'Game thuộc tính']);
+        $allowedCategory = Category::query()->create([
+            'game_type_id' => $gameType->id,
+            'name' => 'Danh mục được đăng',
+            'template' => 'default',
+            'is_public' => true,
+            'status' => 'active',
+        ]);
+        $forbiddenCategory = Category::query()->create([
+            'game_type_id' => $gameType->id,
+            'name' => 'Danh mục không được đăng',
+            'template' => 'default',
+            'is_public' => true,
+            'status' => 'active',
+        ]);
+        $ctv->categories()->attach($allowedCategory->id, ['can_post' => true]);
+
+        $this->actingAs($ctv)
+            ->getJson(route('admin.games.categories.attributes', $allowedCategory))
+            ->assertOk()
+            ->assertJsonCount(0, 'data');
+
+        $this->actingAs($ctv)
+            ->getJson(route('admin.games.categories.attributes', $forbiddenCategory))
+            ->assertForbidden();
     }
 
     /** @return array{User, User, Nick, Nick} */

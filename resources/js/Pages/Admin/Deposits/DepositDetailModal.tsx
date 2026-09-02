@@ -24,6 +24,11 @@ export interface CardDepositItem {
     status: string;
     loaded_type: boolean;
     note: string | null;
+    partner_status: number | null;
+    partner_message: string | null;
+    partner_http_status: number | null;
+    partner_response_at: string | null;
+    callback_received_at: string | null;
     created_at: string;
     updated_at: string;
 }
@@ -83,6 +88,11 @@ export default function DepositDetailModal({ item, type, onClose }: Props) {
                             <Detail label="Mệnh giá thực" value={card.value === null ? '—' : formatCurrency(card.value)} />
                             <Detail label="User nhận" value={formatCurrency(card.amount_user)} />
                             <Detail label="Chiết khấu" value={`${card.discount_rate_at_time}%`} />
+                            <Detail label="Trạng thái TSR" value={card.partner_status} />
+                            <Detail label="HTTP từ TSR" value={card.partner_http_status} />
+                            <Detail label="TSR phản hồi lúc" value={card.partner_response_at ? new Date(card.partner_response_at).toLocaleString('vi-VN') : '—'} />
+                            <Detail label="Callback nhận lúc" value={card.callback_received_at ? new Date(card.callback_received_at).toLocaleString('vi-VN') : '—'} />
+                            <div className="sm:col-span-2"><Detail label="Thông báo gốc từ TSR" value={card.partner_message} /></div>
                             <div className="sm:col-span-2"><Detail label="Ghi chú" value={card.note} /></div>
                         </>;
                     })() : (() => {
