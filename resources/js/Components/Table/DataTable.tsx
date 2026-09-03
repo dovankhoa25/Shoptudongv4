@@ -1,5 +1,10 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import {
+    ADMIN_TABLE_SEARCH_FIELDS,
+    AdminSearchPreset,
+    SearchFieldOption,
+} from '@/Config/adminTableSearch';
 import {
     Search, Plus, Edit2, Trash2, Eye,
     ChevronLeft, ChevronRight, ChevronUp, ChevronDown,
@@ -83,6 +88,8 @@ interface DataTableProps<T = any> {
 
     // Enhanced Props
     filters?: FilterConfig[];
+    searchFields?: readonly SearchFieldOption[];
+    searchPreset?: AdminSearchPreset;
     searchPlaceholder?: string;
     addButtonText?: string;
     emptyText?: string;
@@ -362,7 +369,9 @@ const DataTable = <T extends { id: string | number }>({
     customActions,
     onFiltersChange,
     filters = [],
-    searchPlaceholder = 'Tìm kiếm...',
+    searchFields = [],
+    searchPreset,
+    searchPlaceholder = 'Tìm tự do, nhập #ID hoặc chọn trường...',
     addButtonText = 'Thêm mới',
     emptyText = 'Không có dữ liệu',
     emptyDescription,
@@ -396,6 +405,9 @@ const DataTable = <T extends { id: string | number }>({
     } | null>(null);
     const [activeFilters, setActiveFilters] = useState<{ [key: string]: any }>({});
     const [jumpPageInput, setJumpPageInput] = useState<string>('');
+    const [searchPickerOpen, setSearchPickerOpen] = useState(false);
+    const [highlightedSearchField, setHighlightedSearchField] = useState(0);
+    const searchInputRef = useRef<HTMLInputElement>(null);
     const [density, setDensity] = useState<'compact' | 'comfortable' | 'spacious'>(() => {
         if (!storageKey) return initialDensity;
         try {
@@ -440,6 +452,33 @@ const DataTable = <T extends { id: string | number }>({
 
     /* ---------- Derived ---------- */
     const currentSearchTerm = isServerSide ? searchValue : internalSearchTerm;
+    const resolvedSearchFields = searchPreset ? ADMIN_TABLE_SEARCH_FIELDS[searchPreset] : searchFields;
+    const searchFieldOptions = useMemo<SearchFieldOption[]>(
+        () => [
+            {
+                key: '#',
+                label: 'ID bản ghi',
+                description: 'Tìm chính xác ID của bảng hiện tại',
+                mode: 'exact',
+            },
+            ...resolvedSearchFields,
+        ],
+        [resolvedSearchFields],
+    );
+    const matchingSearchFields = useMemo(() => {
+        const token = currentSearchTerm.trim().toLowerCase();
+
+        if (token.includes(':') || (token.startsWith('#') && token !== '#')) {
+            return [];
+        }
+
+        return searchFieldOptions.filter((field) => {
+            if (token === '') return true;
+
+            return field.key.toLowerCase().includes(token)
+                || field.label.toLowerCase().includes(token);
+        });
+    }, [currentSearchTerm, searchFieldOptions]);
     const currentSortConfig = isServerSide
         ? { key: sortField, direction: (sortOrder || 'asc') as 'asc' | 'desc' }
         : internalSortConfig;
@@ -596,6 +635,36 @@ const DataTable = <T extends { id: string | number }>({
         else {
             setInternalSearchTerm(value);
             setInternalCurrentPage(1);
+        }
+    };
+
+    const selectSearchField = (field: SearchFieldOption) => {
+        const value = field.key === '#' ? '#' : `${field.key}:`;
+        handleSearch(value);
+        setSearchPickerOpen(false);
+
+        requestAnimationFrame(() => {
+            searchInputRef.current?.focus();
+            searchInputRef.current?.setSelectionRange(value.length, value.length);
+        });
+    };
+
+    const handleSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+        if (!searchPickerOpen || matchingSearchFields.length === 0) {
+            return;
+        }
+
+        if (event.key === 'ArrowDown') {
+            event.preventDefault();
+            setHighlightedSearchField((current) => (current + 1) % matchingSearchFields.length);
+        } else if (event.key === 'ArrowUp') {
+            event.preventDefault();
+            setHighlightedSearchField((current) => (current - 1 + matchingSearchFields.length) % matchingSearchFields.length);
+        } else if ((event.key === 'Enter' || event.key === 'Tab') && matchingSearchFields[highlightedSearchField]) {
+            event.preventDefault();
+            selectSearchField(matchingSearchFields[highlightedSearchField]);
+        } else if (event.key === 'Escape') {
+            setSearchPickerOpen(false);
         }
     };
 
@@ -793,12 +862,61 @@ const DataTable = <T extends { id: string | number }>({
                             <div className="relative w-full sm:max-w-md">
                                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
                                 <input
+                                    ref={searchInputRef}
                                     type="text"
                                     placeholder={searchPlaceholder}
                                     value={currentSearchTerm}
-                                    onChange={(e) => handleSearch(e.target.value)}
+                                    onChange={(e) => {
+                                        handleSearch(e.target.value);
+                                        setSearchPickerOpen(true);
+                                        setHighlightedSearchField(0);
+                                    }}
+                                    onFocus={() => {
+                                        setSearchPickerOpen(true);
+                                        setHighlightedSearchField(0);
+                                    }}
+                                    onBlur={() => window.setTimeout(() => setSearchPickerOpen(false), 120)}
+                                    onKeyDown={handleSearchKeyDown}
+                                    role="combobox"
+                                    aria-autocomplete="list"
+                                    aria-expanded={searchPickerOpen && matchingSearchFields.length > 0}
                                     className="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-slate-700 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white dark:bg-slate-900 text-gray-900 dark:text-gray-100 placeholder:text-gray-400"
                                 />
+                                {searchPickerOpen && matchingSearchFields.length > 0 && (
+                                    <div
+                                        className="absolute left-0 right-0 top-full z-50 mt-1 max-h-72 overflow-y-auto rounded-lg border border-gray-200 bg-white p-1 shadow-xl dark:border-slate-700 dark:bg-slate-900"
+                                        role="listbox"
+                                    >
+                                        <div className="px-2 py-1.5 text-[11px] font-medium uppercase tracking-wide text-gray-400">
+                                            Chọn trường rồi nhập nội dung phía sau
+                                        </div>
+                                        {matchingSearchFields.map((field, index) => (
+                                            <button
+                                                key={field.key}
+                                                type="button"
+                                                role="option"
+                                                aria-selected={index === highlightedSearchField}
+                                                onMouseDown={(event) => event.preventDefault()}
+                                                onMouseEnter={() => setHighlightedSearchField(index)}
+                                                onClick={() => selectSearchField(field)}
+                                                className={`flex w-full items-center justify-between gap-3 rounded-md px-2 py-2 text-left transition-colors ${index === highlightedSearchField
+                                                    ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+                                                    : 'text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-slate-800'
+                                                    }`}
+                                            >
+                                                <span className="min-w-0">
+                                                    <span className="block truncate text-sm font-medium">{field.label}</span>
+                                                    {field.description && (
+                                                        <span className="block truncate text-xs text-gray-400">{field.description}</span>
+                                                    )}
+                                                </span>
+                                                <span className="shrink-0 font-mono text-xs text-gray-500 dark:text-gray-400">
+                                                    {field.key === '#' ? '#' : `${field.key}:`}
+                                                </span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                         )}
                         {currentSelectedRows.length > 0 && (
@@ -1230,4 +1348,6 @@ export type {
     RowSelection,
     CustomAction,
     FilterConfig,
+    SearchFieldOption,
+    AdminSearchPreset,
 };

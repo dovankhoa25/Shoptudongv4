@@ -1,12 +1,14 @@
 <?php
 
 // app/Http/Controllers/Admin/GemPriceController.php
+
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Http\Resources\GemPrice\GemPriceResource;
 use App\Models\GemPrice;
 use App\Models\Server;
+use App\Support\AdminTableSearch;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Redirect;
 use Inertia\Inertia;
@@ -39,12 +41,7 @@ class GemPriceController extends Controller
             $query->where('multiplier', '<=', $request->max_multiplier);
         }
 
-        // Search
-        if ($request->filled('search')) {
-            $query->whereHas('server', function ($q) use ($request) {
-                $q->where('name', 'LIKE', '%' . $request->search . '%');
-            });
-        }
+        AdminTableSearch::applyPreset($query, $request->input('search'), 'prices');
 
         $gemPrices = $query->latest()->paginate(20)->withQueryString();
 
@@ -61,7 +58,7 @@ class GemPriceController extends Controller
             'gemPrices' => GemPriceResource::collection($gemPrices),
             'servers' => Server::active()->get(['id', 'name']),
             'filters' => $request->only(['server_id', 'search', 'status', 'min_multiplier', 'max_multiplier']),
-            'stats' => $stats
+            'stats' => $stats,
         ]);
     }
 
@@ -101,7 +98,7 @@ class GemPriceController extends Controller
         ]);
 
         // Deactivate other prices for this server if this one is being activated
-        if ($validated['status'] && !$gemPrice->status) {
+        if ($validated['status'] && ! $gemPrice->status) {
             GemPrice::where('server_id', $validated['server_id'])
                 ->where('id', '!=', $gemPrice->id)
                 ->where('status', true)
@@ -141,7 +138,7 @@ class GemPriceController extends Controller
     public function toggleStatus(GemPrice $gemPrice)
     {
         // If activating, deactivate others for same server
-        if (!$gemPrice->status) {
+        if (! $gemPrice->status) {
             GemPrice::where('server_id', $gemPrice->server_id)
                 ->where('id', '!=', $gemPrice->id)
                 ->where('status', true)
@@ -149,7 +146,7 @@ class GemPriceController extends Controller
         }
 
         $gemPrice->update([
-            'status' => !$gemPrice->status
+            'status' => ! $gemPrice->status,
         ]);
 
         $status = $gemPrice->status ? 'kích hoạt' : 'vô hiệu hóa';
@@ -179,13 +176,13 @@ class GemPriceController extends Controller
             GemPrice::create([
                 'server_id' => $update['server_id'],
                 'multiplier' => $update['multiplier'],
-                'status' => true
+                'status' => true,
             ]);
         }
 
         return response()->json([
             'message' => 'Đã cập nhật hệ số giá ngọc thành công',
-            'updated_count' => count($validated['updates'])
+            'updated_count' => count($validated['updates']),
         ]);
     }
 
@@ -199,6 +196,7 @@ class GemPriceController extends Controller
             ->get()
             ->map(function ($server) {
                 $gemPrice = $server->currentGemPrice;
+
                 return [
                     'server_id' => $server->id,
                     'server_name' => $server->name,
@@ -224,9 +222,9 @@ class GemPriceController extends Controller
 
         $gemPrice = GemPrice::getCurrentMultiplier($validated['server_id']);
 
-        if (!$gemPrice) {
+        if (! $gemPrice) {
             return response()->json([
-                'error' => 'Server này chưa có cài đặt giá'
+                'error' => 'Server này chưa có cài đặt giá',
             ], 404);
         }
 

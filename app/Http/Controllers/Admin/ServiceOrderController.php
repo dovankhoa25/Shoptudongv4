@@ -6,9 +6,9 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\ServiceOrder\ReceiverServiceOrderResource;
 use App\Http\Resources\ServiceOrder\ServiceOrderResource;
 use App\Models\ServiceOrder;
-use App\Models\Transaction;
 use App\Models\User;
 use App\Services\TransactionService;
+use App\Support\AdminTableSearch;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -16,13 +16,12 @@ use Inertia\Inertia;
 
 class ServiceOrderController extends Controller
 {
-
-
     public function index(Request $request)
     {
         $user = $request->user();
 
         $data = $request->validate([
+            'search' => ['nullable', 'string', 'max:255'],
             'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
         ]);
         $perPage = $data['per_page'] ?? 20;
@@ -34,14 +33,15 @@ class ServiceOrderController extends Controller
                 $q->where('status', $request->status);
             })
             ->forUserCategories($user)
+            ->when($request->filled('search'), fn ($query) => AdminTableSearch::applyPreset($query, $request->input('search'), 'serviceOrders'))
             ->latest()
             ->paginate($perPage);
 
         return Inertia::render('Admin/ServiceOrders/Index', [
             'service_orders' => ServiceOrderResource::collection($orders),
+            'filters' => $request->only(['search', 'status']),
         ]);
     }
-
 
     public function accept(Request $request, $id)
     {
@@ -65,6 +65,7 @@ class ServiceOrderController extends Controller
         });
 
         $order = ServiceOrder::withoutReceiverOwnedScope()->with('receiver:id,username')->find($id);
+
         return redirect()->back()->with('message', 'Nhận đơn thành công!');
     }
 
@@ -91,31 +92,17 @@ class ServiceOrderController extends Controller
                 'service:id,name,processing_time,warranty',
             ]);
         // Apply search filter
-        if (!empty($filters['search'])) {
-            $search = $filters['search'];
-            $query->where(function ($q) use ($search) {
-                $q->where('id', 'like', "%{$search}%")
-                    ->orWhere('account', 'like', "%{$search}%") // ✅ Thêm dòng này
-                    ->orWhereHas('user', function ($userQuery) use ($search) {
-                        $userQuery->where('username', 'like', "%{$search}%");
-                    })
-                    ->orWhereHas('receiver', function ($receiverQuery) use ($search) {
-                        $receiverQuery->where('username', 'like', "%{$search}%");
-                    })
-                    ->orWhereHas('service', function ($serviceQuery) use ($search) {
-                        $serviceQuery->where('name', 'like', "%{$search}%");
-                    });
-            });
+        if (! empty($filters['search'])) {
+            AdminTableSearch::applyPreset($query, $filters['search'], 'serviceOrders');
         }
 
         // ✅ Filter theo account (tài khoản giao dịch)
-        if (!empty($filters['account'])) {
+        if (! empty($filters['account'])) {
             $account = $filters['account'];
             $query->where('account', 'like', "%{$account}%");
         }
 
-
-        if (!empty($filters['status'])) {
+        if (! empty($filters['status'])) {
             $query->where('status', $filters['status']);
         }
 
@@ -130,7 +117,6 @@ class ServiceOrderController extends Controller
         ]);
     }
 
-
     public function updateReceiverOrder(Request $request, $id)
     {
         DB::transaction(function () use ($id) {
@@ -144,7 +130,7 @@ class ServiceOrderController extends Controller
                 throw new \Exception('Chỉ những đơn ở trạng thái "approved" mới có thể hoàn thành.');
             }
 
-            $order->description = trim($order->description . ' | Hoàn thành ');
+            $order->description = trim($order->description.' | Hoàn thành ');
             $order->status = 'completed';
             $order->save();
 
@@ -178,10 +164,6 @@ class ServiceOrderController extends Controller
         return redirect()->back()->with('success', 'Đơn đã được hoàn thành & cộng tiền cho bạn!');
     }
 
-
-
-
-
     public function cancelReceiverOrder(Request $request, $id)
     {
         $validated = $request->validate([
@@ -200,7 +182,7 @@ class ServiceOrderController extends Controller
                     throw new \Exception('Chỉ những đơn ở trạng thái "approved" mới có thể hoàn thành.');
                 }
                 $order->status = 'rejected';
-                $order->description = trim($order->description . ' | Hủy đơn: ' . $validated['cancel_reason']);
+                $order->description = trim($order->description.' | Hủy đơn: '.$validated['cancel_reason']);
                 $order->save();
 
                 if ($order->user && $order->service_price) {

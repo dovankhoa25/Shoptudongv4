@@ -477,6 +477,7 @@ export default function GemOrderPage() {
                 columns={columns}
                 loading={loading}
                 searchValue={currentFilters.search || ''}
+                searchPreset="gemOrders"
                 title="Quản lý Đơn hàng Ngọc"
                 description="Theo dõi trạng thái và hoàn tiền thủ công cho mọi đơn chưa được hoàn"
                 pagination={{

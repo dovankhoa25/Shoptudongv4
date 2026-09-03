@@ -7,6 +7,7 @@ use App\Http\Resources\Admin\Transaction\TransactionCollection;
 use App\Models\Transaction;
 use App\Models\User;
 use App\Services\TransactionService;
+use App\Support\AdminTableSearch;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -30,14 +31,7 @@ class TransactionController extends Controller
                 'performer:id,username,deleted_at',
             ])
             ->when($filters['search'] ?? null, function ($query, string $search) {
-                $query->where(function ($query) use ($search) {
-                    $query->where('description', 'like', "%{$search}%")
-                        ->orWhereHas('user', fn ($query) => $query
-                            ->where('username', 'like', "%{$search}%")
-                            ->orWhere('email', 'like', "%{$search}%"))
-                        ->orWhereHas('performer', fn ($query) => $query
-                            ->where('username', 'like', "%{$search}%"));
-                });
+                AdminTableSearch::applyPreset($query, $search, 'transactions');
             })
             ->when($filters['type'] ?? null, fn ($query, string $type) => $query->where('type', $type))
             ->latest('id')

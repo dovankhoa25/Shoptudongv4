@@ -1,4 +1,4 @@
-import React, { FormEvent, useEffect, useState } from 'react';
+import React, { FormEvent, useEffect, useMemo, useState } from 'react';
 import { router, useForm, usePage } from '@inertiajs/react';
 import {
     Ban,
@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import AdminLayout from '@/Layouts/AdminLayout';
 import { useToast } from '@/Components/ToastProvider';
+import { ADMIN_TABLE_SEARCH_FIELDS } from '@/Config/adminTableSearch';
 import type { PageProps } from '@/types';
 
 interface FrontendClient {
@@ -69,6 +70,7 @@ export default function FrontendClientsPage() {
     const { clients, filters, stats, can_manage, flash } = usePage<FrontendClientPageProps>().props;
     const toast = useToast();
     const [search, setSearch] = useState(filters.search ?? '');
+    const [searchMenuOpen, setSearchMenuOpen] = useState(false);
     const [status, setStatus] = useState(filters.status ?? '');
     const [editingClient, setEditingClient] = useState<FrontendClient | null>(null);
     const [modalOpen, setModalOpen] = useState(false);
@@ -151,6 +153,19 @@ export default function FrontendClientsPage() {
     const validationErrors = errors as Record<string, string>;
     const originsError = Object.entries(validationErrors)
         .find(([key]) => key === 'allowed_origins' || key.startsWith('allowed_origins.'))?.[1];
+    const searchOptions = useMemo(() => {
+        const options = [
+            { key: '#', label: 'ID bản ghi' },
+            ...ADMIN_TABLE_SEARCH_FIELDS.frontendClients,
+        ];
+        const token = search.trim().toLowerCase();
+
+        if (token.includes(':') || (token.startsWith('#') && token !== '#')) return [];
+        if (token === '') return options;
+
+        return options.filter((option) => option.key.toLowerCase().includes(token)
+            || option.label.toLowerCase().includes(token));
+    }, [search]);
 
     return (
         <div className="space-y-6">
@@ -187,15 +202,42 @@ export default function FrontendClientsPage() {
 
             <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
                 <form onSubmit={submitFilters} className="flex flex-col gap-3 border-b border-slate-200 p-4 dark:border-slate-800 sm:flex-row">
-                    <label className="relative flex-1">
+                    <div className="relative flex-1">
                         <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                         <input
                             value={search}
-                            onChange={(event) => setSearch(event.target.value)}
+                            onChange={(event) => {
+                                setSearch(event.target.value);
+                                setSearchMenuOpen(true);
+                            }}
+                            onFocus={() => setSearchMenuOpen(true)}
+                            onBlur={() => window.setTimeout(() => setSearchMenuOpen(false), 120)}
                             placeholder="Tìm theo tên, Client ID hoặc domain..."
                             className="w-full rounded-lg border border-slate-300 bg-white py-2.5 pl-9 pr-3 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
                         />
-                    </label>
+                        {searchMenuOpen && searchOptions.length > 0 && (
+                            <div className="absolute left-0 right-0 top-full z-50 mt-1 rounded-lg border border-slate-200 bg-white p-1 shadow-xl dark:border-slate-700 dark:bg-slate-900">
+                                <div className="px-2 py-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                                    Chọn trường rồi nhập nội dung phía sau
+                                </div>
+                                {searchOptions.map((option) => (
+                                    <button
+                                        key={option.key}
+                                        type="button"
+                                        onMouseDown={(event) => event.preventDefault()}
+                                        onClick={() => {
+                                            setSearch(option.key === '#' ? '#' : `${option.key}:`);
+                                            setSearchMenuOpen(false);
+                                        }}
+                                        className="flex w-full items-center justify-between rounded-md px-2 py-2 text-left text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-700 dark:text-slate-200 dark:hover:bg-blue-900/30 dark:hover:text-blue-300"
+                                    >
+                                        <span>{option.label}</span>
+                                        <span className="font-mono text-xs text-slate-500">{option.key === '#' ? '#' : `${option.key}:`}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
                     <select
                         value={status}
                         onChange={(event) => setStatus(event.target.value as '' | 'active' | 'inactive')}

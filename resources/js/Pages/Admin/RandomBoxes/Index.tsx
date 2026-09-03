@@ -271,6 +271,7 @@ export default function RandomBoxPage() {
                 columns={columns}
                 loading={loading}
                 searchValue={filters.search}
+                searchPreset="randomBoxes"
                 title="Quản lý hộp random"
                 description="Danh sách tất cả các hộp random trong hệ thống"
                 pagination={{

@@ -158,6 +158,7 @@ export default function UserPage() {
                 columns={columns}
                 loading={loading}
                 searchValue={filters.search}
+                searchPreset="users"
                 searchPlaceholder="Tìm username, email hoặc #ID chính xác..."
                 title="Quản lý người dùng"
                 description={`${users.meta.total.toLocaleString('vi-VN')} tài khoản trong hệ thống`}

@@ -8,6 +8,7 @@ use App\Http\Requests\RandomBox\UpdateRandomBoxRequest;
 use App\Http\Resources\RandomBox\RandomBoxResource;
 use App\Models\Category;
 use App\Models\RandomBox;
+use App\Support\AdminTableSearch;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 
@@ -16,10 +17,10 @@ class RandomBoxController extends Controller
     public function index(Request $request)
     {
         $randomBoxes = RandomBox::query()
-            ->when($request->filled('category_id'), fn($q) => $q->where('category_id', $request->category_id))
-            ->when($request->filled('is_public'), fn($q) => $q->where('is_public', $request->is_public))
+            ->when($request->filled('category_id'), fn ($q) => $q->where('category_id', $request->category_id))
+            ->when($request->filled('is_public'), fn ($q) => $q->where('is_public', $request->is_public))
             ->when($request->filled('search'), function ($q) use ($request) {
-                $q->where('name', 'like', '%' . $request->search . '%');
+                AdminTableSearch::applyPreset($q, $request->input('search'), 'randomBoxes');
             })
             ->with(['category'])
             ->orderBy('sort_order')
@@ -54,7 +55,6 @@ class RandomBoxController extends Controller
         $imageUrl = $randomBox->getFirstMediaUrl('image'); // ✅ Đây là cách đúng
         $randomBox->image = $imageUrl;
         $randomBox->save(); // ✅ Lưu lại giá trị vào DB
-
 
         return redirect()->back()
             ->with('success', 'Tạo hộp random thành công!');

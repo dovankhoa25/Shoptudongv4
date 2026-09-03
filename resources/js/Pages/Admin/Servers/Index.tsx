@@ -237,6 +237,7 @@ export default function ServerPage() {
                 columns={columns}
                 loading={loading}
                 searchValue={filters.search}
+                searchPreset="servers"
                 title="Quản lý Server"
                 description="Danh sách tất cả các server trong hệ thống"
                 pagination={{

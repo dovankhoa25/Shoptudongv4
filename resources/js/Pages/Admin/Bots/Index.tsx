@@ -618,6 +618,7 @@ export default function BotPage() {
                 columns={columns}
                 loading={loading}
                 searchValue={currentFilters.search || ''}
+                searchPreset="bots"
                 title="Quản lý Bot"
                 description="Danh sách tất cả các bot trong hệ thống"
                 pagination={{

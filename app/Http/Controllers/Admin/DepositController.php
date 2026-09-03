@@ -11,6 +11,7 @@ use App\Http\Resources\Admin\Deposit\CardTypeResource;
 use App\Models\AtmTopup;
 use App\Models\Card;
 use App\Models\CardType;
+use App\Support\AdminTableSearch;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -45,14 +46,7 @@ class DepositController extends Controller
                 Card::query()
                     ->with(['user:id,username,email,deleted_at', 'cardType:id,telco'])
                     ->when($cardSearch !== '', function ($query) use ($cardSearch) {
-                        $query->where(function ($query) use ($cardSearch) {
-                            $query->where('code', 'like', "%{$cardSearch}%")
-                                ->orWhere('serial', 'like', "%{$cardSearch}%")
-                                ->orWhere('trans_id', 'like', "%{$cardSearch}%")
-                                ->orWhereHas('user', fn ($query) => $query
-                                    ->where('username', 'like', "%{$cardSearch}%")
-                                    ->orWhere('email', 'like', "%{$cardSearch}%"));
-                        });
+                        AdminTableSearch::applyPreset($query, $cardSearch, 'cards');
                     })
                     ->when(
                         $validated['card_status'] ?? null,
@@ -70,15 +64,7 @@ class DepositController extends Controller
                 AtmTopup::query()
                     ->with('user:id,username,email,deleted_at')
                     ->when($bankSearch !== '', function ($query) use ($bankSearch) {
-                        $query->where(function ($query) use ($bankSearch) {
-                            $query->where('provider_transaction_id', 'like', "%{$bankSearch}%")
-                                ->orWhere('reference_code', 'like', "%{$bankSearch}%")
-                                ->orWhere('payment_code', 'like', "%{$bankSearch}%")
-                                ->orWhere('content', 'like', "%{$bankSearch}%")
-                                ->orWhereHas('user', fn ($query) => $query
-                                    ->where('username', 'like', "%{$bankSearch}%")
-                                    ->orWhere('email', 'like', "%{$bankSearch}%"));
-                        });
+                        AdminTableSearch::applyPreset($query, $bankSearch, 'bankTopups');
                     })
                     ->when(
                         $validated['bank_gateway'] ?? null,

@@ -7,6 +7,7 @@ use App\Http\Requests\GameType\StoreGameTypeRequest;
 use App\Http\Requests\GameType\UpdateGameTypeRequest;
 use App\Http\Resources\GameType\GameTypeResource;
 use App\Models\GameType;
+use App\Support\AdminTableSearch;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 
@@ -15,14 +16,14 @@ class GameTypeController extends Controller
     public function index(Request $request)
     {
         $GameTypes = GameType::query()
-            ->when($request->filled('name'), fn ($q) => $q->where('name', 'like', "%{$request->name}%"))
+            ->when($request->filled('search'), fn ($query) => AdminTableSearch::applyPreset($query, $request->input('search'), 'gameTypes'))
             ->withCount('categories')
             ->orderBy('sort_order')
             ->paginate(20);
 
         return Inertia::render('Admin/GameTypes/Index', [
             'gameTypes' => GameTypeResource::collection($GameTypes),
-            'filters' => $request->only('name'),
+            'filters' => $request->only('search'),
         ]);
     }
 

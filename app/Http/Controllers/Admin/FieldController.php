@@ -6,8 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\Field\FieldResource;
 use App\Models\Field;
 use App\Models\Service;
+use App\Support\AdminTableSearch;
 use Illuminate\Http\Request;
-use Illuminate\Http\Response;
 use Inertia\Inertia;
 
 class FieldController extends Controller
@@ -17,10 +17,14 @@ class FieldController extends Controller
      */
     public function index(Request $request)
     {
-        $fields = Field::with('services')->paginate($request->input('per_page', 15));
+        $query = Field::query()->with('services');
+        AdminTableSearch::applyPreset($query, $request->input('search'), 'fields');
+
+        $fields = $query->paginate($request->input('per_page', 15))->withQueryString();
 
         return Inertia::render('Admin/Field/Index', [
             'fields' => FieldResource::collection($fields),
+            'filters' => $request->only('search'),
         ]);
     }
 
@@ -30,11 +34,11 @@ class FieldController extends Controller
     public function store(Request $request)
     {
         $data = $request->validate([
-            'label'      => ['required', 'string', 'max:255'],
-            'field_key'  => ['required', 'string', 'max:255'],
-            'type'       => ['required', 'in:text,textarea,number,select'],
-            'options'    => ['nullable', 'array'],
-            'required'   => ['required', 'boolean'],
+            'label' => ['required', 'string', 'max:255'],
+            'field_key' => ['required', 'string', 'max:255'],
+            'type' => ['required', 'in:text,textarea,number,select'],
+            'options' => ['nullable', 'array'],
+            'required' => ['required', 'boolean'],
         ]);
 
         $field = Field::create([
@@ -57,11 +61,11 @@ class FieldController extends Controller
     public function update(Request $request, Field $field)
     {
         $data = $request->validate([
-            'label'      => ['required', 'string', 'max:255'],
-            'field_key'  => ['required', 'string', 'max:255'],
-            'type'       => ['required', 'in:text,textarea,number,select'],
-            'options'    => ['nullable', 'array'],
-            'required'   => ['required', 'boolean'],
+            'label' => ['required', 'string', 'max:255'],
+            'field_key' => ['required', 'string', 'max:255'],
+            'type' => ['required', 'in:text,textarea,number,select'],
+            'options' => ['nullable', 'array'],
+            'required' => ['required', 'boolean'],
         ]);
 
         $field->update([
@@ -71,7 +75,6 @@ class FieldController extends Controller
             'options' => $data['options'],
             'required' => $data['required'],
         ]);
-
 
         return redirect()->back()->with('success', 'Cập nhật Field thành công!');
     }

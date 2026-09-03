@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\GoldPrices\GoldPriceResource;
 use App\Models\GoldPrice;
 use App\Models\Server;
+use App\Support\AdminTableSearch;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Redirect;
 use Inertia\Inertia;
@@ -22,29 +23,30 @@ class GoldPriceController extends Controller
         if ($request->filled('status')) {
             $query->where('status', $request->status);
         }
+        AdminTableSearch::applyPreset($query, $request->input('search'), 'prices');
         $prices = $query->latest()->paginate(20)->withQueryString();
 
         return Inertia::render('Admin/GoldPrices/Index', [
-            'prices'  => GoldPriceResource::collection($prices),
+            'prices' => GoldPriceResource::collection($prices),
             'servers' => Server::all(['id', 'name']),
-            'filters' => $request->only(['server_id', 'status']),
+            'filters' => $request->only(['server_id', 'status', 'search']),
         ]);
     }
 
     public function store(Request $request)
     {
         $request->validate([
-            'server_id'                => 'required|exists:servers,id',
-            'price'          => 'required|numeric|min:0',
-            'import_price'   => 'required|numeric|min:0',
-            'status'                   => 'required|boolean',
+            'server_id' => 'required|exists:servers,id',
+            'price' => 'required|numeric|min:0',
+            'import_price' => 'required|numeric|min:0',
+            'status' => 'required|boolean',
         ]);
 
         GoldPrice::create([
-            'server_id'               => $request->server_id,
-            'price'         => $request->price,
-            'import_price'  => $request->import_price,
-            'status'                  => $request->status,
+            'server_id' => $request->server_id,
+            'price' => $request->price,
+            'import_price' => $request->import_price,
+            'status' => $request->status,
         ]);
 
         return Redirect::route('admin.gold-prices.index')->with('success', 'Giá vàng đã được tạo.');
@@ -53,17 +55,17 @@ class GoldPriceController extends Controller
     public function update(Request $request, GoldPrice $goldprice)
     {
         $request->validate([
-            'server_id'                => 'required|exists:servers,id',
-            'price'          => 'required|numeric|min:0',
-            'import_price'   => 'required|numeric|min:0',
-            'status'                   => 'required|boolean',
+            'server_id' => 'required|exists:servers,id',
+            'price' => 'required|numeric|min:0',
+            'import_price' => 'required|numeric|min:0',
+            'status' => 'required|boolean',
         ]);
 
         $goldprice->update([
-            'server_id'               => $request->server_id,
-            'price'         => $request->price,
-            'import_price'  => $request->import_price,
-            'status'                  => $request->status,
+            'server_id' => $request->server_id,
+            'price' => $request->price,
+            'import_price' => $request->import_price,
+            'status' => $request->status,
         ]);
 
         return Redirect::route('admin.gold-prices.index')->with('success', 'Giá vàng đã được cập nhật.');

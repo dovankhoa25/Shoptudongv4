@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\UserSecurityLog;
 use App\Services\FrontendClientRegistry;
+use App\Support\AdminTableSearch;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
@@ -31,11 +32,7 @@ class FrontendClientController extends Controller
         $baseQuery = $this->frontendClientsQuery();
         $query = (clone $baseQuery)
             ->when($filters['search'] ?? null, function ($query, string $search): void {
-                $query->where(function ($query) use ($search): void {
-                    $query->where('name', 'like', "%{$search}%")
-                        ->orWhere('id', 'like', "%{$search}%")
-                        ->orWhere('allowed_origins', 'like', "%{$search}%");
-                });
+                AdminTableSearch::applyPreset($query, $search, 'frontendClients');
             })
             ->when(
                 ($filters['status'] ?? null) === 'active',

@@ -380,6 +380,7 @@ export default function WithdrawalPage() {
                 columns={columns}
                 loading={loading}
                 searchValue={filters.search}
+                searchPreset="withdrawals"
                 title="Quản lý yêu cầu rút tiền"
                 description="Danh sách tất cả các yêu cầu rút tiền trong hệ thống"
                 pagination={{

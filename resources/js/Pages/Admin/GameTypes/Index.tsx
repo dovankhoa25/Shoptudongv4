@@ -235,6 +235,7 @@ export default function GameTypePage() {
                 columns={columns}
                 loading={loading}
                 searchValue={filters.search}
+                searchPreset="gameTypes"
                 title="Quản lý loại game"
                 description="Danh sách tất cả các loại game trong hệ thống"
                 pagination={{

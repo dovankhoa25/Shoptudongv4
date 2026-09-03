@@ -348,6 +348,7 @@ export default function ServicePage() {
                 columns={columns}
                 loading={loading}
                 searchValue={filters.search}
+                searchPreset="services"
                 title="Quản lý dịch vụ"
                 description="Danh sách tất cả các dịch vụ trong hệ thống"
                 pagination={{

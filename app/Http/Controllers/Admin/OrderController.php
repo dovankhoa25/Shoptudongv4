@@ -11,6 +11,7 @@ use App\Models\Transaction;
 use App\Models\User;
 use App\Services\TransactionHistoryService;
 use App\Services\TransactionService;
+use App\Support\AdminTableSearch;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -91,8 +92,6 @@ class OrderController extends Controller
     //     ]);
     // }
 
-
-
     public function index(Request $request)
     {
         $query = GoldTransaction::with(['user', 'server', 'bot'])
@@ -116,7 +115,7 @@ class OrderController extends Controller
             'servers' => Server::active()->get(['id', 'name']),
             'bots' => Bot::active()->get(['id', 'name']),
             'filters' => $request->only(['server_id', 'bot_id', 'status', 'search', 'date_from', 'date_to', 'sort_by', 'sort_order']),
-            'stats' => $stats
+            'stats' => $stats,
         ]);
     }
 
@@ -149,16 +148,7 @@ class OrderController extends Controller
             $query->whereDate('created_at', '<=', $request->date_to);
         }
 
-        // Search by character name or user
-        if ($request->filled('search')) {
-            $query->where(function ($q) use ($request) {
-                $q->where('character_name', 'LIKE', '%' . $request->search . '%')
-                    ->orWhereHas('user', function ($userQuery) use ($request) {
-                        $userQuery->where('username', 'LIKE', '%' . $request->search . '%')
-                            ->orWhere('email', 'LIKE', '%' . $request->search . '%');
-                    });
-            });
-        }
+        AdminTableSearch::applyPreset($query, $request->input('search'), 'goldOrders');
 
         return $query;
     }
@@ -220,10 +210,9 @@ class OrderController extends Controller
         $order->load(['user', 'server', 'bot']);
 
         return Inertia::render('Admin/Orders/Show', [
-            'order' => new GoldTransactionResource($order)
+            'order' => new GoldTransactionResource($order),
         ]);
     }
-
 
     /**
      * Update order status (unified endpoint)
@@ -275,8 +264,7 @@ class OrderController extends Controller
         ?string $cancelReason,
         ?string $note,
         ?int $refundAmount = null,
-    ): void
-    {
+    ): void {
         DB::transaction(function () use ($orderId, $newStatus, $cancelReason, $note, $refundAmount): void {
             $order = GoldTransaction::query()->lockForUpdate()->findOrFail($orderId);
             abort_unless($order->type === GoldTransaction::TYPE_ORDER, 404);

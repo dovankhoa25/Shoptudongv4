@@ -648,6 +648,7 @@ export default function NickPage() {
                 columns={columns}
                 loading={loading}
                 searchValue={currentFilters.search || ''}
+                searchPreset="nicks"
                 title="Quản lý Nick"
                 description="Danh sách tất cả các nick trong hệ thống"
                 pagination={{

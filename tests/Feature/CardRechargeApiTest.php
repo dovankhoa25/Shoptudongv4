@@ -11,6 +11,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Laravel\Passport\Passport;
 use Tests\TestCase;
 
@@ -75,13 +76,16 @@ class CardRechargeApiTest extends TestCase
 
         $callback = [
             'request_id' => $card->id,
+            'telco' => 'VIETTEL',
             'code' => '1234567890',
             'serial' => 'SERIAL123456',
             'callback_sign' => md5('partner-secret1234567890SERIAL123456'),
             'status' => 1,
+            'declared_value' => 100000,
             'value' => 100000,
             'amount' => 80000,
-            'trans_id' => 'PARTNER-001',
+            'message' => 'SUCCESS',
+            'trans_id' => 24353912,
         ];
 
         $this->postJson('/api/charge/callback', $callback)
@@ -110,6 +114,7 @@ class CardRechargeApiTest extends TestCase
         $this->assertSame(90000, (int) $user->refresh()->balance);
         $this->assertDatabaseCount('transactions', 1);
         $this->assertSame(1, $card->refresh()->partner_status);
+        $this->assertSame('24353912', $card->trans_id);
         $this->assertNotNull($card->callback_received_at);
     }
 
@@ -208,5 +213,27 @@ class CardRechargeApiTest extends TestCase
 
         $this->assertSame(0, (int) $user->refresh()->balance);
         $this->assertDatabaseCount('transactions', 0);
+    }
+
+    public function test_callback_ingress_is_logged_before_request_validation(): void
+    {
+        Log::spy();
+
+        $this->postJson('/api/charge/callback', [
+            'request_id' => 123,
+            'status' => 99,
+        ])->assertUnprocessable();
+
+        Log::shouldHaveReceived('info')
+            ->once()
+            ->with(
+                'TEMP card partner callback reached Laravel before validation',
+                \Mockery::on(fn (array $context): bool => $context['request_id'] === 123
+                    && $context['partner_status'] === 99
+                    && in_array('request_id', $context['present_fields'], true)
+                    && in_array('status', $context['present_fields'], true)
+                    && ! in_array('code', $context['present_fields'], true)
+                    && ! array_key_exists('callback_sign', $context)),
+            );
     }
 }

@@ -10,6 +10,7 @@ use App\Models\Server;
 use App\Models\ServerGameLogin;
 use App\Services\BotHistoryService;
 use App\Services\InventoryMovementService;
+use App\Support\AdminTableSearch;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Redirect;
@@ -36,13 +37,7 @@ class BotController extends Controller
             $query->where('status', $request->status);
         }
 
-        // Search by account name or name
-        if ($request->filled('search')) {
-            $query->where(function ($q) use ($request) {
-                $q->where('account_name', 'LIKE', '%' . $request->search . '%')
-                    ->orWhere('name', 'LIKE', '%' . $request->search . '%');
-            });
-        }
+        AdminTableSearch::applyPreset($query, $request->input('search'), 'bots');
 
         // Filter by gold quantity range
         if ($request->filled('min_gold')) {
@@ -56,7 +51,6 @@ class BotController extends Controller
         $query->orderByDesc('status')
             ->orderByDesc('gold_qty')
             ->orderByDesc('id'); // optional
-
 
         $bots = $query->paginate(20)->withQueryString();
 
@@ -75,7 +69,7 @@ class BotController extends Controller
             'servers' => Server::active()->get(['id', 'name', 'name_view']),
             'logins' => ServerGameLogin::get(['id', 'name']),
             'filters' => $request->only(['server_id', 'type', 'search', 'status', 'min_gold', 'max_gold', 'sort_by', 'sort_order']),
-            'stats' => $stats
+            'stats' => $stats,
         ]);
     }
 
@@ -102,21 +96,21 @@ class BotController extends Controller
 
         $bot = DB::transaction(function () use ($request) {
             $bot = Bot::create([
-            'name' => $request->name ?? null,
-            'account_name' => $request->account_name,
-            'account_password' => $request->account_password,
-            'type' => $request->type,
-            'server_id' => $request->server_id,
-            'server_game_id' => $request->server_game_id,
-            'gold_bar_qty' => $request->gold_bar_qty ?? 0,
-            'gold_qty' => $request->gold_qty ?? 0,
-            'map_name' => $request->map_name,
-            'map_id' => $request->map_id,
-            'area_number' => $request->area_number,
-            'coordinates' => $request->coordinates,
-            'proxy' => $request->proxy,
-            'status' => $request->status,
-            'updated_by' => 'web',
+                'name' => $request->name ?? null,
+                'account_name' => $request->account_name,
+                'account_password' => $request->account_password,
+                'type' => $request->type,
+                'server_id' => $request->server_id,
+                'server_game_id' => $request->server_game_id,
+                'gold_bar_qty' => $request->gold_bar_qty ?? 0,
+                'gold_qty' => $request->gold_qty ?? 0,
+                'map_name' => $request->map_name,
+                'map_id' => $request->map_id,
+                'area_number' => $request->area_number,
+                'coordinates' => $request->coordinates,
+                'proxy' => $request->proxy,
+                'status' => $request->status,
+                'updated_by' => 'web',
             ]);
 
             InventoryMovementService::recordGoldChange(
@@ -179,7 +173,6 @@ class BotController extends Controller
     //     // return back()->with('success', 'Bot đã được cập nhật thành công!');
     //     return redirect()->back()->with('success', 'Bot đã được cập nhật thành công!');
     // }
-
 
     public function update(Request $request, Bot $bot)
     {
@@ -366,11 +359,12 @@ class BotController extends Controller
     public function toggleStatus(Request $request, Bot $bot)
     {
         $bot->update([
-            'status' => !$bot->status,
+            'status' => ! $bot->status,
             'updated_by' => 'web',
         ]);
 
         $status = $bot->status ? 'kích hoạt' : 'tạm dừng';
+
         return back()->with('success', "Bot đã được {$status} thành công!");
     }
 
@@ -382,7 +376,7 @@ class BotController extends Controller
         $bot->load(['server']);
 
         return Inertia::render('Admin/Bots/Show', [
-            'bot' => new BotResource($bot)
+            'bot' => new BotResource($bot),
         ]);
     }
 
@@ -408,14 +402,14 @@ class BotController extends Controller
     {
         $request->validate([
             'bot_ids' => 'required|array',
-            'bot_ids.*' => 'exists:bots,id'
+            'bot_ids.*' => 'exists:bots,id',
         ]);
 
         $updated = Bot::whereIn('id', $request->bot_ids)
             ->update([
                 'status' => true,
                 'updated_by' => 'web',
-                'updated_at' => now()
+                'updated_at' => now(),
             ]);
 
         return back()->with('success', "Đã kích hoạt {$updated} bot!");
@@ -428,14 +422,14 @@ class BotController extends Controller
     {
         $request->validate([
             'bot_ids' => 'required|array',
-            'bot_ids.*' => 'exists:bots,id'
+            'bot_ids.*' => 'exists:bots,id',
         ]);
 
         $updated = Bot::whereIn('id', $request->bot_ids)
             ->update([
                 'status' => false,
                 'updated_by' => 'web',
-                'updated_at' => now()
+                'updated_at' => now(),
             ]);
 
         return back()->with('success', "Đã tạm dừng {$updated} bot!");
@@ -448,7 +442,7 @@ class BotController extends Controller
     {
         $request->validate([
             'bot_ids' => 'required|array',
-            'bot_ids.*' => 'exists:bots,id'
+            'bot_ids.*' => 'exists:bots,id',
         ]);
 
         $deleted = Bot::whereIn('id', $request->bot_ids)->count();

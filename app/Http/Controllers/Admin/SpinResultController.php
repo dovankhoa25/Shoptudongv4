@@ -3,9 +3,10 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Models\SpinResult;
-use App\Models\Spin;
 use App\Http\Resources\Spin\SpinResultResource;
+use App\Models\Spin;
+use App\Models\SpinResult;
+use App\Support\AdminTableSearch;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 
@@ -36,12 +37,7 @@ class SpinResultController extends Controller
             $query->whereDate('created_at', '<=', $request->date_to);
         }
 
-        if ($request->filled('search')) {
-            $query->whereHas('user', function ($q) use ($request) {
-                $q->where('name', 'like', '%' . $request->search . '%')
-                    ->orWhere('email', 'like', '%' . $request->search . '%');
-            });
-        }
+        AdminTableSearch::applyPreset($query, $request->input('search'), 'spinResults');
 
         $results = $query->latest()
             ->paginate(50)

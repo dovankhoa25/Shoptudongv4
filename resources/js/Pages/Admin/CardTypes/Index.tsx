@@ -235,6 +235,7 @@ export default function CardTypesPage() {
                 columns={columns}
                 loading={loading}
                 searchValue={filters.search}
+                searchPreset="cardTypes"
                 title="Quản lý loại thẻ"
                 description="Cấu hình các nhà mạng và mức chiết khấu"
                 pagination={{

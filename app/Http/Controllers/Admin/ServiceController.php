@@ -7,13 +7,13 @@ use App\Http\Requests\Services\FilterServiceRequest;
 use App\Http\Requests\Services\ServicesStoreRequest;
 use App\Http\Requests\Services\ServicesUpdateRequest;
 use App\Http\Resources\Service\ServiceResource;
-use Illuminate\Http\RedirectResponse;
 use App\Models\Service;
+use App\Support\AdminTableSearch;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Redirect;
-use Inertia\Response;
 use Inertia\Inertia;
-
+use Inertia\Response;
 
 class ServiceController extends Controller
 {
@@ -24,19 +24,13 @@ class ServiceController extends Controller
         $status = $request->input('status');
 
         $query = Service::with('categories');
-        // Nếu search là số, thì tìm theo id luôn
-        if (is_numeric($search)) {
-            $query->orWhere('id', $search);
-        }
-        if ($search) {
-            $query->where('name', 'LIKE', "%{$search}%");
-        }
+        AdminTableSearch::applyPreset($query, $search, 'services');
 
-        if (!is_null($status)) {
+        if (! is_null($status)) {
             $query->where('status', $status);
         }
 
-        $services = $query->paginate($perPage);
+        $services = $query->paginate($perPage)->withQueryString();
 
         return Inertia::render('Admin/Service/Index', [
             'services' => ServiceResource::collection($services),
@@ -47,7 +41,6 @@ class ServiceController extends Controller
             ],
         ]);
     }
-
 
     public function store(ServicesStoreRequest $request): RedirectResponse
     {
@@ -67,14 +60,11 @@ class ServiceController extends Controller
         return Redirect::route('admin.services.index')->with('success', 'Service created.');
     }
 
-
-
-
     public function update(int $sv, ServicesUpdateRequest $request): RedirectResponse
     {
         $svFind = Service::find($sv);
 
-        if (!$svFind) {
+        if (! $svFind) {
             return Redirect::back()->with('error', 'Service không tồn tại.');
         }
 
@@ -91,8 +81,6 @@ class ServiceController extends Controller
 
         return Redirect::back()->with('success', 'Service updated.');
     }
-
-
 
     public function updateCategories(Request $request, $id)
     {

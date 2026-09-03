@@ -384,6 +384,7 @@ export default function RandomNickPage() {
                 columns={columns}
                 loading={loading}
                 searchValue={currentFilters.search || ''}
+                searchPreset="randomNicks"
                 title="Danh sách nick random"
                 description="Quản lý tất cả nick random trong hệ thống"
                 pagination={{

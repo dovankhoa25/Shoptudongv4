@@ -17,6 +17,7 @@ use App\Models\NickAttribute;
 use App\Models\NickOrder;
 use App\Models\User;
 use App\Services\TransactionService;
+use App\Support\AdminTableSearch;
 use Carbon\Carbon;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Illuminate\Http\Request;
@@ -490,22 +491,8 @@ class NickController extends Controller
 
         // Search functionality
         if ($request->filled('search')) {
-            $search = $request->search;
-            $searchCondition = function ($q) use ($search) {
-                $q->where('id', 'like', "%{$search}%")
-                    ->orWhereHas('nick', function ($nickQuery) use ($search) {
-                        $nickQuery->where('account_name', 'like', "%{$search}%");
-                    })
-                    ->orWhereHas('buyer', function ($buyerQuery) use ($search) {
-                        $buyerQuery->where('username', 'like', "%{$search}%");
-                    })
-                    ->orWhereHas('seller', function ($sellerQuery) use ($search) {
-                        $sellerQuery->where('username', 'like', "%{$search}%");
-                    });
-            };
-
-            $query->where($searchCondition);
-            $statsQuery->where($searchCondition);
+            AdminTableSearch::applyPreset($query, $request->input('search'), 'nickOrders');
+            AdminTableSearch::applyPreset($statsQuery, $request->input('search'), 'nickOrders');
         }
 
         // Status filter

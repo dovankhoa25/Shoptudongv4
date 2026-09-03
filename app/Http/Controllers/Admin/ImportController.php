@@ -11,6 +11,7 @@ use App\Models\Transaction;
 use App\Models\User;
 use App\Services\TransactionHistoryService;
 use App\Services\TransactionService;
+use App\Support\AdminTableSearch;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -18,8 +19,6 @@ use Inertia\Inertia;
 
 class ImportController extends Controller
 {
-
-
     public function index(Request $request)
     {
         $query = GoldTransaction::with(['user', 'server', 'bot'])
@@ -43,7 +42,7 @@ class ImportController extends Controller
             'servers' => Server::active()->get(['id', 'name']),
             'bots' => Bot::active()->get(['id', 'name']),
             'filters' => $request->only(['server_id', 'bot_id', 'status', 'search', 'date_from', 'date_to', 'sort_by', 'sort_order']),
-            'stats' => $stats
+            'stats' => $stats,
         ]);
     }
 
@@ -76,16 +75,7 @@ class ImportController extends Controller
             $query->whereDate('created_at', '<=', $request->date_to);
         }
 
-        // Search by character name or user
-        if ($request->filled('search')) {
-            $query->where(function ($q) use ($request) {
-                $q->where('character_name', 'LIKE', '%' . $request->search . '%')
-                    ->orWhereHas('user', function ($userQuery) use ($request) {
-                        $userQuery->where('username', 'LIKE', '%' . $request->search . '%')
-                            ->orWhere('email', 'LIKE', '%' . $request->search . '%');
-                    });
-            });
-        }
+        AdminTableSearch::applyPreset($query, $request->input('search'), 'goldOrders');
 
         return $query;
     }
@@ -149,10 +139,9 @@ class ImportController extends Controller
         $order->load(['user', 'server', 'bot']);
 
         return Inertia::render('Admin/Orders/Show', [
-            'order' => new GoldTransactionResource($order)
+            'order' => new GoldTransactionResource($order),
         ]);
     }
-
 
     /**
      * Update order status
@@ -188,7 +177,7 @@ class ImportController extends Controller
     public function cancel(Request $request, GoldTransaction $order)
     {
         $request->validate([
-            'cancel_reason' => 'required|string|max:500'
+            'cancel_reason' => 'required|string|max:500',
         ]);
 
         $this->transition(

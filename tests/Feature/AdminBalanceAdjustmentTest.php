@@ -257,6 +257,34 @@ class AdminBalanceAdjustmentTest extends TestCase
                 ->where('transactions.data.0.user.id', $viewer->id));
     }
 
+    public function test_transaction_search_cannot_escape_the_user_owned_scope(): void
+    {
+        $viewer = User::factory()->create();
+        $otherUser = User::factory()->create();
+        $viewer->assignRole('ctv');
+        $viewer->givePermissionTo(AppPermission::TransactionsView->value);
+
+        $ownTransaction = $this->recordTransaction($viewer, 5000);
+        $otherTransaction = $this->recordTransaction($otherUser, 999999);
+
+        $this->actingAs($viewer)
+            ->get(route('admin.transactions.index', ['search' => '#'.$otherTransaction->id]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page->has('transactions.data', 0));
+
+        $this->actingAs($viewer)
+            ->get(route('admin.transactions.index', ['search' => 'user_id:'.$otherUser->id]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page->has('transactions.data', 0));
+
+        $this->actingAs($viewer)
+            ->get(route('admin.transactions.index', ['search' => '#'.$ownTransaction->id]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->has('transactions.data', 1)
+                ->where('transactions.data.0.id', $ownTransaction->id));
+    }
+
     public function test_super_admin_can_view_every_users_transaction_history(): void
     {
         $superAdmin = User::factory()->create();

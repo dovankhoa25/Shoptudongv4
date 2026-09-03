@@ -2,12 +2,14 @@
 
 namespace App\Filters;
 
-use Illuminate\Http\Request;
+use App\Support\AdminTableSearch;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Http\Request;
 
 class NickFilter
 {
     protected $request;
+
     protected $builder;
 
     public function __construct(Request $request)
@@ -19,21 +21,8 @@ class NickFilter
     {
         $this->builder = $builder;
 
-
         if ($this->request->filled('search')) {
-            $search = $this->request->search;
-
-            $this->builder->where(function ($query) use ($search) {
-                $query->where('account_name', 'LIKE', '%' . $search . '%');
-
-                // Nếu search là số, thì tìm theo id luôn
-                if (is_numeric($search)) {
-                    $query->orWhere('id', $search);
-                }
-                $query->orWhereHas('user', function ($userQuery) use ($search) {
-                    $userQuery->where('username', 'LIKE', '%' . $search . '%');
-                });
-            });
+            AdminTableSearch::applyPreset($this->builder, $this->request->input('search'), 'nicks');
         }
         // Trong NickFilter.php
         if ($this->request->filled('date_from')) {

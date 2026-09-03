@@ -11,6 +11,29 @@ class CallbackRequest extends FormRequest
         return true;
     }
 
+    protected function prepareForValidation(): void
+    {
+        $stringFields = [
+            'code',
+            'serial',
+            'callback_sign',
+            'trans_id',
+            'message',
+        ];
+
+        $normalized = [];
+
+        foreach ($stringFields as $field) {
+            $value = $this->input($field);
+
+            if ($this->exists($field) && $value !== null && is_scalar($value)) {
+                $normalized[$field] = (string) $value;
+            }
+        }
+
+        $this->merge($normalized);
+    }
+
     public function rules(): array
     {
         return [

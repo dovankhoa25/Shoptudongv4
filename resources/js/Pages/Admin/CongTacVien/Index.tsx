@@ -367,6 +367,7 @@ export default function CongTacVienPage() {
                 columns={columns}
                 loading={loading}
                 searchValue={filters.search}
+                searchPreset="users"
                 title="Quản lý cộng tác viên"
                 description="Danh sách tất cả cộng tác viên trong hệ thống"
                 pagination={{

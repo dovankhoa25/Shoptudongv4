@@ -11,6 +11,7 @@ use App\Http\Resources\User\CtvResource;
 use App\Models\User;
 use App\Models\UserAuthProvider;
 use App\Services\TransactionService;
+use App\Support\AdminTableSearch;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -34,18 +35,7 @@ class UserController extends Controller
         $users = User::query()
             ->with('roles:id,name')
             ->when($filters['search'] ?? null, function ($query, string $search) {
-                $search = trim($search);
-
-                if (preg_match('/^#(\d+)$/', $search, $matches) === 1) {
-                    $query->whereKey((int) $matches[1]);
-
-                    return;
-                }
-
-                $query->where(function ($query) use ($search) {
-                    $query->where('username', 'like', "%{$search}%")
-                        ->orWhere('email', 'like', "%{$search}%");
-                });
+                AdminTableSearch::applyPreset($query, $search, 'users');
             })
             ->when($filters['role'] ?? null, fn ($query, string $role) => $query->whereHas('roles', fn ($query) => $query->where('name', $role)))
             ->when(array_key_exists('is_locked', $filters), function ($query) use ($filters) {

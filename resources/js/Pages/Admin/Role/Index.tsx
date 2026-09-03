@@ -172,6 +172,7 @@ export default function RolePage() {
                 columns={columns}
                 loading={loading}
                 searchValue={filters.search}
+                searchPreset="roles"
                 title="Quản lý vai trò"
                 description="Tạo vai trò và gán các quyền được phép sử dụng"
                 pagination={{

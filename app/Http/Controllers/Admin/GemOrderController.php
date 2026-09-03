@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Services\TransactionHistoryService;
 use App\Services\TransactionService;
 use App\Services\UserRealtimeNotifier;
+use App\Support\AdminTableSearch;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -346,14 +347,7 @@ class GemOrderController extends Controller
 
         if ($request->filled('search')) {
             $search = trim($request->string('search')->toString());
-            $query->where(function (Builder $builder) use ($search): void {
-                $builder->where('character_name', 'like', "%{$search}%")
-                    ->orWhereKey(is_numeric($search) ? (int) $search : 0)
-                    ->orWhereHas('user', function (Builder $userQuery) use ($search): void {
-                        $userQuery->where('username', 'like', "%{$search}%")
-                            ->orWhere('email', 'like', "%{$search}%");
-                    });
-            });
+            AdminTableSearch::applyPreset($query, $search, 'gemOrders');
         }
     }
 

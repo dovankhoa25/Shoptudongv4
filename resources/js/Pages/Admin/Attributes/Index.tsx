@@ -308,6 +308,7 @@ export default function AttributePage() {
                 columns={columns}
                 loading={loading}
                 searchValue={filters.search}
+                searchPreset="attributes"
                 title="Quản lý thuộc tính"
                 description="Danh sách tất cả các thuộc tính và options trong hệ thống"
                 pagination={{

@@ -175,6 +175,7 @@ export default function TransactionsPage() {
             columns={columns}
             loading={loading}
             searchValue={filters.search}
+            searchPreset="transactions"
             searchPlaceholder="Tìm user, email, admin hoặc lý do..."
             title="Lịch sử số dư"
             description={`${transactions.meta.total.toLocaleString('vi-VN')} giao dịch đã được ghi nhận`}

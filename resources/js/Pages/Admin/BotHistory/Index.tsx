@@ -422,6 +422,7 @@ export default function BotHistoryPage() {
             columns={columns}
             loading={loading}
             searchValue={currentFilters.search || ''}
+            searchPreset="botHistory"
             title="Lịch sử thay đổi"
             description="Toàn bộ lịch sử thay đổi của tất cả đối tượng trong hệ thống"
             pagination={{

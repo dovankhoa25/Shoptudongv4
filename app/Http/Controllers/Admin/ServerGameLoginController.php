@@ -6,8 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\ServerGameLogin\ServerGameLoginResource;
 use App\Models\Bot;
 use App\Models\GemBot;
-use App\Models\Server;
 use App\Models\ServerGameLogin;
+use App\Support\AdminTableSearch;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Redirect;
 use Inertia\Inertia;
@@ -18,12 +18,7 @@ class ServerGameLoginController extends Controller
     {
         $servers = ServerGameLogin::query()
             ->when($request->filled('search'), function ($query) use ($request): void {
-                $search = trim((string) $request->input('search'));
-                $query->where(function ($query) use ($search): void {
-                    $query->where('name', 'like', "%{$search}%")
-                        ->orWhere('ip', 'like', "%{$search}%")
-                        ->orWhere('port', 'like', "%{$search}%");
-                });
+                AdminTableSearch::applyPreset($query, $request->input('search'), 'serverGameLogins');
             })
             ->latest()
             ->paginate(20)
@@ -34,8 +29,6 @@ class ServerGameLoginController extends Controller
             'filters' => $request->only('search'),
         ]);
     }
-
-
 
     public function store(Request $request)
     {
@@ -55,13 +48,11 @@ class ServerGameLoginController extends Controller
         return Redirect::route('admin.server-game-logins.index')->with('success', 'Đã tạo tài khoản server game.');
     }
 
-
-
     public function update(Request $request, ServerGameLogin $server)
     {
         $request->validate([
-            'name' => 'required|string|max:100|unique:server_game_login,name,' . $server->id,
-            'ip' => 'required|string|max:50|unique:server_game_login,ip,' . $server->id,
+            'name' => 'required|string|max:100|unique:server_game_login,name,'.$server->id,
+            'ip' => 'required|string|max:50|unique:server_game_login,ip,'.$server->id,
             'port' => 'required|string|max:50',
 
         ]);

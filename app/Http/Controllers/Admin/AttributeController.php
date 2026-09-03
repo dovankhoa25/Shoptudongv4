@@ -3,13 +3,14 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Http\Requests\Attribute\StoreAttributeRequest;
-use App\Http\Requests\Attribute\UpdateAttributeRequest;
 use App\Http\Requests\Attribute\StoreAttributeOptionRequest;
+use App\Http\Requests\Attribute\StoreAttributeRequest;
 use App\Http\Requests\Attribute\UpdateAttributeOptionRequest;
+use App\Http\Requests\Attribute\UpdateAttributeRequest;
 use App\Http\Resources\Attribute\AttributeResource;
 use App\Models\Attribute;
 use App\Models\AttributeOption;
+use App\Support\AdminTableSearch;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 
@@ -18,15 +19,15 @@ class AttributeController extends Controller
     public function index(Request $request)
     {
         $attributes = Attribute::query()
-            ->when($request->filled('status'), fn($q) => $q->where('status', $request->status))
+            ->when($request->filled('status'), fn ($q) => $q->where('status', $request->status))
+            ->when($request->filled('search'), fn ($query) => AdminTableSearch::applyPreset($query, $request->input('search'), 'attributes'))
             ->with('options')
             ->orderBy('name')
             ->paginate(20);
 
-
         return Inertia::render('Admin/Attributes/Index', [
             'attributes' => AttributeResource::collection($attributes),
-            'filters' => $request->only('status'),
+            'filters' => $request->only('search', 'status'),
         ]);
     }
 
@@ -53,7 +54,6 @@ class AttributeController extends Controller
         return redirect()->back()
             ->with('success', 'Xóa thành công!');
     }
-
 
     public function attribute()
     {

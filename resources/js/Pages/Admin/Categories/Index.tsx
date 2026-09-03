@@ -290,6 +290,7 @@ export default function CategoryPage() {
                 columns={columns}
                 loading={loading}
                 searchValue={filters.search}
+                searchPreset="categories"
                 title="Quản lý danh mục"
                 description="Danh sách tất cả các danh mục game trong hệ thống"
                 pagination={{

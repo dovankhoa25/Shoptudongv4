@@ -9,24 +9,21 @@ use App\Http\Requests\RandomNick\UpdateRandomNickRequest;
 use App\Http\Resources\RandomNick\RandomNickResource;
 use App\Models\RandomBox;
 use App\Models\RandomNick;
-use Illuminate\Support\Facades\DB;
+use App\Support\AdminTableSearch;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 
 class RandomNickController extends Controller
 {
-
     public function index(Request $request)
     {
         $randomNicks = RandomNick::query()
             ->with(['randomBox.category'])
-            ->when($request->filled('random_box_id'), fn($q) => $q->where('random_box_id', $request->random_box_id))
-            ->when($request->filled('status'), fn($q) => $q->where('status', $request->status))
+            ->when($request->filled('random_box_id'), fn ($q) => $q->where('random_box_id', $request->random_box_id))
+            ->when($request->filled('status'), fn ($q) => $q->where('status', $request->status))
             ->when($request->filled('search'), function ($q) use ($request) {
-                $q->where(function ($query) use ($request) {
-                    $query->where('account', 'like', '%' . $request->search . '%')
-                        ->orWhere('description', 'like', '%' . $request->search . '%');
-                });
+                AdminTableSearch::applyPreset($q, $request->input('search'), 'randomNicks');
             })
             ->orderBy('created_at', 'desc')
             ->paginate(20);
@@ -122,7 +119,7 @@ class RandomNickController extends Controller
                 if ($sharedImage) {
                     $nick->addMedia($sharedImage->getPathname())
                         ->usingName($sharedImage->getClientOriginalName())
-                        ->usingFileName(time() . '_' . $nick->id . '.' . $sharedImage->getClientOriginalExtension())
+                        ->usingFileName(time().'_'.$nick->id.'.'.$sharedImage->getClientOriginalExtension())
                         ->toMediaCollection('image');
                 }
 
@@ -132,13 +129,14 @@ class RandomNickController extends Controller
             DB::commit();
 
             $count = count($createdNicks);
+
             return redirect()->back()
                 ->with('success', "Đã tạo thành công {$count} nick random!");
         } catch (\Exception $e) {
             DB::rollback();
 
             return redirect()->back()
-                ->with('error', 'Có lỗi xảy ra khi tạo nick: ' . $e->getMessage());
+                ->with('error', 'Có lỗi xảy ra khi tạo nick: '.$e->getMessage());
         }
     }
 
@@ -178,7 +176,7 @@ class RandomNickController extends Controller
     public function changeStatus(Request $request, RandomNick $randomNick)
     {
         $request->validate([
-            'status' => 'required|in:available,taken,deleted'
+            'status' => 'required|in:available,taken,deleted',
         ]);
 
         $randomNick->update(['status' => $request->status]);
@@ -192,16 +190,16 @@ class RandomNickController extends Controller
     {
         $randomNick = $randomBox->availableNicks()->inRandomOrder()->first();
 
-        if (!$randomNick) {
+        if (! $randomNick) {
             return response()->json([
                 'success' => false,
-                'message' => 'Hộp random này đã hết nick!'
+                'message' => 'Hộp random này đã hết nick!',
             ], 404);
         }
 
         return response()->json([
             'success' => true,
-            'data' => new RandomNickResource($randomNick)
+            'data' => new RandomNickResource($randomNick),
         ]);
     }
 }

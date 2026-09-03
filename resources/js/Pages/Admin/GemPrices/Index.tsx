@@ -380,6 +380,7 @@ export default function GemPricePage() {
                 columns={columns}
                 loading={loading}
                 searchValue={currentFilters.search || ''}
+                searchPreset="prices"
                 title="Danh sách Hệ số Giá"
                 description="Quản lý hệ số giá ngọc cho từng server"
                 pagination={{

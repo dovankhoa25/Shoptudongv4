@@ -4,9 +4,9 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Http\Resources\Spin\SpinResource;
-use App\Models\Spin;
 use App\Models\Category;
-
+use App\Models\Spin;
+use App\Support\AdminTableSearch;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 
@@ -18,10 +18,7 @@ class SpinController extends Controller
             ->with('category')
             ->withCount(['rewards', 'results', 'tickets']);
 
-        // Search
-        if ($request->filled('search')) {
-            $query->where('name', 'like', '%' . $request->search . '%');
-        }
+        AdminTableSearch::applyPreset($query, $request->input('search'), 'spins');
 
         // Filter by type
         if ($request->filled('type')) {
@@ -102,7 +99,7 @@ class SpinController extends Controller
             'rewards',
             'results' => function ($query) {
                 $query->with('user')->latest()->limit(50);
-            }
+            },
         ]);
 
         return response()->json(new SpinResource($spin));

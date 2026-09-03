@@ -517,6 +517,7 @@ export default function SpinPage() {
                 columns={columns}
                 loading={loading}
                 searchValue={currentFilters.search || ''}
+                searchPreset="spins"
                 title="Quản lý Vòng Quay"
                 description="Danh sách tất cả các vòng quay trong hệ thống"
                 pagination={{

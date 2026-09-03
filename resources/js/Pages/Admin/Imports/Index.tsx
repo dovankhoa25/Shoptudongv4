@@ -563,6 +563,7 @@ export default function ImportPage() {
                 columns={columns}
                 loading={loading}
                 searchValue={currentFilters.search || ''}
+                searchPreset="goldOrders"
                 title="Quản lý Đơn hàng Bán vàng"
                 description="Danh sách tất cả đơn hàng bán vàng"
                 pagination={{

@@ -3,10 +3,10 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Models\SpinTicket;
-use App\Models\User;
-use App\Models\Spin;
 use App\Http\Resources\Spin\SpinTicketResource;
+use App\Models\Spin;
+use App\Models\SpinTicket;
+use App\Support\AdminTableSearch;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
@@ -26,12 +26,7 @@ class SpinTicketController extends Controller
             $query->where('spin_id', $request->spin_id);
         }
 
-        if ($request->filled('search')) {
-            $query->whereHas('user', function ($q) use ($request) {
-                $q->where('name', 'like', '%' . $request->search . '%')
-                    ->orWhere('email', 'like', '%' . $request->search . '%');
-            });
-        }
+        AdminTableSearch::applyPreset($query, $request->input('search'), 'spinTickets');
 
         $tickets = $query->latest()
             ->paginate(50)
@@ -63,8 +58,6 @@ class SpinTicketController extends Controller
         ]);
     }
 
-
-
     public function edit(SpinTicket $ticket)
     {
         // For AJAX request
@@ -81,7 +74,6 @@ class SpinTicketController extends Controller
             'spins' => $spins,
         ]);
     }
-
 
     // app/Http/Controllers/Admin/SpinTicketController.php
 
@@ -101,7 +93,7 @@ class SpinTicketController extends Controller
         if ($existingTicket) {
             // ✅ Nếu đã có ticket, CỘNG thêm lượt
             $existingTicket->update([
-                'turns_remaining' => $existingTicket->turns_remaining + $validated['turns_remaining']
+                'turns_remaining' => $existingTicket->turns_remaining + $validated['turns_remaining'],
             ]);
 
             $ticket = $existingTicket;
@@ -110,7 +102,7 @@ class SpinTicketController extends Controller
             $ticket = SpinTicket::create([
                 'user_id' => $validated['user_id'],
                 'spin_id' => $validated['spin_id'],
-                'turns_remaining' => $validated['turns_remaining']
+                'turns_remaining' => $validated['turns_remaining'],
             ]);
         }
 
@@ -126,7 +118,7 @@ class SpinTicketController extends Controller
 
         // ✅ FIXED - Update trực tiếp, không dùng DB::raw
         $ticket->update([
-            'turns_remaining' => $validated['turns_remaining']
+            'turns_remaining' => $validated['turns_remaining'],
         ]);
 
         return redirect()->route('admin.spin-tickets.index')
@@ -153,14 +145,14 @@ class SpinTicketController extends Controller
             if ($existingTicket) {
                 // ✅ Nếu đã có, CỘNG thêm
                 $existingTicket->update([
-                    'turns_remaining' => $existingTicket->turns_remaining + $validated['turns']
+                    'turns_remaining' => $existingTicket->turns_remaining + $validated['turns'],
                 ]);
             } else {
                 // ✅ Nếu chưa có, tạo mới
                 SpinTicket::create([
                     'user_id' => $userId,
                     'spin_id' => $validated['spin_id'],
-                    'turns_remaining' => $validated['turns']
+                    'turns_remaining' => $validated['turns'],
                 ]);
             }
 
@@ -170,6 +162,7 @@ class SpinTicketController extends Controller
         return redirect()->route('admin.spin-tickets.index')
             ->with('success', "Đã cấp lượt quay cho {$successCount} người dùng!");
     }
+
     public function destroy(SpinTicket $ticket)
     {
         $ticket->delete();

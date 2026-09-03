@@ -275,6 +275,7 @@ export default function GoldPricePage() {
                 columns={columns}
                 loading={loading}
                 searchValue={filters.search}
+                searchPreset="prices"
                 title="Quản lý giá vàng"
                 description="Danh sách giá vàng theo từng server"
                 pagination={{

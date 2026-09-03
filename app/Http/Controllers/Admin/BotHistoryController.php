@@ -8,6 +8,7 @@ use App\Models\Bot;
 use App\Models\BotHistory;
 use App\Models\GemBot;
 use App\Models\Server;
+use App\Support\AdminTableSearch;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 
@@ -91,6 +92,7 @@ class BotHistoryController extends Controller
         if ($request->filled('date_to')) {
             $query->whereDate('created_at', '<=', $request->date_to);
         }
+        AdminTableSearch::applyPreset($query, $request->input('search'), 'botHistory');
 
         $histories = $query->paginate(20)->withQueryString();
 
@@ -105,11 +107,11 @@ class BotHistoryController extends Controller
                 ->get()
                 ->each(function ($bot) use (&$entityMap) {
                     $entityMap["bot:{$bot->id}"] = [
-                        'name'         => $bot->name,
+                        'name' => $bot->name,
                         'account_name' => $bot->account_name,
-                        'server_id'    => $bot->server_id,
-                        'server_name'  => $bot->server?->name,
-                        'deleted'      => false,
+                        'server_id' => $bot->server_id,
+                        'server_name' => $bot->server?->name,
+                        'deleted' => false,
                     ];
                 });
         }
@@ -122,11 +124,11 @@ class BotHistoryController extends Controller
                 ->get()
                 ->each(function ($bot) use (&$entityMap) {
                     $entityMap["gem_bot:{$bot->id}"] = [
-                        'name'         => $bot->name,
+                        'name' => $bot->name,
                         'account_name' => $bot->account_name,
-                        'server_id'    => $bot->server_id,
-                        'server_name'  => $bot->server?->name,
-                        'deleted'      => false,
+                        'server_id' => $bot->server_id,
+                        'server_name' => $bot->server?->name,
+                        'deleted' => false,
                     ];
                 });
         }
@@ -136,7 +138,7 @@ class BotHistoryController extends Controller
 
         $histories->getCollection()->each(function ($history) use ($entityMap, &$deletedServerIds) {
             $key = "{$history->entity_type}:{$history->entity_id}";
-            if (!isset($entityMap[$key]) && !empty($history->old_data['server_id'])) {
+            if (! isset($entityMap[$key]) && ! empty($history->old_data['server_id'])) {
                 $deletedServerIds->push($history->old_data['server_id']);
             }
         });
@@ -158,12 +160,12 @@ class BotHistoryController extends Controller
                 $old = $history->old_data ?? [];
                 $serverId = $old['server_id'] ?? null;
 
-                $history->entity_info = !empty($old) ? [
-                    'name'         => $old['name'] ?? null,
+                $history->entity_info = ! empty($old) ? [
+                    'name' => $old['name'] ?? null,
                     'account_name' => $old['account_name'] ?? null,
-                    'server_id'    => $serverId,
-                    'server_name'  => $serverId ? ($serverNames[$serverId] ?? null) : null,
-                    'deleted'      => true,
+                    'server_id' => $serverId,
+                    'server_name' => $serverId ? ($serverNames[$serverId] ?? null) : null,
+                    'deleted' => true,
                 ] : null;
             }
 
@@ -172,21 +174,22 @@ class BotHistoryController extends Controller
 
         $entityTypes = BotHistory::distinct()
             ->pluck('entity_type')
-            ->map(fn($type) => [
+            ->map(fn ($type) => [
                 'label' => class_basename($type),
                 'value' => $type,
             ])
             ->values();
 
         return Inertia::render('Admin/BotHistory/Index', [
-            'histories'   => BotHistoryResource::collection($histories),
-            'filters'     => $request->only([
+            'histories' => BotHistoryResource::collection($histories),
+            'filters' => $request->only([
                 'source',
                 'action',
                 'entity_type',
                 'entity_id',
                 'date_from',
                 'date_to',
+                'search',
             ]),
             'entityTypes' => $entityTypes,
         ]);

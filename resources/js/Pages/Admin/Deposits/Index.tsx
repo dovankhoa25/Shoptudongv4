@@ -229,7 +229,7 @@ export default function DepositsPage() {
                 <DataTable<BankTopupItem>
                     storageKey="admin-bank-topups-table" density="compact" rowKey="id" selectable={false} striped stickyHeader
                     data={bankTopups.data} columns={bankColumns} loading={bankTable.loading}
-                    searchValue={bankTable.filters.search} searchPlaceholder="Tìm user, ID SePay, mã thanh toán hoặc tham chiếu..."
+                    searchValue={bankTable.filters.search} searchPreset="bankTopups" searchPlaceholder="Tìm user, ID SePay, mã thanh toán hoặc tham chiếu..."
                     title="Lịch sử nạp ngân hàng" description={`${bankTopups.meta.total.toLocaleString('vi-VN')} webhook đã xử lý`}
                     onView={item => setDetail({ type: 'bank', item })} onSearch={bankTable.handleSearch}
                     onReset={bankTable.handleResetFilters} onFiltersChange={bankTable.setColumnFilters}
@@ -241,7 +241,7 @@ export default function DepositsPage() {
                 <DataTable<CardDepositItem>
                     storageKey="admin-card-deposits-table" density="compact" rowKey="id" selectable={false} striped stickyHeader
                     data={cards.data} columns={cardColumns} loading={cardTable.loading}
-                    searchValue={cardTable.filters.search} searchPlaceholder="Tìm user, mã thẻ, serial hoặc mã đối tác..."
+                    searchValue={cardTable.filters.search} searchPreset="cards" searchPlaceholder="Tìm user, mã thẻ, serial hoặc mã đối tác..."
                     title="Lịch sử nạp thẻ" description={`${cards.meta.total.toLocaleString('vi-VN')} yêu cầu nạp thẻ`}
                     onView={item => setDetail({ type: 'card', item })} onSearch={cardTable.handleSearch}
                     onReset={cardTable.handleResetFilters} onFiltersChange={cardTable.setColumnFilters}

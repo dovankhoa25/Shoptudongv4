@@ -445,6 +445,7 @@ export default function GemBotPage() {
                 columns={columns}
                 loading={loading}
                 searchValue={currentFilters.search || ''}
+                searchPreset="bots"
                 title="Danh sách Bot Ngọc"
                 description="Quản lý tất cả bot bán ngọc trong hệ thống"
                 pagination={{

@@ -405,6 +405,7 @@ export default function SpinResultPage() {
                 columns={columns}
                 loading={loading}
                 searchValue={currentFilters.search || ''}
+                searchPreset="spinResults"
                 title="Lịch sử quay thưởng"
                 description="Danh sách tất cả các lượt quay trong hệ thống"
                 pagination={{

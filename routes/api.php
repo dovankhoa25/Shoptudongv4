@@ -4,9 +4,9 @@ use App\Http\Controllers\Api\ApiGemBotController;
 use App\Http\Controllers\Api\ApiGemOrderController;
 use App\Http\Controllers\Api\ApiOrderController;
 use App\Http\Controllers\Api\App\CarotRechargeController as AppCarotRechargeController;
-use App\Http\Controllers\Api\Auth\LoginController;
-use App\Http\Controllers\Api\Auth\GoogleLoginController;
 use App\Http\Controllers\Api\Auth\FacebookLoginController;
+use App\Http\Controllers\Api\Auth\GoogleLoginController;
+use App\Http\Controllers\Api\Auth\LoginController;
 use App\Http\Controllers\Api\Auth\LogoutController;
 use App\Http\Controllers\Api\Auth\PasswordController;
 use App\Http\Controllers\Api\Auth\PasswordResetController;
@@ -30,6 +30,7 @@ use App\Http\Controllers\Api\ServerController;
 use App\Http\Controllers\Api\ServiceOrderController;
 use App\Http\Controllers\Api\WebhookController;
 use App\Http\Middleware\EnsureSsoAdmin;
+use App\Http\Middleware\LogCardPartnerCallbackAttempt;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Broadcast;
 use Illuminate\Support\Facades\Route;
@@ -87,7 +88,11 @@ Route::middleware('throttle:60,1')->group(function (): void {
 });
 
 Route::post('/charge/callback', [RechargeController::class, 'callback'])
-    ->middleware('throttle:financial-webhook');
+    ->middleware([
+        // TEMP: comment dòng dưới sau khi kiểm tra TSR có gửi callback tới Laravel hay không.
+        // LogCardPartnerCallbackAttempt::class,
+        'throttle:financial-webhook',
+    ]);
 Route::post('/webhook/sepay', [WebhookController::class, 'handle'])
     ->middleware('throttle:financial-webhook');
 

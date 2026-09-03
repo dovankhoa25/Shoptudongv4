@@ -406,6 +406,7 @@ export default function ServiceOrdersTable({
             columns={columns}
             loading={loading}
             searchValue={filters.search}
+            searchPreset="serviceOrders"
             title={title}
             description={description}
             pagination={{

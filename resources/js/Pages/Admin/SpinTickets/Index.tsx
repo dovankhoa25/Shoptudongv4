@@ -376,6 +376,7 @@ export default function SpinTicketPage() {
                 columns={columns}
                 loading={loading}
                 searchValue={currentFilters.search || ''}
+                searchPreset="spinTickets"
                 title="Quản lý Lượt Quay"
                 description="Danh sách người dùng có lượt quay"
                 pagination={{

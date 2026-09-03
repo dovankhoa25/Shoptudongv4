@@ -9,6 +9,7 @@ use App\Models\User;
 use App\Models\WithdrawalRequest;
 use App\Services\TelegramService;
 use App\Services\TransactionService;
+use App\Support\AdminTableSearch;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -17,7 +18,6 @@ use Inertia\Inertia;
 
 class WithdrawalRequestController extends Controller
 {
-
     use AuthorizesRequests;
 
     public function index(Request $request)
@@ -25,7 +25,7 @@ class WithdrawalRequestController extends Controller
         $query = WithdrawalRequest::with([
             'user:id,username,email',
             'user.roles:id,name',
-            'approver:id,username'
+            'approver:id,username',
         ]);
 
         // Apply filters
@@ -44,7 +44,7 @@ class WithdrawalRequestController extends Controller
         return Inertia::render('Admin/Withdrawals/Index', [
             'withdrawals' => WithdrawalRequestResource::collection($withdrawals),
             'filters' => $request->only(['search', 'status', 'date_from', 'date_to']),
-            'stats' => $stats
+            'stats' => $stats,
         ]);
     }
 
@@ -67,18 +67,7 @@ class WithdrawalRequestController extends Controller
             $query->whereDate('created_at', '<=', $request->date_to);
         }
 
-        // Search by user or bank info
-        if ($request->filled('search')) {
-            $query->where(function ($q) use ($request) {
-                $q->where('id', 'like', '%' . $request->search . '%')
-                    ->orWhere('bank_account_number', 'like', '%' . $request->search . '%')
-                    ->orWhere('bank_account_name', 'like', '%' . $request->search . '%')
-                    ->orWhereHas('user', function ($userQuery) use ($request) {
-                        $userQuery->where('username', 'like', '%' . $request->search . '%')
-                            ->orWhere('email', 'like', '%' . $request->search . '%');
-                    });
-            });
-        }
+        AdminTableSearch::applyPreset($query, $request->input('search'), 'withdrawals');
 
         return $query;
     }
@@ -107,8 +96,6 @@ class WithdrawalRequestController extends Controller
         ];
     }
 
-
-
     public function store(Request $request)
     {
         $request->validate([
@@ -132,8 +119,9 @@ class WithdrawalRequestController extends Controller
                 ->where('balance', '>=', $request->amount)
                 ->decrement('balance', $request->amount);
 
-            if (!$affected) {
+            if (! $affected) {
                 DB::rollBack();
+
                 return redirect()->back()->withErrors(['amount' => 'Số dư không đủ để thực hiện rút tiền.']);
             }
 
@@ -172,21 +160,21 @@ class WithdrawalRequestController extends Controller
             DB::commit();
 
             // Gửi thông báo Telegram qua queue
-            (new TelegramService())->sendQueue(
+            (new TelegramService)->sendQueue(
                 "
         🛒 <b>Rút Tiền</b>\n
         👤 user : <b>{$user->username}</b>\n
-        💰 số tiền: " . number_format(-$request->amount, 0, ',', '.') . " VNĐ\n
-        ⏰ " . now()->format('H:i d/m/Y')
+        💰 số tiền: ".number_format(-$request->amount, 0, ',', '.')." VNĐ\n
+        ⏰ ".now()->format('H:i d/m/Y')
             );
+
             return redirect()->back()->with('success', 'Yêu cầu rút tiền đã được gửi.');
         } catch (\Exception $e) {
             DB::rollBack();
+
             return redirect()->back()->withErrors(['error' => 'Có lỗi xảy ra, vui lòng thử lại sau.']);
         }
     }
-
-
 
     public function approve(Request $request, WithdrawalRequest $withdrawal)
     {
@@ -242,11 +230,10 @@ class WithdrawalRequestController extends Controller
             return back()->with('success', 'Đã duyệt yêu cầu rút tiền thành công');
         } catch (\Exception $e) {
             DB::rollBack();
+
             return back()->with('error', $e->getMessage());
         }
     }
-
-
 
     public function reject(Request $request, WithdrawalRequest $withdrawal)
     {
@@ -256,7 +243,7 @@ class WithdrawalRequestController extends Controller
 
         $validated = $request->validate([
             'note' => 'required|string|max:1000',
-            'refund_amount' => 'nullable|numeric|min:0|max:' . $withdrawal->amount,
+            'refund_amount' => 'nullable|numeric|min:0|max:'.$withdrawal->amount,
         ]);
 
         DB::beginTransaction();
@@ -306,14 +293,13 @@ class WithdrawalRequestController extends Controller
                 );
             }
 
-
-
             DB::commit();
 
             return back()->with('success', "Đã từ chối yêu cầu rút tiền và hoàn {$refundAmount} VNĐ");
         } catch (\Exception $e) {
             DB::rollBack();
-            return back()->with('error', 'Có lỗi xảy ra: ' . $e->getMessage());
+
+            return back()->with('error', 'Có lỗi xảy ra: '.$e->getMessage());
         }
     }
 

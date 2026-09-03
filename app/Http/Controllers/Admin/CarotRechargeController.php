@@ -7,8 +7,8 @@ use App\Http\Resources\Admin\CarotRechargeResource;
 use App\Http\Resources\Api\CarotRechargeStatisticResource;
 use App\Models\CarotRecharge;
 use App\Models\CarotRechargeStatistic;
+use App\Support\AdminTableSearch;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 
 class CarotRechargeController extends Controller
@@ -59,17 +59,7 @@ class CarotRechargeController extends Controller
             $query->whereDate('created_at', '<=', $request->date_to);
         }
 
-        if ($request->filled('search')) {
-            $search = $request->search;
-            $query->where(function ($q) use ($search) {
-                $q->where('account_name', 'like', "%{$search}%")
-                    ->orWhere('transaction_code', 'like', "%{$search}%")
-                    ->orWhereHas('user', function ($userQuery) use ($search) {
-                        $userQuery->where('username', 'like', "%{$search}%")
-                            ->orWhere('email', 'like', "%{$search}%");
-                    });
-            });
-        }
+        AdminTableSearch::applyPreset($query, $request->input('search'), 'carotRecharges');
 
         return $query;
     }
@@ -98,7 +88,7 @@ class CarotRechargeController extends Controller
     {
         $type = $request->get('stat_type', CarotRechargeStatistic::TYPE_DAILY);
 
-        if (!in_array($type, [
+        if (! in_array($type, [
             CarotRechargeStatistic::TYPE_DAILY,
             CarotRechargeStatistic::TYPE_MONTHLY,
             CarotRechargeStatistic::TYPE_YEARLY,

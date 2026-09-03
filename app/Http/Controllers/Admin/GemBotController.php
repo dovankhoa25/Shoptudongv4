@@ -1,6 +1,7 @@
 <?php
 
 // app/Http/Controllers/Admin/GemBotController.php
+
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
@@ -10,6 +11,7 @@ use App\Models\Server;
 use App\Models\ServerGameLogin;
 use App\Services\BotHistoryService;
 use App\Services\InventoryMovementService;
+use App\Support\AdminTableSearch;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Redirect;
@@ -32,12 +34,7 @@ class GemBotController extends Controller
             $query->where('status', $request->status);
         }
 
-        if ($request->filled('search')) {
-            $query->where(function ($q) use ($request) {
-                $q->where('account_name', 'LIKE', '%' . $request->search . '%')
-                    ->orWhere('name', 'LIKE', '%' . $request->search . '%');
-            });
-        }
+        AdminTableSearch::applyPreset($query, $request->input('search'), 'bots');
 
         if ($request->filled('min_gems')) {
             $query->where('gem_qty', '>=', $request->min_gems);
@@ -63,10 +60,9 @@ class GemBotController extends Controller
                 'total_bots' => GemBot::count(),
                 'active_bots' => GemBot::where('status', true)->count(),
                 'total_gems' => GemBot::where('status', true)->sum('gem_qty'),
-            ]
+            ],
         ]);
     }
-
 
     /**
      * Show the form for creating a new resource.
@@ -101,19 +97,19 @@ class GemBotController extends Controller
 
         $gemBot = DB::transaction(function () use ($validated) {
             $gemBot = GemBot::create([
-            'name' => $validated['name'] ?? null,
-            'account_name' => $validated['account_name'],
-            'account_password' => $validated['account_password'],
-            'server_id' => $validated['server_id'],
-            'server_game_id' => $validated['server_game_id'],
-            'gem_qty' => $validated['gem_qty'] ?? 0,
-            'map_name' => $validated['map_name'],
-            'map_id' => $validated['map_id'],
-            'area_number' => $validated['area_number'],
-            'coordinates' => $validated['coordinates'],
-            'proxy' => $validated['proxy'],
-            'status' => $validated['status'],
-            'updated_by' => 'web',
+                'name' => $validated['name'] ?? null,
+                'account_name' => $validated['account_name'],
+                'account_password' => $validated['account_password'],
+                'server_id' => $validated['server_id'],
+                'server_game_id' => $validated['server_game_id'],
+                'gem_qty' => $validated['gem_qty'] ?? 0,
+                'map_name' => $validated['map_name'],
+                'map_id' => $validated['map_id'],
+                'area_number' => $validated['area_number'],
+                'coordinates' => $validated['coordinates'],
+                'proxy' => $validated['proxy'],
+                'status' => $validated['status'],
+                'updated_by' => 'web',
             ]);
 
             InventoryMovementService::recordGemChange(
@@ -216,7 +212,7 @@ class GemBotController extends Controller
     {
         $validated = $request->validate([
             'name' => 'nullable|string|max:255',
-            'account_name' => 'required|string|max:255|unique:gem_bots,account_name,' . $gemBot->id,
+            'account_name' => 'required|string|max:255|unique:gem_bots,account_name,'.$gemBot->id,
             'account_password' => 'nullable|string|max:255',
             'server_id' => 'required|exists:servers,id',
             'server_game_id' => 'required|exists:server_game_login,id',
@@ -386,7 +382,7 @@ class GemBotController extends Controller
 
         return response()->json([
             'message' => 'Đã đồng bộ số lượng ngọc thành công',
-            'updated_count' => count($validated['updates'])
+            'updated_count' => count($validated['updates']),
         ]);
     }
 
@@ -428,7 +424,7 @@ class GemBotController extends Controller
 
         return response()->json([
             'message' => 'Cập nhật số lượng ngọc thành công',
-            'gem_qty' => $gemBot->fresh()->gem_qty
+            'gem_qty' => $gemBot->fresh()->gem_qty,
         ]);
     }
 
@@ -438,8 +434,8 @@ class GemBotController extends Controller
     public function toggleStatus(GemBot $gemBot)
     {
         $gemBot->update([
-            'status' => !$gemBot->status,
-            'updated_by' => 'web'
+            'status' => ! $gemBot->status,
+            'updated_by' => 'web',
         ]);
 
         $status = $gemBot->status ? 'kích hoạt' : 'vô hiệu hóa';

@@ -526,6 +526,7 @@ export default function CarotRechargesPage() {
                 columns={columns}
                 loading={loading}
                 searchValue={currentFilters.search || ''}
+                searchPreset="carotRecharges"
                 title="Quản lý nạp Carot"
                 description="Danh sách tất cả các giao dịch nạp Carot trong hệ thống"
                 pagination={{

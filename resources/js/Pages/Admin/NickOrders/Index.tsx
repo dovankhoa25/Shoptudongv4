@@ -390,6 +390,7 @@ export default function NickOrdersPage() {
                 columns={columns}
                 loading={loading}
                 searchValue={currentFilters.search || ''}
+                searchPreset="nickOrders"
                 title="Lịch sử bán nick"
                 description="Quản lý và theo dõi tất cả các giao dịch bán nick"
                 pagination={{

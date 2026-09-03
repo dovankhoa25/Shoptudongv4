@@ -289,6 +289,7 @@ export default function CardPage() {
                 columns={columns}
                 loading={loading}
                 searchValue={filters.search}
+                searchPreset="cards"
                 title="Quản lý danh sách Card"
                 description="Danh sách tất cả các card trong hệ thống"
                 pagination={{

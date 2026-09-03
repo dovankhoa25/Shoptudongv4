@@ -77,4 +77,117 @@ class AdminPageSmokeTest extends TestCase
                 ->assertInertia(fn (Assert $page) => $page->component($component));
         }
     }
+
+    public function test_every_admin_table_accepts_a_regular_search_term(): void
+    {
+        $this->withoutMiddleware(ThrottleRequests::class);
+
+        Role::findOrCreate('super-admin', 'web');
+        $admin = User::factory()->create();
+        $admin->assignRole('super-admin');
+
+        $pages = [
+            '/admin/bot-history',
+            '/admin/bots',
+            '/admin/cards',
+            '/admin/cardtypes',
+            '/admin/carot-recharges',
+            '/admin/fields',
+            '/admin/frontend-clients',
+            '/admin/games/accounts',
+            '/admin/games/accounts/history',
+            '/admin/games/attributes',
+            '/admin/games/categories',
+            '/admin/games/gametypes',
+            '/admin/gem-bots',
+            '/admin/gem-orders',
+            '/admin/gem-prices',
+            '/admin/gold-prices',
+            '/admin/imports',
+            '/admin/orders',
+            '/admin/random-nicks',
+            '/admin/randombox',
+            '/admin/roles',
+            '/admin/server-game-logins',
+            '/admin/servers',
+            '/admin/services',
+            '/admin/services/orders',
+            '/admin/services/orders/receiver',
+            '/admin/spin-results',
+            '/admin/spin-tickets',
+            '/admin/spins',
+            '/admin/transactions',
+            '/admin/users',
+            '/admin/users/ctv',
+            '/admin/withdrawals',
+        ];
+
+        foreach ($pages as $url) {
+            $this->actingAs($admin)
+                ->get($url.'?search=search-probe')
+                ->assertOk();
+        }
+
+        $this->actingAs($admin)
+            ->get('/admin/deposits?card_search=search-probe&bank_search=search-probe')
+            ->assertOk();
+    }
+
+    public function test_every_admin_table_accepts_its_field_search_syntax(): void
+    {
+        $this->withoutMiddleware(ThrottleRequests::class);
+
+        Role::findOrCreate('super-admin', 'web');
+        $admin = User::factory()->create();
+        $admin->assignRole('super-admin');
+
+        $searches = [
+            '/admin/bot-history' => 'admin:search-probe',
+            '/admin/bots' => 'account:search-probe',
+            '/admin/cards' => 'user:search-probe',
+            '/admin/cardtypes' => 'telco:search-probe',
+            '/admin/carot-recharges' => 'user:search-probe',
+            '/admin/fields' => 'key:search-probe',
+            '/admin/frontend-clients' => 'domain:search-probe',
+            '/admin/games/accounts' => 'user:search-probe',
+            '/admin/games/accounts/history' => 'buyer:search-probe',
+            '/admin/games/attributes' => 'option:search-probe',
+            '/admin/games/categories' => 'template:search-probe',
+            '/admin/games/gametypes' => 'slug:search-probe',
+            '/admin/gem-bots' => 'map:search-probe',
+            '/admin/gem-orders' => 'user:search-probe',
+            '/admin/gem-prices' => 'server:search-probe',
+            '/admin/gold-prices' => 'server:search-probe',
+            '/admin/imports' => 'bot:search-probe',
+            '/admin/orders' => 'bot:search-probe',
+            '/admin/random-nicks' => 'box:search-probe',
+            '/admin/randombox' => 'category_id:999999',
+            '/admin/roles' => 'name:search-probe',
+            '/admin/server-game-logins' => 'ip:127.0.0.1',
+            '/admin/servers' => 'name:search-probe',
+            '/admin/services' => 'name:search-probe',
+            '/admin/services/orders' => 'service:search-probe',
+            '/admin/services/orders/receiver' => 'receiver:search-probe',
+            '/admin/spin-results' => 'spin:search-probe',
+            '/admin/spin-tickets' => 'user:search-probe',
+            '/admin/spins' => 'name:search-probe',
+            '/admin/transactions' => 'performer:search-probe',
+            '/admin/users' => 'username:search-probe',
+            '/admin/users/ctv' => 'email:search-probe',
+            '/admin/withdrawals' => 'approver:search-probe',
+        ];
+
+        foreach ($searches as $url => $search) {
+            $this->actingAs($admin)
+                ->get($url.'?'.http_build_query(['search' => $search]))
+                ->assertOk();
+        }
+
+        $this->actingAs($admin)
+            ->get('/admin/deposits?'.http_build_query([
+                'card_search' => 'serial:search-probe',
+                'bank_search' => 'reference:search-probe',
+            ]))
+            ->assertOk();
+    }
 }

@@ -6,6 +6,7 @@ use App\Enums\Permission as AppPermission;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\Role\RoleResource;
 use App\Models\User;
+use App\Support\AdminTableSearch;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -34,8 +35,7 @@ class RoleController extends Controller
             ]);
 
         if ($request->filled('search')) {
-            $searchTerm = $request->input('search');
-            $query->where('name', 'like', "%{$searchTerm}%");
+            AdminTableSearch::applyPreset($query, $request->input('search'), 'roles');
         }
 
         $roles = $query->paginate($perPage)->withQueryString();

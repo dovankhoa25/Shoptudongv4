@@ -312,6 +312,7 @@ export default function FieldPage() {
                 columns={columns}
                 loading={loading}
                 searchValue={filters.search}
+                searchPreset="fields"
                 title="Quản lý trường dữ liệu"
                 description="Danh sách tất cả các trường dữ liệu trong hệ thống"
                 pagination={{

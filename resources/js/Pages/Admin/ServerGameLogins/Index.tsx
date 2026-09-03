@@ -192,6 +192,7 @@ export default function ServerPage() {
                 columns={columns}
                 loading={loading}
                 searchValue={filters.search}
+                searchPreset="serverGameLogins"
                 title="Tài khoản server game"
                 description="Danh sách kết nối mà bot sử dụng để đăng nhập server game"
                 pagination={{

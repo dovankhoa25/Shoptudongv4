@@ -46,6 +46,33 @@ class AdminServiceOrderOwnershipTest extends TestCase
                 ->where('service_orders.data.0.receiver.id', $viewer->id));
     }
 
+    public function test_ctv_search_cannot_escape_the_receiver_owned_scope(): void
+    {
+        $viewer = $this->receiver('ctv');
+        $otherReceiver = $this->receiver('ctv');
+        $ownOrder = $this->orderFor($viewer);
+        $otherOrder = $this->orderFor($otherReceiver);
+
+        $viewer->givePermissionTo(AppPermission::ServiceOrdersView->value);
+
+        $this->actingAs($viewer)
+            ->get(route('admin.services.orders.receiver', ['search' => '#'.$otherOrder->id]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page->has('service_orders.data', 0));
+
+        $this->actingAs($viewer)
+            ->get(route('admin.services.orders.receiver', ['search' => 'receiver_id:'.$otherReceiver->id]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page->has('service_orders.data', 0));
+
+        $this->actingAs($viewer)
+            ->get(route('admin.services.orders.receiver', ['search' => '#'.$ownOrder->id]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->has('service_orders.data', 1)
+                ->where('service_orders.data.0.id', $ownOrder->id));
+    }
+
     public function test_admin_and_super_admin_see_every_assigned_service_order(): void
     {
         $admin = $this->receiver('admin');

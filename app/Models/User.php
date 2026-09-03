@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\AdminTableSearch;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -217,11 +218,7 @@ class User extends Authenticatable implements HasMedia
     public function scopeFilter($query, array $filters)
     {
         $query->when($filters['search'] ?? null, function ($query, $search): void {
-            $query->where(function ($query) use ($search): void {
-                $query->when(is_numeric($search), fn ($query) => $query->orWhereKey($search))
-                    ->orWhere('username', 'like', '%'.$search.'%')
-                    ->orWhere('email', 'like', '%'.$search.'%');
-            });
+            AdminTableSearch::applyPreset($query, $search, 'users');
         });
 
         $query->when($filters['role'] ?? null, function ($query, $role): void {
