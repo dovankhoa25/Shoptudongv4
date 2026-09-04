@@ -52,12 +52,53 @@ class GoldTradingApiTest extends TestCase
             ->assertJsonPath('data.0.id', $matching->id)
             ->assertJsonPath('data.0.server_id', $server->id)
             ->assertJsonPath('data.0.server_name', 'Server 1')
-            ->assertJsonPath('data.0.total_gold', 425000)
-            ->assertJsonPath('data.0.estimated_gold', 425000)
+            ->assertJsonPath('data.0.total_gold', 37000000)
+            ->assertJsonPath('data.0.estimated_gold', 37000000)
+            ->assertJsonPath('data.0.gold_bar_qty', 1)
+            ->assertJsonPath('data.0.pure_gold_qty', 0)
             ->assertJsonPath('meta.total', 1);
     }
 
     public function test_buying_gold_debits_balance_and_creates_a_linked_balance_transaction(): void
+    {
+        [$server] = $this->market();
+        $user = User::factory()->create(['balance' => 1000000]);
+        Passport::actingAs($user);
+
+        $this->postJson('/api/orders', [
+            'server_id' => $server->id,
+            'character_name' => '  Hero One  ',
+            'money_amount' => 500000,
+            'gold_type' => 'bar',
+        ])->assertCreated()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.requested_amount', 500000)
+            ->assertJsonPath('data.charged_amount', 435295)
+            ->assertJsonPath('data.unused_amount', 64705)
+            ->assertJsonPath('data.gold_total', 37000000)
+            ->assertJsonPath('data.gold_bars', 1)
+            ->assertJsonPath('data.pure_gold', 0);
+
+        $order = GoldTransaction::query()->sole();
+
+        $this->assertSame(564705, (int) $user->refresh()->balance);
+        $this->assertSame('heroone', $order->character_name);
+        $this->assertSame(435295, (int) $order->amount_vnd);
+        $this->assertSame(37000000, (int) $order->gold_qty);
+        $this->assertSame(1, (int) $order->gold_bar_qty);
+        $this->assertSame(0, (int) $order->pure_gold_qty);
+        $this->assertDatabaseHas('transactions', [
+            'user_id' => $user->id,
+            'type' => 'mua vàng',
+            'amount' => -435295,
+            'balance_before' => 1000000,
+            'balance_after' => 564705,
+            'related_type' => GoldTransaction::class,
+            'related_id' => (string) $order->id,
+        ]);
+    }
+
+    public function test_gold_purchase_below_one_bar_is_rejected_without_debiting_balance(): void
     {
         [$server] = $this->market();
         $user = User::factory()->create(['balance' => 100000]);
@@ -65,47 +106,34 @@ class GoldTradingApiTest extends TestCase
 
         $this->postJson('/api/orders', [
             'server_id' => $server->id,
-            'character_name' => '  Hero One  ',
+            'character_name' => 'Hero One',
             'money_amount' => 5000,
             'gold_type' => 'bar',
-        ])->assertCreated()
-            ->assertJsonPath('success', true)
-            ->assertJsonPath('data.gold_total', 425000)
-            ->assertJsonPath('data.gold_bars', 0)
-            ->assertJsonPath('data.pure_gold', 425000);
+        ])->assertUnprocessable()
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('data.gold_bar_qty', 0)
+            ->assertJsonPath('data.minimum_amount', 435295);
 
-        $order = GoldTransaction::query()->sole();
-
-        $this->assertSame(95000, (int) $user->refresh()->balance);
-        $this->assertSame('heroone', $order->character_name);
-        $this->assertSame(425000, (int) $order->gold_qty);
-        $this->assertSame(425000, (int) $order->pure_gold_qty);
-        $this->assertDatabaseHas('transactions', [
-            'user_id' => $user->id,
-            'type' => 'mua vàng',
-            'amount' => -5000,
-            'balance_before' => 100000,
-            'balance_after' => 95000,
-            'related_type' => GoldTransaction::class,
-            'related_id' => (string) $order->id,
-        ]);
+        $this->assertSame(100000, (int) $user->refresh()->balance);
+        $this->assertDatabaseCount('gold_transactions', 0);
+        $this->assertDatabaseCount('transactions', 0);
     }
 
     public function test_gold_purchase_with_insufficient_balance_does_not_create_an_order(): void
     {
         [$server] = $this->market();
-        $user = User::factory()->create(['balance' => 4999]);
+        $user = User::factory()->create(['balance' => 400000]);
         Passport::actingAs($user);
 
         $this->postJson('/api/orders', [
             'server_id' => $server->id,
             'character_name' => 'Hero One',
-            'money_amount' => 5000,
-            'gold_type' => 'pure',
-        ])->assertStatus(400)
-            ->assertJsonPath('success', false);
+            'money_amount' => 500000,
+            'gold_type' => 'bar',
+        ])->assertUnprocessable()
+            ->assertJsonValidationErrors('money_amount');
 
-        $this->assertSame(4999, (int) $user->refresh()->balance);
+        $this->assertSame(400000, (int) $user->refresh()->balance);
         $this->assertDatabaseCount('gold_transactions', 0);
         $this->assertDatabaseCount('transactions', 0);
     }
@@ -240,10 +268,10 @@ class GoldTradingApiTest extends TestCase
             'user_id' => $user->id,
             'server_id' => $server->id,
             'character_name' => 'hero',
-            'amount_vnd' => 5000,
-            'gold_qty' => 425000,
-            'gold_bar_qty' => 0,
-            'pure_gold_qty' => 425000,
+            'amount_vnd' => 435295,
+            'gold_qty' => 37000000,
+            'gold_bar_qty' => 1,
+            'pure_gold_qty' => 0,
             'price_at_transaction' => 85,
             'status' => GoldTransaction::STATUS_PENDING,
             'updated_by' => 'web',
