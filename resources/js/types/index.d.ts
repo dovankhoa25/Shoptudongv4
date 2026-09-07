@@ -1,3 +1,5 @@
+import type { IUser } from '@/InterFaces/user';
+
 export interface User {
     id: number;
     name?: string;
@@ -27,6 +29,7 @@ export type PageProps<
         roles: any;
         permissions: any;
         is_super_admin: boolean;
+        realtime_channel: string | null;
     };
     flash: {
         success: string | null;

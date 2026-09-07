@@ -23,7 +23,7 @@ class AdminRealtimeNotifier
                 status: $status,
                 message: $message,
                 occurredAt: now()->toIso8601String(),
-            ))->toOthers();
+            ));
         } catch (Throwable $exception) {
             // Realtime chỉ là lớp hiển thị, không được làm hỏng giao dịch chính.
             Log::warning('Admin realtime broadcast failed', [

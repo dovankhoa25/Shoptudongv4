@@ -36,6 +36,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'permission' => \App\Http\Middleware\RequirePermission::class,
             'https.required' => \App\Http\Middleware\RequireHttps::class,
             'app' => \App\Http\Middleware\CheckApiAppKey::class,
+            'unlocked.user' => \App\Http\Middleware\EnsureUnlockedUser::class,
             // 'auth.broadcast' => \App\Http\Middleware\AuthenticateBroadcasting::class,
         ]);
 

@@ -9,6 +9,7 @@ import { TabsProvider } from '@/Contexts/TabsContext';
 import AdminRealtimeProvider from './Admin/AdminRealtimeProvider';
 import { ConfigProvider, theme as antdTheme } from 'antd';
 import { useTheme } from '@/Providers/ThemeProvider';
+import ChatBubble from '@/Features/Chat/ChatBubble';
 
 interface AdminLayoutProps {
     title: string;
@@ -57,6 +58,7 @@ function AdminLayoutContent({ children, title }: { children: React.ReactNode; ti
                     </div>
                 </div>
             </div>
+            <ChatBubble mode="agent" baseUrl="/admin/chat" />
         </div>
         </ConfigProvider>
     );

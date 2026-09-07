@@ -80,6 +80,33 @@ class User extends Authenticatable implements HasMedia
         return $this->hasAnyRole(['super-admin', 'admin']);
     }
 
+    public function isChatAgent(): bool
+    {
+        return $this->hasAnyRole(['super-admin', 'admin', 'ctv'])
+            || $this->can('chats.view')
+            || $this->can('chats.reply');
+    }
+
+    public function chatConversations(): HasMany
+    {
+        return $this->hasMany(ChatConversation::class, 'customer_id');
+    }
+
+    public function assignedChatConversations(): HasMany
+    {
+        return $this->hasMany(ChatConversation::class, 'assigned_to_id');
+    }
+
+    public function chatParticipations(): HasMany
+    {
+        return $this->hasMany(ChatParticipant::class);
+    }
+
+    public function chatMessages(): HasMany
+    {
+        return $this->hasMany(ChatMessage::class, 'sender_id');
+    }
+
     public function authProviders()
     {
         return $this->hasMany(UserAuthProvider::class);

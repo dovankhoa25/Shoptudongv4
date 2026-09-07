@@ -29,6 +29,8 @@ use App\Http\Controllers\Api\RechargeController;
 use App\Http\Controllers\Api\ServerController;
 use App\Http\Controllers\Api\ServiceOrderController;
 use App\Http\Controllers\Api\WebhookController;
+use App\Http\Controllers\ChatController;
+use App\Http\Controllers\ChatRealtimeChannelController;
 use App\Http\Middleware\EnsureSsoAdmin;
 use App\Http\Middleware\LogCardPartnerCallbackAttempt;
 use Illuminate\Http\Request;
@@ -101,6 +103,45 @@ Route::prefix('app')->name('app.')->group(function (): void {
     Route::post('/carot/recharges/{id}/success', [AppCarotRechargeController::class, 'markSuccess'])->name('carot.success');
     Route::post('/carot/recharges/{id}/failed', [AppCarotRechargeController::class, 'markFailed'])->name('carot.failed');
 });
+
+Route::prefix('chat')
+    ->name('api.chat.')
+    ->middleware(['auth:api', 'unlocked.user', 'throttle:chat'])
+    ->group(function (): void {
+        Route::get('/realtime-channel', ChatRealtimeChannelController::class)
+            ->middleware(CheckToken::using('chat:read'))
+            ->name('realtime-channel.show');
+        Route::get('/conversations', [ChatController::class, 'index'])
+            ->middleware(CheckToken::using('chat:read'))
+            ->name('conversations.index');
+        Route::post('/conversations/resolve', [ChatController::class, 'resolve'])
+            ->middleware(CheckToken::using(['chat:read', 'chat:write']))
+            ->name('conversations.resolve');
+        Route::get('/contexts', [ChatController::class, 'contexts'])
+            ->middleware(CheckToken::using('chat:read'))
+            ->name('contexts.index');
+        Route::get('/agents', [ChatController::class, 'agents'])
+            ->middleware(CheckToken::using(['chat:read', 'chat:manage']))
+            ->name('agents.index');
+        Route::get('/conversations/{conversation}', [ChatController::class, 'show'])
+            ->middleware(CheckToken::using('chat:read'))
+            ->name('conversations.show');
+        Route::get('/conversations/{conversation}/messages', [ChatController::class, 'messages'])
+            ->middleware(CheckToken::using('chat:read'))
+            ->name('messages.index');
+        Route::post('/conversations/{conversation}/messages', [ChatController::class, 'send'])
+            ->middleware(CheckToken::using(['chat:read', 'chat:write']))
+            ->name('messages.store');
+        Route::patch('/conversations/{conversation}/read', [ChatController::class, 'read'])
+            ->middleware(CheckToken::using(['chat:read', 'chat:write']))
+            ->name('read');
+        Route::patch('/conversations/{conversation}/assign', [ChatController::class, 'assign'])
+            ->middleware(CheckToken::using(['chat:read', 'chat:manage']))
+            ->name('assign');
+        Route::patch('/conversations/{conversation}/status', [ChatController::class, 'updateStatus'])
+            ->middleware(CheckToken::using(['chat:read', 'chat:manage']))
+            ->name('status');
+    });
 
 Route::middleware(['auth:api', 'throttle:60,1'])->group(function (): void {
     Route::get('/auth/user', [UserController::class, 'getUser'])

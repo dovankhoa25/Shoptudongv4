@@ -53,10 +53,15 @@ class PermissionFromRoutesSeeder extends Seeder
 
         $superAdmin = Role::firstOrCreate(['name' => 'super-admin', 'guard_name' => 'web']);
         $admin = Role::firstOrCreate(['name' => 'admin', 'guard_name' => 'web']);
+        $ctv = Role::firstOrCreate(['name' => 'ctv', 'guard_name' => 'web']);
 
         // Role admin cũ vốn được bypass toàn bộ route, nên phải có đủ quyền mới trước khi đổi middleware.
         $superAdmin->syncPermissions($allSemanticPermissions);
         $admin->givePermissionTo($allSemanticPermissions);
+        $ctv->givePermissionTo([
+            AppPermission::ChatsView->value,
+            AppPermission::ChatsReply->value,
+        ]);
 
         $this->mapLegacyRolePermissions();
         $this->mapLegacyDirectUserPermissions();

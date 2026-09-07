@@ -19,6 +19,8 @@ class UserRealtimeNotifier
             'pending' => 'đang chờ xử lý',
             'processing' => 'đang được xử lý',
             'completed' => 'đã hoàn thành',
+            'success' => 'đã hoàn thành',
+            'failed' => 'thất bại',
             'cancelled' => 'đã hủy',
             'refunded' => 'đã hoàn tiền',
             default => $status,

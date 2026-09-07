@@ -20,6 +20,11 @@ enum Permission: string
     case FrontendClientsView = 'frontend-clients.view';
     case FrontendClientsManage = 'frontend-clients.manage';
 
+    case ChatsView = 'chats.view';
+    case ChatsReply = 'chats.reply';
+    case ChatsAssign = 'chats.assign';
+    case ChatsManage = 'chats.manage';
+
     case GameTypesView = 'game-types.view';
     case GameTypesManage = 'game-types.manage';
     case CategoriesView = 'categories.view';

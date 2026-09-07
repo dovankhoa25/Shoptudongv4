@@ -4,9 +4,10 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\UserSecurityLog;
-use App\Models\UserSession;
+use App\Services\ApiTokenService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Laravel\Passport\Client;
 use Laravel\Passport\ClientRepository;
 use Laravel\Passport\Http\Rules\RedirectRule;
@@ -16,8 +17,8 @@ class OAuthClientController extends Controller
     public function __construct(
         private readonly ClientRepository $clients,
         private readonly RedirectRule $redirectRule,
-    ) {
-    }
+        private readonly ApiTokenService $tokens,
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -92,16 +93,11 @@ class OAuthClientController extends Controller
     public function destroy(Request $request, string $clientId): JsonResponse
     {
         $client = $this->findOwnedClient($request, $clientId);
-        $this->clients->delete($client);
 
-        UserSession::query()
-            ->where('oauth_client_id', $client->id)
-            ->where('is_revoked', false)
-            ->update([
-                'is_revoked' => true,
-                'revoked_at' => now(),
-                'revoked_reason' => 'oauth_client_revoked',
-            ]);
+        DB::transaction(function () use ($client): void {
+            $client->forceFill(['revoked' => true])->save();
+            $this->tokens->revokeClientTokens($client->id, 'oauth_client_revoked');
+        });
 
         $this->log($request, 'oauth_client_revoked', $client);
 

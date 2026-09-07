@@ -12,9 +12,7 @@ use Illuminate\Http\Request;
 
 class SessionController extends Controller
 {
-    public function __construct(private readonly ApiTokenService $tokens)
-    {
-    }
+    public function __construct(private readonly ApiTokenService $tokens) {}
 
     public function index(Request $request): JsonResponse
     {

@@ -14,6 +14,7 @@ import {
     Home,
     Landmark,
     Menu,
+    MessageCircle,
     Package,
     Settings,
     Shield,
@@ -51,6 +52,14 @@ const menuItems: MenuItem[] = [
         icon: Home,
         description: 'Tổng quan hệ thống',
         permission: 'dashboard.view',
+    },
+    {
+        key: 'chats',
+        label: 'Hỗ trợ chat',
+        href: '/admin/chats',
+        icon: MessageCircle,
+        description: 'Tin nhắn khách hàng và phân công CTV',
+        permission: 'chats.view',
     },
     {
         key: 'users-group',

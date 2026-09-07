@@ -126,6 +126,7 @@ export const TabsProvider: React.FC<TabsProviderProps> = ({ children }) => {
 function getTabInfoFromUrl(url: string): Tab | null {
     const routeMap: Record<string, Omit<Tab, 'timestamp'>> = {
         '/admin': { id: 'dashboard', label: 'Dashboard', href: '/admin' },
+        '/admin/chats': { id: 'chats', label: 'Hỗ trợ chat', href: '/admin/chats' },
         '/admin/users': { id: 'users', label: 'Người dùng', href: '/admin/users' },
         '/admin/users/ctv': { id: 'users-ctv', label: 'CTV', href: '/admin/users/ctv' },
         '/admin/roles': { id: 'roles', label: 'Vai trò', href: '/admin/roles' },

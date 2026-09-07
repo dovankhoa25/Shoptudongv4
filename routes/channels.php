@@ -1,10 +1,23 @@
 <?php
 
 use App\Models\User;
+use App\Services\Chat\ChatRealtimeChannel;
 use Illuminate\Support\Facades\Broadcast;
+
+$canReadChatRealtime = static fn (User $user): bool => ! $user->isLocked()
+    && ($user->token() === null || $user->tokenCan('chat:read'));
 
 Broadcast::channel('User.{id}', function ($user, $id) {
     return (int) $user->id === (int) $id;
+});
+
+Broadcast::channel('Chat.User.{id}.{credential}', function (User $user, int $id, string $credential) use ($canReadChatRealtime): bool {
+    $expected = app(ChatRealtimeChannel::class)->currentForRequest(request(), refresh: true);
+
+    return (int) $user->id === $id
+        && $expected !== null
+        && hash_equals($expected, ChatRealtimeChannel::name($id, $credential))
+        && $canReadChatRealtime($user);
 });
 Broadcast::channel('authenticated', function ($user) {
     // Chỉ cần access token Passport hợp lệ.

@@ -3,17 +3,8 @@ import { Link, usePage } from '@inertiajs/react';
 import { LayoutDashboard, ShieldCheck, Users } from 'lucide-react';
 import type { PageProps } from '@/types';
 
-interface AdminPageProps extends PageProps {
-    auth: {
-        user: { username?: string } | null;
-        roles: string[];
-        permissions: string[];
-        is_super_admin: boolean;
-    };
-}
-
 export default function AdminDashboard() {
-    const { auth } = usePage<AdminPageProps>().props;
+    const { auth } = usePage<PageProps>().props;
     const permissions = auth.permissions ?? [];
     const can = (permission: string) => auth.is_super_admin || permissions.includes(permission);
 

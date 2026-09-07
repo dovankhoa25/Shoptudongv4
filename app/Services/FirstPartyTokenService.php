@@ -25,6 +25,8 @@ class FirstPartyTokenService
                 'sessions:read',
                 'sessions:revoke',
                 'balance:deposit',
+                'chat:read',
+                'chat:write',
             ]),
         ]);
     }

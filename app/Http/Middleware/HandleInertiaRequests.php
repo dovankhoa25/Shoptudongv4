@@ -2,20 +2,18 @@
 
 namespace App\Http\Middleware;
 
+use App\Services\Chat\ChatRealtimeChannel;
 use Illuminate\Http\Request;
 use Inertia\Middleware;
 
 class HandleInertiaRequests extends Middleware
 {
-
     protected $rootView = 'app';
-
 
     public function version(Request $request): ?string
     {
         return parent::version($request);
     }
-
 
     public function share(Request $request): array
     {
@@ -28,6 +26,9 @@ class HandleInertiaRequests extends Middleware
                 'roles' => $user?->getRoleNames()->values() ?? [],
                 'permissions' => $user?->getAllPermissions()->pluck('name')->values() ?? [],
                 'is_super_admin' => $user?->hasRole('super-admin') ?? false,
+                'realtime_channel' => $user
+                    ? app(ChatRealtimeChannel::class)->currentForRequest($request)
+                    : null,
             ],
             'flash' => function () use ($request) {
                 return [

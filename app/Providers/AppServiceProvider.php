@@ -17,8 +17,10 @@ use App\Models\ServiceOrder;
 use App\Models\Transaction;
 use App\Models\WithdrawalRequest;
 use App\Observers\AdminRealtimeObserver;
+use App\Services\Chat\ChatRealtimeChannel;
 use DateInterval;
 use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\RateLimiter;
@@ -32,7 +34,7 @@ class AppServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        //
+        $this->app->singleton(ChatRealtimeChannel::class);
     }
 
     // public function boot(): void
@@ -43,6 +45,13 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         Schema::defaultStringLength(191);
+
+        Relation::morphMap([
+            'service_order' => ServiceOrder::class,
+            'nick_order' => NickOrder::class,
+            'gold_transaction' => GoldTransaction::class,
+            'gem_transaction' => GemTransaction::class,
+        ]);
 
         foreach ([
             GoldTransaction::class,
@@ -67,6 +76,9 @@ class AppServiceProvider extends ServiceProvider
         RateLimiter::for('financial-webhook', fn (Request $request) => Limit::perMinute(180)
             ->by('financial-webhook:'.$request->ip())
         );
+        RateLimiter::for('chat', fn (Request $request) => Limit::perMinute(240)
+            ->by('chat:'.($request->user()?->id ?? $request->ip()))
+        );
 
         Passport::tokensCan([
             'profile:read' => 'Read your profile',
@@ -74,6 +86,9 @@ class AppServiceProvider extends ServiceProvider
             'sessions:read' => 'View your active sessions',
             'sessions:revoke' => 'Revoke your active sessions',
             'balance:deposit' => 'Submit balance deposit requests',
+            'chat:read' => 'Read your support conversations',
+            'chat:write' => 'Send messages and update read state',
+            'chat:manage' => 'Assign and manage support conversations',
             'oauth-clients:manage' => 'Manage OAuth applications',
         ]);
         Passport::defaultScopes(['profile:read']);
@@ -84,6 +99,5 @@ class AppServiceProvider extends ServiceProvider
         Passport::viewPrefix('passport');
         Event::listen(AccessTokenCreated::class, RecordAccessTokenCreated::class);
         Event::listen(AccessTokenRevoked::class, RecordAccessTokenRevoked::class);
-
     }
 }

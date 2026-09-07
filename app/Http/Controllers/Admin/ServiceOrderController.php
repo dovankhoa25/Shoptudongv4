@@ -5,17 +5,24 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\ServiceOrder\ReceiverServiceOrderResource;
 use App\Http\Resources\ServiceOrder\ServiceOrderResource;
+use App\Models\ChatConversation;
 use App\Models\ServiceOrder;
 use App\Models\User;
+use App\Services\Chat\ChatManager;
+use App\Services\Chat\ChatRealtimeNotifier;
 use App\Services\TransactionService;
 use App\Support\AdminTableSearch;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 
 class ServiceOrderController extends Controller
 {
+    public function __construct(
+        private readonly ChatManager $chatManager,
+        private readonly ChatRealtimeNotifier $chatRealtime,
+    ) {}
+
     public function index(Request $request)
     {
         $user = $request->user();
@@ -45,26 +52,76 @@ class ServiceOrderController extends Controller
 
     public function accept(Request $request, $id)
     {
-        $user = Auth::user();
+        /** @var User $user */
+        $user = $request->user();
 
-        DB::transaction(function () use ($id, $user) {
-            // Lấy và lock
+        $result = DB::transaction(function () use ($id, $user): array {
             $order = ServiceOrder::withoutReceiverOwnedScope()
+                ->forUserCategories($user)
                 ->where('id', $id)
                 ->lockForUpdate()
                 ->firstOrFail();
 
             if ($order->receiver_id !== null) {
-                return redirect()->back()
-                    ->with('error', 'Đã có người nhận rồi');
+                return ['error' => 'Đã có người nhận đơn này rồi.', 'conversation' => null];
+            }
+
+            if ($order->status !== 'pending') {
+                return ['error' => 'Đơn không còn ở trạng thái chờ nhận.', 'conversation' => null];
             }
 
             $order->receiver_id = $user->id;
             $order->status = 'approved';
             $order->save();
+
+            $conversation = null;
+            if ($user->status === User::STATUS_ACTIVE
+                && $user->isChatAgent()
+                && $user->can('chats.view')
+                && $user->can('chats.reply')) {
+                $conversation = ChatConversation::query()
+                    ->where('customer_id', $order->user_id)
+                    ->where('subject_type', 'service_order')
+                    ->where('subject_id', $order->id)
+                    ->where(function ($query): void {
+                        $query
+                            ->whereNull('assigned_to_id')
+                            ->orWhereHas('assignee.roles', fn ($roles) => $roles
+                                ->whereIn('name', ['admin', 'super-admin']));
+                    })
+                    ->lockForUpdate()
+                    ->first();
+
+                if ($conversation) {
+                    $conversation = $this->chatManager->assign($conversation, $user, $user, false);
+                }
+            }
+
+            return ['error' => null, 'conversation' => $conversation];
         });
 
-        $order = ServiceOrder::withoutReceiverOwnedScope()->with('receiver:id,username')->find($id);
+        if ($result['error']) {
+            return redirect()->back()->with('error', $result['error']);
+        }
+
+        /** @var ChatConversation|null $conversation */
+        $conversation = $result['conversation'];
+        if ($conversation) {
+            $this->chatRealtime->inbox(
+                'assigned',
+                $conversation,
+                [
+                    'id' => (int) $conversation->id,
+                    'customer_id' => (int) $conversation->customer_id,
+                    'assigned_to_id' => (int) $conversation->assigned_to_id,
+                    'category' => $conversation->category,
+                    'subject_type' => $conversation->subject_type,
+                    'subject_id' => (int) $conversation->subject_id,
+                    'status' => $conversation->status,
+                    'last_message_at' => $conversation->last_message_at?->toIso8601String(),
+                ],
+            );
+        }
 
         return redirect()->back()->with('message', 'Nhận đơn thành công!');
     }

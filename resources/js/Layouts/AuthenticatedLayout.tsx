@@ -4,6 +4,7 @@ import NavLink from '@/Components/NavLink';
 import ResponsiveNavLink from '@/Components/ResponsiveNavLink';
 import { Link, usePage } from '@inertiajs/react';
 import { PropsWithChildren, ReactNode, useState } from 'react';
+import ChatBubble from '@/Features/Chat/ChatBubble';
 
 export default function Authenticated({
     header,
@@ -33,6 +34,12 @@ export default function Authenticated({
                                 >
                                     Dashboard
                                 </NavLink>
+                                <NavLink
+                                    href={route('messages.index')}
+                                    active={route().current('messages.index')}
+                                >
+                                    Tin nhắn
+                                </NavLink>
                             </div>
                         </div>
 
@@ -45,7 +52,7 @@ export default function Authenticated({
                                                 type="button"
                                                 className="inline-flex items-center rounded-md border border-transparent bg-white px-3 py-2 text-sm font-medium leading-4 text-gray-500 transition duration-150 ease-in-out hover:text-gray-700 focus:outline-none"
                                             >
-                                                {user.name}
+                                                {user.username}
 
                                                 <svg
                                                     className="-me-0.5 ms-2 h-4 w-4"
@@ -137,12 +144,18 @@ export default function Authenticated({
                         >
                             Dashboard
                         </ResponsiveNavLink>
+                        <ResponsiveNavLink
+                            href={route('messages.index')}
+                            active={route().current('messages.index')}
+                        >
+                            Tin nhắn
+                        </ResponsiveNavLink>
                     </div>
 
                     <div className="border-t border-gray-200 pb-1 pt-4">
                         <div className="px-4">
                             <div className="text-base font-medium text-gray-800">
-                                {user.name}
+                                {user.username}
                             </div>
                             <div className="text-sm font-medium text-gray-500">
                                 {user.email}
@@ -174,6 +187,7 @@ export default function Authenticated({
             )}
 
             <main>{children}</main>
+            <ChatBubble mode="customer" baseUrl="/chat" />
         </div>
     );
 }

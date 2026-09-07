@@ -23,6 +23,8 @@ class FirstPartyUserTokenService
         'sessions:read',
         'sessions:revoke',
         'balance:deposit',
+        'chat:read',
+        'chat:write',
     ];
 
     public function __construct(

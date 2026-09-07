@@ -42,9 +42,11 @@ use App\Http\Controllers\Admin\UserCategoryController;
 use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Admin\WithdrawalRequestController;
 use App\Http\Controllers\Auth\SocialAuthController;
+use App\Http\Controllers\ChatController;
+use App\Http\Controllers\ChatPageController;
+use App\Http\Controllers\ChatRealtimeChannelController;
 use App\Http\Controllers\ProfileController;
 use Illuminate\Foundation\Application;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
@@ -66,6 +68,21 @@ Route::middleware('auth')->group(function () {
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
+
+    Route::get('/messages', [ChatPageController::class, 'user'])
+        ->middleware('unlocked.user')
+        ->name('messages.index');
+
+    Route::prefix('chat')->name('chat.')->middleware(['unlocked.user', 'throttle:chat'])->group(function (): void {
+        Route::get('/realtime-channel', ChatRealtimeChannelController::class)->name('realtime-channel.show');
+        Route::get('/conversations', [ChatController::class, 'index'])->name('conversations.index');
+        Route::post('/conversations/resolve', [ChatController::class, 'resolve'])->name('conversations.resolve');
+        Route::get('/contexts', [ChatController::class, 'contexts'])->name('contexts.index');
+        Route::get('/conversations/{conversation}', [ChatController::class, 'show'])->name('conversations.show');
+        Route::get('/conversations/{conversation}/messages', [ChatController::class, 'messages'])->name('messages.index');
+        Route::post('/conversations/{conversation}/messages', [ChatController::class, 'send'])->name('messages.store');
+        Route::patch('/conversations/{conversation}/read', [ChatController::class, 'read'])->name('read');
+    });
 });
 
 Route::prefix('admin')
@@ -76,6 +93,10 @@ Route::prefix('admin')
             return Inertia::render('Admin/Page');
         })->middleware(Permission::middleware(Permission::DashboardView))
             ->name('home');
+
+        Route::get('/chats', [ChatPageController::class, 'agent'])
+            ->middleware(['unlocked.user', Permission::middleware(Permission::ChatsView)])
+            ->name('chats.index');
 
         // thống kê
         Route::get('/analytics', [AnalyticsController::class, 'index'])
@@ -791,6 +812,36 @@ Route::prefix('admin')
         Route::get('/gem-bots/{gemBot}/history-quick-history', [BotHistoryController::class, 'quickGem'])
             ->middleware(Permission::middleware(Permission::BotHistoriesView))
             ->name('gem-bots.history-quick-history');
+    });
+
+Route::prefix('admin/chat')
+    ->name('admin.chat.')
+    ->middleware(['auth', 'unlocked.user', 'throttle:chat'])
+    ->group(function (): void {
+        Route::get('/conversations', [ChatController::class, 'index'])
+            ->middleware(Permission::middleware(Permission::ChatsView))
+            ->name('conversations.index');
+        Route::get('/agents', [ChatController::class, 'agents'])
+            ->middleware(Permission::middleware(Permission::ChatsAssign))
+            ->name('agents.index');
+        Route::get('/conversations/{conversation}', [ChatController::class, 'show'])
+            ->middleware(Permission::middleware(Permission::ChatsView))
+            ->name('conversations.show');
+        Route::get('/conversations/{conversation}/messages', [ChatController::class, 'messages'])
+            ->middleware(Permission::middleware(Permission::ChatsView))
+            ->name('messages.index');
+        Route::post('/conversations/{conversation}/messages', [ChatController::class, 'send'])
+            ->middleware(Permission::middleware(Permission::ChatsReply))
+            ->name('messages.store');
+        Route::patch('/conversations/{conversation}/read', [ChatController::class, 'read'])
+            ->middleware(Permission::middleware(Permission::ChatsView))
+            ->name('read');
+        Route::patch('/conversations/{conversation}/assign', [ChatController::class, 'assign'])
+            ->middleware(Permission::middleware(Permission::ChatsAssign))
+            ->name('assign');
+        Route::patch('/conversations/{conversation}/status', [ChatController::class, 'updateStatus'])
+            ->middleware(Permission::middleware(Permission::ChatsManage, Permission::ChatsReply))
+            ->name('status');
     });
 
 Route::middleware(['guest', 'throttle:10,1'])->group(function (): void {

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\LoginAttempt;
 use App\Models\User;
 use App\Models\UserSecurityLog;
+use App\Services\Chat\ChatRealtimeChannel;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -80,8 +81,15 @@ class AuthenticatedSessionController extends Controller
         return redirect()->intended(route('admin.home', absolute: false));
     }
 
-    public function destroy(Request $request): RedirectResponse
+    public function destroy(Request $request, ChatRealtimeChannel $realtime): RedirectResponse
     {
+        $userId = (int) $request->user()->getKey();
+        $credentialHash = $realtime->webCredentialHash($request);
+
+        if ($credentialHash !== null) {
+            $realtime->revokeWebCredential($userId, $credentialHash);
+        }
+
         Auth::guard('web')->logout();
         $request->session()->invalidate();
         $request->session()->regenerateToken();

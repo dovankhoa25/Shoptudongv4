@@ -9,15 +9,18 @@ use App\Models\CarotRecharge;
 use App\Models\CarotRechargeStatistic;
 use App\Models\User;
 use App\Services\TransactionService;
+use App\Services\UserRealtimeNotifier;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class CarotRechargeController extends Controller
 {
+    public function __construct(private readonly UserRealtimeNotifier $realtime) {}
+
     public function pending(Request $request): JsonResponse
     {
-        if (!$this->isAuthorizedApp($request)) {
+        if (! $this->isAuthorizedApp($request)) {
             return $this->unauthorizedResponse();
         }
 
@@ -36,7 +39,7 @@ class CarotRechargeController extends Controller
 
     public function markSuccess(UpdateCarotRechargeRequest $request, int $id): JsonResponse
     {
-        if (!$this->isAuthorizedApp($request)) {
+        if (! $this->isAuthorizedApp($request)) {
             return $this->unauthorizedResponse();
         }
 
@@ -45,23 +48,34 @@ class CarotRechargeController extends Controller
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            if (!$this->canUpdateToStatus($recharge, CarotRecharge::STATUS_SUCCESS)) {
+            if (! $this->canUpdateToStatus($recharge, CarotRecharge::STATUS_SUCCESS)) {
                 return [
                     'success' => false,
                     'recharge' => $recharge,
                 ];
             }
 
+            $oldStatus = $recharge->status;
             $this->updateStatus($recharge, CarotRecharge::STATUS_SUCCESS, $request);
 
             return [
                 'success' => true,
                 'recharge' => $recharge->fresh(),
+                'status_changed' => $oldStatus !== CarotRecharge::STATUS_SUCCESS,
             ];
         });
 
-        if (!$result['success']) {
+        if (! $result['success']) {
             return $this->invalidStatusResponse($result['recharge']);
+        }
+
+        if ($result['status_changed']) {
+            $this->realtime->orderStatus(
+                userId: (int) $result['recharge']->user_id,
+                orderType: 'carot',
+                orderId: (int) $result['recharge']->id,
+                status: CarotRecharge::STATUS_SUCCESS,
+            );
         }
 
         return response()->json([
@@ -73,7 +87,7 @@ class CarotRechargeController extends Controller
 
     public function markFailed(UpdateCarotRechargeRequest $request, int $id): JsonResponse
     {
-        if (!$this->isAuthorizedApp($request)) {
+        if (! $this->isAuthorizedApp($request)) {
             return $this->unauthorizedResponse();
         }
 
@@ -82,7 +96,7 @@ class CarotRechargeController extends Controller
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            if (!$this->canUpdateToStatus($recharge, CarotRecharge::STATUS_FAILED)) {
+            if (! $this->canUpdateToStatus($recharge, CarotRecharge::STATUS_FAILED)) {
                 return [
                     'success' => false,
                     'recharge' => $recharge,
@@ -92,18 +106,39 @@ class CarotRechargeController extends Controller
             $oldStatus = $recharge->status;
             $this->updateStatus($recharge, CarotRecharge::STATUS_FAILED, $request);
 
+            $refundedBalance = null;
             if ($oldStatus === CarotRecharge::STATUS_PENDING) {
-                $this->refundUser($recharge);
+                $refundedBalance = $this->refundUser($recharge);
             }
 
             return [
                 'success' => true,
                 'recharge' => $recharge->fresh(),
+                'status_changed' => $oldStatus !== CarotRecharge::STATUS_FAILED,
+                'refunded_balance' => $refundedBalance,
             ];
         });
 
-        if (!$result['success']) {
+        if (! $result['success']) {
             return $this->invalidStatusResponse($result['recharge']);
+        }
+
+        if ($result['status_changed']) {
+            $this->realtime->orderStatus(
+                userId: (int) $result['recharge']->user_id,
+                orderType: 'carot',
+                orderId: (int) $result['recharge']->id,
+                status: CarotRecharge::STATUS_FAILED,
+            );
+        }
+
+        if ($result['refunded_balance'] !== null) {
+            $this->realtime->balanceChanged(
+                userId: (int) $result['recharge']->user_id,
+                amount: (int) $result['recharge']->amount,
+                balance: (int) $result['refunded_balance'],
+                message: 'Đã hoàn '.number_format((int) $result['recharge']->amount).' VNĐ cho đơn nạp Carot thất bại.',
+            );
         }
 
         return response()->json([
@@ -127,6 +162,7 @@ class CarotRechargeController extends Controller
 
         if ($oldStatus === $newStatus) {
             $recharge->update($this->statusPayload($newStatus, $request, false));
+
             return;
         }
 
@@ -157,7 +193,7 @@ class CarotRechargeController extends Controller
         return $payload;
     }
 
-    private function refundUser(CarotRecharge $recharge): void
+    private function refundUser(CarotRecharge $recharge): int
     {
         $user = User::where('id', $recharge->user_id)
             ->lockForUpdate()
@@ -174,7 +210,7 @@ class CarotRechargeController extends Controller
             userId: $user->id,
             type: 'carot_recharge_refund',
             amount: $recharge->amount,
-            description: 'Hoan tien don nap carot that bai #' . $recharge->id,
+            description: 'Hoan tien don nap carot that bai #'.$recharge->id,
             performedBy: null,
             related: $recharge,
             relatedId: $recharge->id,
@@ -187,6 +223,8 @@ class CarotRechargeController extends Controller
                 'transaction_code' => $recharge->transaction_code,
             ],
         );
+
+        return (int) $newBalance;
     }
 
     private function adjustStatistics(CarotRecharge $recharge, string $oldStatus, string $newStatus): void
