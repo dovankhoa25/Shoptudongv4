@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Enums\Permission;
 use App\Http\Resources\Chat\ChatConversationResource;
 use App\Http\Resources\Chat\ChatMessageResource;
+use App\Http\Resources\Chat\ChatTipResource;
 use App\Models\ChatConversation;
 use App\Models\ChatMessage;
 use App\Models\GemTransaction;
@@ -15,6 +16,9 @@ use App\Models\User;
 use App\Services\Chat\ChatManager;
 use App\Services\Chat\ChatRealtimeNotifier;
 use App\Services\Chat\ChatSubjectResolver;
+use App\Services\Chat\ChatTipService;
+use App\Services\TransactionService;
+use App\Services\UserRealtimeNotifier;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -33,6 +37,8 @@ class ChatController extends Controller
         private readonly ChatManager $manager,
         private readonly ChatSubjectResolver $subjects,
         private readonly ChatRealtimeNotifier $realtime,
+        private readonly ChatTipService $tips,
+        private readonly UserRealtimeNotifier $userRealtime,
     ) {}
 
     public function index(Request $request)
@@ -162,13 +168,123 @@ class ChatController extends Controller
         ], $created ? 201 : 200);
     }
 
+    public function resolveForAgent(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'customer_id' => ['nullable', 'integer', 'min:1'],
+            'subject_type' => ['nullable', Rule::in(['service_order'])],
+            'subject_id' => ['nullable', 'integer', 'min:1'],
+            'source_app' => ['nullable', 'string', 'max:64'],
+            'source_url' => ['nullable', 'url', 'max:2048'],
+        ]);
+
+        if (isset($validated['subject_type']) !== isset($validated['subject_id'])) {
+            throw ValidationException::withMessages([
+                'subject_id' => 'Loại đơn và mã đơn phải được gửi cùng nhau.',
+            ]);
+        }
+
+        if (! isset($validated['customer_id']) && ! isset($validated['subject_type'])) {
+            throw ValidationException::withMessages([
+                'customer_id' => 'Hãy chọn khách hàng hoặc đơn dịch vụ.',
+            ]);
+        }
+
+        [$conversation, $created, $message, $previousAssigneeId, $enteredActive] = $this->manager
+            ->resolveForAgent($request->user(), $validated);
+        $this->prepareConversation($conversation, $request->user());
+        $conversationPayload = $this->inboxPayload($conversation);
+
+        if ($message) {
+            $message->loadMissing(['sender:id,username,avatar', 'media', 'reactions', 'tip.payer', 'tip.recipient']);
+            $message->setRelation('conversation', $conversation);
+            $messagePayload = (new ChatMessageResource($message))->resolve($request);
+            unset($messagePayload['is_mine']);
+
+            $this->realtime->message(
+                $conversation,
+                $messagePayload,
+                false,
+                $conversationPayload,
+            );
+        }
+
+        $this->realtime->inbox(
+            $previousAssigneeId ? 'assigned' : ($created ? 'created' : 'updated'),
+            $conversation,
+            $conversationPayload,
+            $previousAssigneeId ? [(int) $previousAssigneeId] : [],
+        );
+
+        return response()->json([
+            'data' => (new ChatConversationResource($conversation))->resolve($request),
+            'entered_active' => $enteredActive,
+        ], $created ? 201 : 200);
+    }
+
+    public function customers(Request $request): JsonResponse
+    {
+        $actor = $request->user();
+        $hasRequiredChatPermissions = $actor->hasRole('super-admin')
+            || ($actor->can(Permission::ChatsView->value)
+                && $actor->can(Permission::ChatsReply->value));
+
+        abort_unless(
+            $actor->status === User::STATUS_ACTIVE
+                && ! $actor->isLocked()
+                && $actor->canViewAllAdminData()
+                && $hasRequiredChatPermissions,
+            403,
+        );
+
+        $validated = $request->validate([
+            'search' => ['nullable', 'string', 'max:100'],
+            'limit' => ['nullable', 'integer', 'min:1', 'max:30'],
+        ]);
+        $search = trim((string) ($validated['search'] ?? ''));
+
+        $customers = User::query()
+            ->where('status', User::STATUS_ACTIVE)
+            ->whereKeyNot($actor->getKey())
+            ->whereDoesntHave('roles', fn (Builder $roles) => $roles
+                ->whereIn('name', ['admin', 'super-admin', 'ctv']))
+            ->whereDoesntHave('permissions', fn (Builder $permissions) => $permissions
+                ->whereIn('name', [Permission::ChatsView->value, Permission::ChatsReply->value])
+                ->where('guard_name', 'web'))
+            ->whereDoesntHave('roles.permissions', fn (Builder $permissions) => $permissions
+                ->whereIn('name', [Permission::ChatsView->value, Permission::ChatsReply->value])
+                ->where('guard_name', 'web'))
+            ->when($search !== '', function (Builder $query) use ($search): void {
+                $query->where(function (Builder $matches) use ($search): void {
+                    if (ctype_digit($search)) {
+                        $matches->orWhereKey((int) $search);
+                    }
+
+                    $matches
+                        ->orWhere('username', 'like', '%'.$search.'%')
+                        ->orWhere('email', 'like', '%'.$search.'%');
+                });
+            })
+            ->orderBy('username')
+            ->limit((int) ($validated['limit'] ?? 20))
+            ->get(['id', 'username', 'avatar'])
+            ->map(fn (User $customer): array => [
+                'id' => (int) $customer->id,
+                'username' => $customer->username,
+                'avatar' => $customer->chat_avatar_url,
+            ])
+            ->values();
+
+        return response()->json(['data' => $customers]);
+    }
+
     public function show(Request $request, ChatConversation $conversation): JsonResponse
     {
         Gate::authorize('view', $conversation);
         $this->prepareConversation($conversation, $request->user());
 
         $messages = $conversation->messages()
-            ->with(['sender:id,username,avatar', 'media', 'reactions'])
+            ->with(['sender:id,username,avatar', 'media', 'reactions', 'tip.payer', 'tip.recipient'])
             ->when(
                 (int) $conversation->customer_id === (int) $request->user()->getKey(),
                 fn (Builder $query) => $query->where('is_internal', false),
@@ -206,10 +322,10 @@ class ChatController extends Controller
 
         $limit = (int) ($validated['limit'] ?? 60);
         $isDeltaRequest = isset($validated['after_id']);
-        $this->prepareConversation($conversation, $request->user());
+        $this->prepareConversation($conversation, $request->user(), false);
 
         $query = $conversation->messages()
-            ->with(['sender:id,username,avatar', 'media', 'reactions'])
+            ->with(['sender:id,username,avatar', 'media', 'reactions', 'tip.payer', 'tip.recipient'])
             ->when($validated['before'] ?? null, fn (Builder $query, int $before) => $query->where('id', '<', $before))
             ->when($validated['after_id'] ?? null, fn (Builder $query, int $afterId) => $query->where('id', '>', $afterId))
             ->when(
@@ -312,7 +428,7 @@ class ChatController extends Controller
         }
 
         $this->prepareConversation($conversation, $request->user());
-        $message->loadMissing(['sender:id,username,avatar', 'media', 'reactions']);
+        $message->loadMissing(['sender:id,username,avatar', 'media', 'reactions', 'tip.payer', 'tip.recipient']);
         $message->setRelation('conversation', $conversation);
         $messagePayload = (new ChatMessageResource($message))->resolve($request);
 
@@ -335,7 +451,7 @@ class ChatController extends Controller
                     [
                         'id' => (int) $request->user()->id,
                         'username' => $request->user()->username,
-                        'avatar' => $request->user()->avatar_url,
+                        'avatar' => $request->user()->chat_avatar_url,
                         'kind' => $senderParticipant->role,
                     ],
                     (int) $senderParticipant->last_read_message_id,
@@ -348,6 +464,95 @@ class ChatController extends Controller
             'data' => $messagePayload,
             'conversation' => (new ChatConversationResource($conversation))->resolve($request),
         ], $created ? 201 : 200);
+    }
+
+    public function tip(Request $request, ChatConversation $conversation): JsonResponse
+    {
+        $validated = $request->validate([
+            'recipient_id' => ['required', 'integer', 'min:1'],
+            'amount' => [
+                'required',
+                'integer',
+                'min:1',
+                'max:'.TransactionService::MAX_BALANCE,
+            ],
+            'idempotency_key' => ['required', 'uuid'],
+            'note' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        $result = $this->tips->create($conversation, $request->user(), $validated);
+        $conversation = $result['conversation'];
+        $this->prepareConversation($conversation, $request->user());
+        $tipping = $conversation->getAttribute('tipping');
+        $remainingDailyLimit = is_array($tipping)
+            ? (int) ($tipping['remaining_daily_limit'] ?? 0)
+            : null;
+
+        $message = $result['message'];
+        $message->loadMissing([
+            'sender:id,username,avatar',
+            'media',
+            'reactions',
+            'tip.payer',
+            'tip.recipient',
+        ]);
+        $message->setRelation('conversation', $conversation);
+        $messagePayload = (new ChatMessageResource($message))->resolve($request);
+
+        if ($result['created']) {
+            $realtimeMessagePayload = $messagePayload;
+            unset($realtimeMessagePayload['is_mine']);
+            $this->realtime->message(
+                $conversation,
+                $realtimeMessagePayload,
+                false,
+                $this->inboxPayload($conversation),
+            );
+
+            $tip = $result['tip'];
+            $this->userRealtime->balanceChanged(
+                (int) $tip->payer_id,
+                -(int) $tip->amount,
+                (int) $result['payer_balance'],
+                'Bạn đã ủng hộ '.number_format((int) $tip->amount).' VNĐ.',
+                $remainingDailyLimit,
+            );
+            $this->userRealtime->balanceChanged(
+                (int) $tip->recipient_id,
+                (int) $tip->recipient_amount,
+                (int) $result['recipient_balance'],
+                'Bạn vừa nhận được '.number_format((int) $tip->recipient_amount).' VNĐ tiền ủng hộ.',
+            );
+
+            $senderParticipant = $conversation->participants
+                ->firstWhere('user_id', $request->user()->getKey());
+            if ($senderParticipant?->last_read_message_id) {
+                $this->realtime->read(
+                    $conversation,
+                    [
+                        'id' => (int) $request->user()->id,
+                        'username' => $request->user()->username,
+                        'avatar' => $request->user()->chat_avatar_url,
+                        'kind' => $senderParticipant->role,
+                    ],
+                    (int) $senderParticipant->last_read_message_id,
+                    $senderParticipant->last_read_at->toIso8601String(),
+                );
+            }
+        }
+
+        return response()->json([
+            'data' => (new ChatTipResource($result['tip']))->resolve($request),
+            'message' => $messagePayload,
+            'conversation' => (new ChatConversationResource($conversation))->resolve($request),
+            'balances' => [
+                'payer' => [
+                    'user_id' => (int) $request->user()->getKey(),
+                    'balance' => (int) $result['payer_balance'],
+                    'remaining_daily_limit' => $remainingDailyLimit,
+                ],
+            ],
+        ], $result['created'] ? 201 : 200);
     }
 
     public function toggleReaction(
@@ -449,7 +654,7 @@ class ChatController extends Controller
                 [
                     'id' => (int) $request->user()->id,
                     'username' => $request->user()->username,
-                    'avatar' => $request->user()->avatar_url,
+                    'avatar' => $request->user()->chat_avatar_url,
                     'kind' => $participant->role,
                 ],
                 (int) $participant->last_read_message_id,
@@ -575,7 +780,7 @@ class ChatController extends Controller
             ->map(fn (User $user): array => [
                 'id' => (int) $user->id,
                 'username' => $user->username,
-                'avatar' => $user->avatar_url,
+                'avatar' => $user->chat_avatar_url,
                 'roles' => $user->getRoleNames()->values(),
             ])
             ->values();
@@ -593,6 +798,8 @@ class ChatController extends Controller
             'lastMessage.sender:id,username,avatar',
             'lastMessage.media',
             'lastMessage.reactions',
+            'lastMessage.tip.payer',
+            'lastMessage.tip.recipient',
             'subject',
         ];
     }
@@ -623,10 +830,16 @@ class ChatController extends Controller
             );
     }
 
-    private function prepareConversation(ChatConversation $conversation, User $viewer): void
-    {
+    private function prepareConversation(
+        ChatConversation $conversation,
+        User $viewer,
+        bool $includeTipping = true,
+    ): void {
         $conversation->load($this->conversationRelations());
         $conversation->setAttribute('unread_count', $conversation->unreadCountFor($viewer));
+        if ($includeTipping) {
+            $conversation->setAttribute('tipping', $this->tips->options($conversation, $viewer));
+        }
     }
 
     /** @return array<string, mixed> */
@@ -639,7 +852,7 @@ class ChatController extends Controller
             'assignee' => $conversation->assignee ? [
                 'id' => (int) $conversation->assignee->id,
                 'username' => $conversation->assignee->username,
-                'avatar' => $conversation->assignee->avatar_url,
+                'avatar' => $conversation->assignee->chat_avatar_url,
             ] : null,
             'category' => $conversation->category,
             'subject_type' => $conversation->subject_type,

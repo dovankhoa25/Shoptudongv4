@@ -25,6 +25,10 @@ class Transaction extends Model
 
     public const TYPE_GEM_ORDER_REFUND = 'gem_order_refund';
 
+    public const TYPE_CHAT_TIP_SENT = 'chat_tip_sent';
+
+    public const TYPE_CHAT_TIP_RECEIVED = 'chat_tip_received';
+
     /** @return list<string> */
     public static function types(): array
     {
@@ -36,6 +40,8 @@ class Transaction extends Model
             self::TYPE_GOLD_ORDER_REFUND,
             self::TYPE_GOLD_IMPORT_CREDIT,
             self::TYPE_GEM_ORDER_REFUND,
+            self::TYPE_CHAT_TIP_SENT,
+            self::TYPE_CHAT_TIP_RECEIVED,
         ];
     }
 

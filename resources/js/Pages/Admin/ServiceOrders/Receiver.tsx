@@ -3,10 +3,15 @@ import React, { useState, useMemo } from 'react';
 import { router, usePage } from "@inertiajs/react";
 import AdminLayout from "@/Layouts/AdminLayout";
 import { PageProps, PaginatedData } from "@/types";
-import { Eye, CheckCircle, XCircle } from 'lucide-react';
+import { Eye, CheckCircle, MessageCircle, XCircle } from 'lucide-react';
 import ServiceOrdersTable from './Components/ServiceOrdersTable';
 import ServiceOrderDetailModal from './ServiceOrderDetailModal';
 import { useToast } from "@/Components/ToastProvider";
+import {
+    canMessageServiceOrderCustomer,
+    chatRequestErrorMessage,
+    resolveServiceOrderConversation,
+} from '@/Features/Chat/serviceOrderChat';
 
 interface IUser {
     id: number;
@@ -54,12 +59,14 @@ export default function ReceiverServiceOrdersPage() {
     const {
         service_orders,
         filters: serverFilters,
-        flash
+        flash,
+        auth,
     } = usePage<ReceiverOrderPageProps>().props;
 
     const toast = useToast();
     const [selectedOrder, setSelectedOrder] = useState<IServiceOrder | null>(null);
     const [viewModalVisible, setViewModalVisible] = useState(false);
+    const [messagingOrderId, setMessagingOrderId] = useState<number | null>(null);
 
     // Handlers
     const handleView = (order: IServiceOrder) => {
@@ -101,6 +108,18 @@ export default function ReceiverServiceOrdersPage() {
         }
     };
 
+    const handleMessageCustomer = async (order: IServiceOrder) => {
+        if (!canMessageServiceOrderCustomer(auth, order) || messagingOrderId !== null) return;
+        setMessagingOrderId(order.id);
+        try {
+            const conversation = await resolveServiceOrderConversation(order.id);
+            router.visit(`/admin/chats?conversation=${conversation.id}`);
+        } catch (error) {
+            toast.error(chatRequestErrorMessage(error));
+            setMessagingOrderId(null);
+        }
+    };
+
     // 🎯 Filter options - GIỐNG NICK MANAGEMENT
     const filterOptions = useMemo(() => [
         {
@@ -137,6 +156,13 @@ export default function ReceiverServiceOrdersPage() {
                 showPassword={true}
                 onView={handleView}
                 customActions={{
+                    message: {
+                        label: 'Nhắn khách',
+                        icon: MessageCircle,
+                        handler: handleMessageCustomer,
+                        className: 'text-indigo-600 hover:text-indigo-800',
+                        condition: (order: IServiceOrder) => canMessageServiceOrderCustomer(auth, order),
+                    },
                     view: {
                         label: 'Xem chi tiết',
                         icon: Eye,
@@ -167,6 +193,10 @@ export default function ReceiverServiceOrdersPage() {
                 onClose={handleCloseModal}
                 onCompleted={handleCompleted}
                 onCancel={handleCancel}
+                onMessageCustomer={selectedOrder && canMessageServiceOrderCustomer(auth, selectedOrder)
+                    ? handleMessageCustomer
+                    : undefined}
+                messageCustomerLoading={selectedOrder?.id === messagingOrderId}
                 showPassword={true}
             />
         </>

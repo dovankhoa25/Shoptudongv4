@@ -11,6 +11,7 @@ import {
     Clock3,
     ExternalLink,
     Eye,
+    Gift,
     Headphones,
     Inbox,
     ImagePlus,
@@ -24,11 +25,13 @@ import {
     ShieldCheck,
     Smile,
     Sparkles,
+    UserPlus,
     UserRoundCheck,
     X,
 } from 'lucide-react';
 import type { PageProps } from '@/types';
 import UserAvatar from '@/Components/UserAvatar';
+import StartCustomerChatModal from './StartCustomerChatModal';
 import type {
     ChatAttachment,
     ChatConversation,
@@ -36,6 +39,8 @@ import type {
     ChatReaction,
     ChatSeenBy,
     ChatSubject,
+    ChatTip,
+    ChatTippingConfig,
     ChatUser,
     PaginatedChatConversations,
 } from './types';
@@ -144,6 +149,26 @@ interface RelatedOrderDetail {
     updated_at?: string | null;
 }
 
+interface ChatTipRequest {
+    recipient_id: number;
+    amount: number;
+    idempotency_key: string;
+    note?: string;
+}
+
+interface ChatTipCreateResponse {
+    data: ChatTip;
+    message: ChatMessage;
+    conversation: ChatConversation;
+    balances: {
+        payer: {
+            user_id: number;
+            balance: number;
+            remaining_daily_limit: number;
+        };
+    };
+}
+
 type RealtimeConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 
 const CHAT_IMAGE_MAX_COUNT = 4;
@@ -156,6 +181,87 @@ const COMPOSER_EMOJIS = [
     '😢', '😭', '😡', '🤯', '👍', '👎', '👏', '🙏',
     '❤️', '💜', '💙', '💚', '🔥', '✨', '🎉', '💯',
 ];
+const TIP_PRESET_AMOUNTS = [10_000, 20_000, 50_000, 100_000];
+const TIP_ATTEMPT_TTL_MS = 60 * 60 * 1000;
+
+interface StoredTipAttempt {
+    signature: string;
+    idempotencyKey: string;
+    createdAt: number;
+}
+
+function tipAttemptStorageKey(userId: number, conversationId: number): string {
+    return `chat:tip-attempts:${userId}:${conversationId}`;
+}
+
+function readStoredTipAttempts(userId: number, conversationId: number): StoredTipAttempt[] {
+    if (typeof window === 'undefined') return [];
+
+    try {
+        const storageKey = tipAttemptStorageKey(userId, conversationId);
+        const parsed: unknown = JSON.parse(window.sessionStorage.getItem(storageKey) ?? '[]');
+        const cutoff = Date.now() - TIP_ATTEMPT_TTL_MS;
+        const attempts = (Array.isArray(parsed) ? parsed : [])
+            .filter((item): item is StoredTipAttempt => {
+                if (!item || typeof item !== 'object') return false;
+                const candidate = item as Partial<StoredTipAttempt>;
+                return typeof candidate.signature === 'string'
+                    && typeof candidate.idempotencyKey === 'string'
+                    && typeof candidate.createdAt === 'number'
+                    && candidate.createdAt >= cutoff;
+            })
+            .slice(-5);
+
+        if (attempts.length > 0) window.sessionStorage.setItem(storageKey, JSON.stringify(attempts));
+        else window.sessionStorage.removeItem(storageKey);
+
+        return attempts;
+    } catch {
+        return [];
+    }
+}
+
+function getOrCreateStoredTipAttempt(userId: number, conversationId: number, signature: string): StoredTipAttempt {
+    const attempts = readStoredTipAttempts(userId, conversationId);
+    const existing = attempts.find(attempt => attempt.signature === signature);
+    if (existing) return existing;
+
+    const attempt = { signature, idempotencyKey: crypto.randomUUID(), createdAt: Date.now() };
+    try {
+        window.sessionStorage.setItem(
+            tipAttemptStorageKey(userId, conversationId),
+            JSON.stringify([...attempts, attempt].slice(-5)),
+        );
+    } catch {
+        // The in-memory ref still protects retries while this page remains mounted.
+    }
+
+    return attempt;
+}
+
+function clearStoredTipAttempt(userId: number, conversationId: number, signature: string): void {
+    if (typeof window === 'undefined') return;
+    try {
+        const storageKey = tipAttemptStorageKey(userId, conversationId);
+        const remaining = readStoredTipAttempts(userId, conversationId)
+            .filter(attempt => attempt.signature !== signature);
+        if (remaining.length > 0) window.sessionStorage.setItem(storageKey, JSON.stringify(remaining));
+        else window.sessionStorage.removeItem(storageKey);
+    } catch {
+        // Storage is an extra safety layer; retries still reuse the in-memory ref.
+    }
+}
+
+function isDefinitiveTipFailure(error: unknown): boolean {
+    const candidate = error as { status?: unknown; response?: { status?: unknown } };
+    const rawStatus = candidate.response?.status ?? candidate.status;
+    const status = typeof rawStatus === 'number' ? rawStatus : Number(rawStatus);
+
+    return Number.isInteger(status)
+        && status >= 400
+        && status < 500
+        && ![408, 425, 429].includes(status);
+}
 
 const statusLabels: Record<ChatConversation['status'], string> = {
     waiting_agent: 'Chờ hỗ trợ',
@@ -189,13 +295,50 @@ function errorMessage(error: unknown): string {
     const errors = candidate.response?.data?.errors;
     if (errors) return Object.values(errors).flat()[0] ?? 'Không thể thực hiện thao tác.';
 
-    return candidate.response?.data?.message ?? 'Kết nối bị gián đoạn. Vui lòng thử lại.';
+    return candidate.response?.data?.message
+        ?? (error instanceof Error ? error.message : 'Kết nối bị gián đoạn. Vui lòng thử lại.');
 }
 
 function formatFileSize(bytes: number): string {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${Math.ceil(bytes / 1024)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatVnd(amount: number): string {
+    return `${new Intl.NumberFormat('vi-VN').format(Math.max(0, amount))}đ`;
+}
+
+function defaultTipAmount(config: ChatTippingConfig): number {
+    const payableMaximum = Math.min(config.max_amount, config.balance, config.remaining_daily_limit);
+    return TIP_PRESET_AMOUNTS.find(amount => amount >= config.min_amount && amount <= payableMaximum)
+        ?? config.min_amount;
+}
+
+function tippingDisabledReason(config: ChatTippingConfig): string {
+    if (config.balance < config.min_amount) return 'Số dư chưa đủ để gửi quà cảm ơn.';
+    if (config.remaining_daily_limit < config.min_amount) return 'Bạn đã dùng hết hạn mức ủng hộ hôm nay.';
+    return 'Hiện chưa thể gửi quà cảm ơn trong cuộc trò chuyện này.';
+}
+
+function mergeTipPayerState(
+    conversation: ChatConversation,
+    balance: number,
+    remainingDailyLimit: number,
+): ChatConversation {
+    if (!conversation.tipping) return conversation;
+
+    const tipping = {
+        ...conversation.tipping,
+        balance: Math.max(0, balance),
+        remaining_daily_limit: Math.max(0, remainingDailyLimit),
+    };
+    tipping.enabled = conversation.status !== 'closed'
+        && tipping.recipients.length > 0
+        && tipping.balance >= tipping.min_amount
+        && tipping.remaining_daily_limit >= tipping.min_amount;
+
+    return { ...conversation, tipping };
 }
 
 function messageAttachments(message?: ChatMessage | null): ChatAttachment[] {
@@ -294,6 +437,290 @@ function EmojiPicker({ onSelect }: { onSelect: (emoji: string) => void }) {
     );
 }
 
+function TipMessageCard({ message, compact }: { message: ChatMessage; compact: boolean }) {
+    const tip = message.tip;
+    const metadataAmount = typeof message.metadata?.amount === 'number' ? message.metadata.amount : 0;
+    const amount = tip?.amount ?? metadataAmount;
+    const metadataStatus = typeof message.metadata?.status === 'string' ? message.metadata.status : null;
+    const status = tip?.status ?? metadataStatus;
+    const refunded = status === 'refunded' || Boolean(tip?.refunded_at);
+    const payerName = tip?.payer?.username ?? message.sender?.username ?? 'Khách hàng';
+    const recipientName = tip?.recipient?.username ?? 'người hỗ trợ';
+
+    return (
+        <article className="flex justify-center px-1" aria-label="Tin nhắn ủng hộ">
+            <div className={`relative w-full overflow-hidden rounded-2xl border px-4 py-3 text-center shadow-sm ${compact ? 'max-w-[92%]' : 'max-w-md'} ${refunded
+                ? 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300'
+                : 'border-amber-200 bg-gradient-to-br from-amber-50 via-yellow-50 to-orange-50 text-amber-950 dark:border-amber-500/30 dark:from-amber-500/15 dark:via-yellow-500/10 dark:to-orange-500/10 dark:text-amber-100'}`}>
+                <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-amber-300/20 blur-2xl" />
+                <div className="relative">
+                    <span className={`mx-auto grid h-9 w-9 place-items-center rounded-full ${refunded ? 'bg-slate-200 text-slate-500 dark:bg-slate-800' : 'bg-amber-500 text-white shadow-md shadow-amber-500/25'}`}>
+                        <Gift className="h-4.5 w-4.5" />
+                    </span>
+                    <span className="mt-1.5 block text-[10px] font-bold uppercase tracking-[0.16em] opacity-65">
+                        {refunded ? 'Đã hoàn tiền' : 'Quà cảm ơn'}
+                    </span>
+                    {amount > 0 && <strong className="mt-1 block text-xl font-extrabold tracking-tight">{formatVnd(amount)}</strong>}
+                    <div className="mt-2 flex items-center justify-center gap-2 text-xs leading-5">
+                        <Avatar user={tip?.payer ?? message.sender} className="h-6 w-6 text-[9px]" />
+                        <span className="min-w-0">
+                            <strong>{payerName}</strong> đã ủng hộ <strong>{recipientName}</strong> 🎉
+                        </span>
+                        <Avatar user={tip?.recipient} className="h-6 w-6 text-[9px]" />
+                    </div>
+                    {tip?.note && (
+                        <p className="mx-auto mt-2 max-w-sm whitespace-pre-wrap break-words rounded-xl bg-white/60 px-3 py-2 text-xs italic text-slate-600 dark:bg-slate-950/25 dark:text-slate-300">
+                            “{tip.note}”
+                        </p>
+                    )}
+                    {!tip && message.body && <p className="mt-2 text-xs opacity-75">{message.body}</p>}
+                    {refunded && <p className="mt-2 text-xs font-medium">Khoản ủng hộ này đã được hoàn lại cho người gửi.</p>}
+                    <span className="mt-2 block text-[10px] opacity-50">{formatTime(message.created_at)}</span>
+                </div>
+            </div>
+        </article>
+    );
+}
+
+function TipModal({
+    open,
+    userId,
+    conversationId,
+    config,
+    onClose,
+    onSubmit,
+}: {
+    open: boolean;
+    userId: number;
+    conversationId: number;
+    config?: ChatTippingConfig;
+    onClose: () => void;
+    onSubmit: (payload: ChatTipRequest) => Promise<void>;
+}) {
+    const [recipientId, setRecipientId] = useState<number | null>(null);
+    const [amountInput, setAmountInput] = useState('');
+    const [note, setNote] = useState('');
+    const [submitting, setSubmitting] = useState(false);
+    const [submitError, setSubmitError] = useState<string | null>(null);
+    const attemptRef = useRef<{ signature: string; idempotencyKey: string } | null>(null);
+    const initializedIdentityRef = useRef<string | null>(null);
+
+    useEffect(() => {
+        if (!open) {
+            initializedIdentityRef.current = null;
+            return;
+        }
+        if (!config) return;
+
+        const identity = `${userId}:${conversationId}`;
+        if (initializedIdentityRef.current === identity) return;
+        initializedIdentityRef.current = identity;
+
+        setRecipientId(config.recipients[0]?.id ?? null);
+        setAmountInput(String(defaultTipAmount(config)));
+        setNote('');
+        setSubmitError(null);
+        setSubmitting(false);
+        attemptRef.current = null;
+    }, [config, conversationId, open, userId]);
+
+    useEffect(() => {
+        if (!open || !config) return;
+        setRecipientId(current => current && config.recipients.some(recipient => recipient.id === current)
+            ? current
+            : config.recipients[0]?.id ?? null);
+    }, [config, open]);
+
+    const amount = /^\d+$/.test(amountInput) ? Number(amountInput) : 0;
+    const payableMaximum = config
+        ? Math.min(config.max_amount, config.balance, config.remaining_daily_limit)
+        : 0;
+    const presets = config
+        ? TIP_PRESET_AMOUNTS.filter(value => value >= config.min_amount && value <= payableMaximum)
+        : [];
+    const amountError = !config || !amountInput
+        ? 'Vui lòng nhập số tiền.'
+        : !Number.isSafeInteger(amount)
+            ? 'Số tiền không hợp lệ.'
+            : amount < config.min_amount
+                ? `Tối thiểu ${formatVnd(config.min_amount)}.`
+                : amount > config.max_amount
+                    ? `Tối đa ${formatVnd(config.max_amount)} cho mỗi lần.`
+                    : amount > config.balance
+                        ? 'Số dư hiện tại không đủ.'
+                        : amount > config.remaining_daily_limit
+                            ? 'Số tiền vượt hạn mức còn lại hôm nay.'
+                            : null;
+    const canSubmit = Boolean(config?.enabled && recipientId && !amountError && !submitting);
+
+    const submitTip = async (event: FormEvent) => {
+        event.preventDefault();
+        if (!config || !recipientId || amountError || submitting) return;
+
+        const normalizedNote = note.trim();
+        const signature = JSON.stringify({ conversationId, recipientId, amount, note: normalizedNote });
+        const previousAttempt = attemptRef.current;
+        const attempt = previousAttempt?.signature === signature
+            ? previousAttempt
+            : getOrCreateStoredTipAttempt(userId, conversationId, signature);
+        attemptRef.current = attempt;
+        setSubmitting(true);
+        setSubmitError(null);
+
+        try {
+            await onSubmit({
+                recipient_id: recipientId,
+                amount,
+                idempotency_key: attempt.idempotencyKey,
+                ...(normalizedNote ? { note: normalizedNote } : {}),
+            });
+            clearStoredTipAttempt(userId, conversationId, signature);
+            attemptRef.current = null;
+        } catch (requestError) {
+            if (isDefinitiveTipFailure(requestError)) {
+                clearStoredTipAttempt(userId, conversationId, signature);
+                attemptRef.current = null;
+            }
+            setSubmitError(errorMessage(requestError));
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    return (
+        <Modal
+            open={open && Boolean(config)}
+            onCancel={submitting ? undefined : onClose}
+            footer={null}
+            centered
+            width={520}
+            closable={!submitting}
+            maskClosable={!submitting}
+            destroyOnHidden
+            title={(
+                <span className="flex items-center gap-2">
+                    <span className="grid h-8 w-8 place-items-center rounded-xl bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-300"><Gift className="h-4 w-4" /></span>
+                    Gửi quà cảm ơn
+                </span>
+            )}
+        >
+            {config && (
+                <form onSubmit={submitTip} className="space-y-5 pt-3">
+                    <div className="grid grid-cols-2 gap-2 rounded-2xl bg-slate-50 p-3 text-xs dark:bg-slate-900">
+                        <div>
+                            <span className="block text-slate-500">Số dư</span>
+                            <strong className="mt-0.5 block text-sm text-slate-900 dark:text-white">{formatVnd(config.balance)}</strong>
+                        </div>
+                        <div className="border-l border-slate-200 pl-3 dark:border-slate-700">
+                            <span className="block text-slate-500">Còn lại hôm nay</span>
+                            <strong className="mt-0.5 block text-sm text-slate-900 dark:text-white">{formatVnd(config.remaining_daily_limit)}</strong>
+                        </div>
+                    </div>
+
+                    <fieldset>
+                        <legend className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Chọn người nhận</legend>
+                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                            {config.recipients.map(recipient => (
+                                <button
+                                    key={recipient.id}
+                                    type="button"
+                                    onClick={() => {
+                                        setRecipientId(recipient.id);
+                                        setSubmitError(null);
+                                    }}
+                                    aria-pressed={recipientId === recipient.id}
+                                    className={`flex min-w-0 items-center gap-2 rounded-xl border p-2.5 text-left transition ${recipientId === recipient.id
+                                        ? 'border-indigo-400 bg-indigo-50 ring-2 ring-indigo-100 dark:border-indigo-500 dark:bg-indigo-500/10 dark:ring-indigo-500/15'
+                                        : 'border-slate-200 hover:border-indigo-200 hover:bg-slate-50 dark:border-slate-700 dark:hover:border-indigo-500/40 dark:hover:bg-slate-900'}`}
+                                >
+                                    <Avatar user={recipient} className="h-8 w-8 text-[11px]" />
+                                    <span className="min-w-0 flex-1 truncate text-xs font-semibold text-slate-800 dark:text-slate-100">{recipient.username}</span>
+                                </button>
+                            ))}
+                        </div>
+                    </fieldset>
+
+                    <div>
+                        <label className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Số tiền</label>
+                        {presets.length > 0 && (
+                            <div className="mb-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                                {presets.map(value => (
+                                    <button
+                                        key={value}
+                                        type="button"
+                                        onClick={() => {
+                                            setAmountInput(String(value));
+                                            setSubmitError(null);
+                                        }}
+                                        aria-pressed={amount === value}
+                                        className={`rounded-xl border px-2 py-2 text-xs font-bold transition ${amount === value
+                                            ? 'border-amber-400 bg-amber-50 text-amber-700 ring-2 ring-amber-100 dark:border-amber-500 dark:bg-amber-500/10 dark:text-amber-200 dark:ring-amber-500/15'
+                                            : 'border-slate-200 text-slate-600 hover:border-amber-300 dark:border-slate-700 dark:text-slate-300'}`}
+                                    >
+                                        {formatVnd(value)}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                        <div className="relative">
+                            <input
+                                type="text"
+                                inputMode="numeric"
+                                value={amountInput}
+                                maxLength={10}
+                                onChange={event => {
+                                    setAmountInput(event.target.value.replace(/\D/g, ''));
+                                    setSubmitError(null);
+                                }}
+                                className="w-full rounded-xl border-slate-200 bg-white pr-10 text-sm font-semibold text-slate-900 focus:border-indigo-400 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:focus:border-indigo-500 dark:focus:ring-indigo-500/20"
+                                aria-describedby="tip-amount-help"
+                            />
+                            <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs font-bold text-slate-400">đ</span>
+                        </div>
+                        <div id="tip-amount-help" className="mt-1.5 flex items-start justify-between gap-3 text-[11px]">
+                            <span className={amountError ? 'text-rose-600 dark:text-rose-300' : 'text-slate-500'}>{amountError ?? `Từ ${formatVnd(config.min_amount)} đến ${formatVnd(config.max_amount)}`}</span>
+                            {amount > 0 && <strong className="shrink-0 text-slate-600 dark:text-slate-300">{formatVnd(amount)}</strong>}
+                        </div>
+                    </div>
+
+                    <div>
+                        <label htmlFor="tip-note" className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">Lời nhắn <span className="font-normal normal-case">(không bắt buộc)</span></label>
+                        <textarea
+                            id="tip-note"
+                            value={note}
+                            maxLength={255}
+                            rows={2}
+                            onChange={event => {
+                                setNote(event.target.value);
+                                setSubmitError(null);
+                            }}
+                            placeholder="Cảm ơn bạn đã hỗ trợ!"
+                            className="w-full resize-none rounded-xl border-slate-200 bg-white text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-400 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:focus:border-indigo-500 dark:focus:ring-indigo-500/20"
+                        />
+                        <span className="mt-1 block text-right text-[10px] text-slate-400">{note.length}/255</span>
+                    </div>
+
+                    {submitError && (
+                        <div role="alert" className="rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">
+                            {submitError} Bạn có thể thử lại, giao dịch sẽ không bị tính hai lần.
+                        </div>
+                    )}
+
+                    <div className="flex items-center justify-end gap-2 border-t border-slate-100 pt-4 dark:border-slate-800">
+                        <button type="button" disabled={submitting} onClick={onClose} className="rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-100 disabled:opacity-50 dark:text-slate-300 dark:hover:bg-slate-800">
+                            Để sau
+                        </button>
+                        <button type="submit" disabled={!canSubmit} className="inline-flex min-w-40 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 px-4 py-2.5 text-sm font-bold text-white shadow-md shadow-amber-500/20 transition hover:from-amber-400 hover:to-orange-400 disabled:cursor-not-allowed disabled:opacity-45">
+                            {submitting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Gift className="h-4 w-4" />}
+                            {submitting ? 'Đang xác nhận…' : amount > 0 ? `Ủng hộ ${formatVnd(amount)}` : 'Xác nhận ủng hộ'}
+                        </button>
+                    </div>
+                </form>
+            )}
+        </Modal>
+    );
+}
+
 function isCanceledRequest(error: unknown): boolean {
     return (error as { code?: string }).code === 'ERR_CANCELED';
 }
@@ -327,12 +754,13 @@ function applyMessageToConversation(
         || Boolean(incoming.client_message_id
             && incoming.client_message_id === previousLastMessage.client_message_id);
     const isLatestPublicMessage = !incoming.is_internal && isNewestKnownMessage;
+    const preservesWorkflowStatus = incoming.type === 'tip';
     const summaryHasAssignee = summary !== undefined
         && Object.prototype.hasOwnProperty.call(summary, 'assignee');
 
     return {
         ...conversation,
-        status: isLatestPublicMessage
+        status: isLatestPublicMessage && !preservesWorkflowStatus
             ? summary?.status ?? (incoming.sender_kind === 'customer' ? 'waiting_agent' : 'waiting_customer')
             : conversation.status,
         assignee: isNewestKnownMessage && summaryHasAssignee
@@ -342,7 +770,7 @@ function applyMessageToConversation(
         last_message_at: isLatestPublicMessage
             ? summary?.last_message_at ?? incoming.created_at
             : conversation.last_message_at,
-        resolved_at: isLatestPublicMessage ? null : conversation.resolved_at,
+        resolved_at: isLatestPublicMessage && !preservesWorkflowStatus ? null : conversation.resolved_at,
     };
 }
 
@@ -640,6 +1068,10 @@ export default function ChatWorkspace({
     const canWriteInternalNote = props.auth.is_super_admin || permissions.includes('chats.manage');
     const canAssignGlobally = canViewAllChats
         && (props.auth.is_super_admin || permissions.includes('chats.assign'));
+    const canStartCustomerChat = mode === 'agent'
+        && (props.auth.is_super_admin || roles.includes('admin') || roles.includes('super-admin'))
+        && (props.auth.is_super_admin
+            || (permissions.includes('chats.view') && permissions.includes('chats.reply')));
 
     const [conversations, setConversations] = useState<ChatConversation[]>([]);
     const [unreadTotal, setUnreadTotal] = useState(0);
@@ -674,6 +1106,8 @@ export default function ChatWorkspace({
     const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
     const [reactionPickerMessageId, setReactionPickerMessageId] = useState<number | null>(null);
     const [lightboxAttachment, setLightboxAttachment] = useState<ChatAttachment | null>(null);
+    const [customerPickerOpen, setCustomerPickerOpen] = useState(false);
+    const [tipModalOpen, setTipModalOpen] = useState(false);
     const [internalNote, setInternalNote] = useState(false);
     const [realtimeStatus, setRealtimeStatus] = useState<RealtimeConnectionStatus>('connecting');
     const conversationPerPage = compact ? 15 : 30;
@@ -738,6 +1172,58 @@ export default function ChatWorkspace({
         selectedRef.current = next;
         setSelected(next);
     }, []);
+
+    useEffect(() => {
+        const handleTipPayerState = (event: Event) => {
+            const detail = (event as CustomEvent<{
+                balance?: number;
+                remaining_daily_limit?: number;
+            }>).detail;
+            const balance = Number(detail?.balance);
+            const remainingDailyLimit = Number(detail?.remaining_daily_limit);
+            if (!Number.isFinite(balance) || !Number.isFinite(remainingDailyLimit)) return;
+
+            setConversations(previous => {
+                const next = previous.map(conversation => mergeTipPayerState(
+                    conversation,
+                    balance,
+                    remainingDailyLimit,
+                ));
+                conversationsRef.current = next;
+                return next;
+            });
+
+            const current = selectedRef.current;
+            if (current) commitSelected(mergeTipPayerState(current, balance, remainingDailyLimit));
+        };
+
+        window.addEventListener('chat:tip-payer-state-updated', handleTipPayerState);
+        return () => window.removeEventListener('chat:tip-payer-state-updated', handleTipPayerState);
+    }, [commitSelected]);
+
+    useEffect(() => {
+        if (mode !== 'customer' || currentUserId <= 0) return;
+
+        const subscription = echo().private(`User.${currentUserId}`);
+        const handleUserEvent = (event: {
+            userId?: number | string;
+            type?: string;
+            payload?: { balance?: number; remaining_daily_limit?: number };
+        }) => {
+            if (event.type !== 'update_balance'
+                || (event.userId && Number(event.userId) !== currentUserId)
+                || !Number.isFinite(Number(event.payload?.remaining_daily_limit))) return;
+
+            window.dispatchEvent(new CustomEvent('chat:tip-payer-state-updated', {
+                detail: event.payload,
+            }));
+        };
+
+        subscription.listen('.UserEvent', handleUserEvent);
+        return () => {
+            subscription.stopListening('.UserEvent', handleUserEvent);
+        };
+    }, [currentUserId, mode]);
 
     const clearSelection = useCallback(() => {
         selectedIdRef.current = null;
@@ -886,6 +1372,7 @@ export default function ChatWorkspace({
         setEmojiPickerOpen(false);
         setReactionPickerMessageId(null);
         setLightboxAttachment(null);
+        setTipModalOpen(false);
         setInternalNote(false);
         pendingSendRef.current = null;
         failedSendsRef.current.clear();
@@ -1852,10 +2339,17 @@ export default function ChatWorkspace({
         }
         scheduleConversationRefresh();
         if (selectedIdRef.current === event.conversation.id) {
-            if (remainsVisible) void openConversation(event.conversation.id);
-            else clearSelection();
+            if (!remainsVisible) {
+                clearSelection();
+                return;
+            }
+
+            const current = selectedRef.current;
+            if (current?.id === event.conversation.id) {
+                commitSelected({ ...current, ...event.conversation } as ChatConversation);
+            }
         }
-    }, [applyUnreadDelta, clearSelection, inboxView, matchesActiveFilters, mode, openConversation, scheduleConversationRefresh]);
+    }, [applyUnreadDelta, clearSelection, commitSelected, inboxView, matchesActiveFilters, mode, scheduleConversationRefresh]);
 
     const createConversation = async (context?: ChatSubject) => {
         setActionLoading(true);
@@ -2158,6 +2652,38 @@ export default function ChatWorkspace({
         void sendMessage(undefined, { ...failedSend, clientMessageId: message.client_message_id });
     };
 
+    const sendTip = async (payload: ChatTipRequest) => {
+        const conversation = selectedRef.current;
+        if (!conversation || selectedIdRef.current !== conversation.id || mode !== 'customer') {
+            throw new Error('Cuộc trò chuyện không còn khả dụng để gửi ủng hộ.');
+        }
+
+        const conversationId = conversation.id;
+        const response = await window.axios.post<ChatTipCreateResponse>(
+            `${baseUrl}/conversations/${conversationId}/tips`,
+            payload,
+        );
+        const sent = response.data.message;
+        const responseConversation = response.data.conversation;
+        window.dispatchEvent(new CustomEvent('user:balance-updated', {
+            detail: response.data.balances.payer,
+        }));
+        window.dispatchEvent(new CustomEvent('chat:tip-payer-state-updated', {
+            detail: response.data.balances.payer,
+        }));
+
+        updateConversationFromMessage(sent, responseConversation);
+        if (selectedIdRef.current === conversationId) {
+            setMessages(previous => {
+                const next = mergeMessages(previous, sent);
+                messagesRef.current = next;
+                return next;
+            });
+            commitSelected(mergeConversationSnapshot(conversationId, responseConversation, [sent]));
+            setTipModalOpen(false);
+        }
+    };
+
     const toggleReaction = async (message: ChatMessage, emoji: string) => {
         if (!selected || message.id <= 0 || message.is_internal) return;
         const requestKey = `${message.id}:${emoji}`;
@@ -2370,6 +2896,33 @@ export default function ChatWorkspace({
         setInboxView(nextView);
     };
 
+    const handleCustomerConversationResolved = (conversation: ChatConversation, enteredActive: boolean) => {
+        setCustomerPickerOpen(false);
+        setSearch('');
+        setInboxView('active');
+        setStatus('');
+        setAssignment(Number(conversation.assignee?.id) === currentUserId ? 'mine' : '');
+
+        const wasKnown = conversationsRef.current.some(item => item.id === conversation.id);
+        const nextConversations = sortConversations([
+            conversation,
+            ...conversationsRef.current.filter(item => item.id !== conversation.id),
+        ], 'active');
+        conversationsRef.current = nextConversations;
+        setConversations(nextConversations);
+        recordConversationListSnapshot(nextConversations);
+        if (enteredActive && !wasKnown) setConversationTotal(total => total + 1);
+
+        if (selectedIdRef.current === conversation.id) {
+            void openConversation(conversation.id);
+            return;
+        }
+
+        selectedIdRef.current = conversation.id;
+        openRequestRef.current += 1;
+        setSelectedId(conversation.id);
+    };
+
     const countForView = (view: ChatInboxView): number | undefined => {
         const directCount = conversationCounts[view];
         if (typeof directCount === 'number') return directCount;
@@ -2454,6 +3007,17 @@ export default function ChatWorkspace({
                                 aria-label="Tạo cuộc trò chuyện"
                             >
                                 <Plus className="h-4 w-4" />
+                            </button>
+                        )}
+                        {canStartCustomerChat && (
+                            <button
+                                type="button"
+                                onClick={() => setCustomerPickerOpen(true)}
+                                className="grid h-9 w-9 place-items-center rounded-xl bg-indigo-600 text-white shadow-sm transition hover:bg-indigo-500"
+                                aria-label="Nhắn tin chủ động cho khách"
+                                title="Nhắn tin chủ động cho khách"
+                            >
+                                <UserPlus className="h-4 w-4" />
                             </button>
                         )}
                     </div>
@@ -2791,6 +3355,10 @@ export default function ChatWorkspace({
                                     <div className="py-10 text-center text-sm text-slate-500">Hãy gửi tin nhắn đầu tiên để bắt đầu trao đổi.</div>
                                 )}
                                 {messages.map(message => {
+                                    if (message.type === 'tip') {
+                                        return <TipMessageCard key={message.client_message_id ?? message.id} message={message} compact={compact} />;
+                                    }
+
                                     const authoredByCurrentUser = isMessageMine(message, currentUserId);
                                     const agentMessage = message.sender_kind === 'agent';
                                     const alignRight = mode === 'agent' ? agentMessage : authoredByCurrentUser;
@@ -2929,6 +3497,18 @@ export default function ChatWorkspace({
                                     onChange={addImages}
                                 />
                                 <div ref={composerToolsRef} className="relative flex shrink-0 items-center gap-0.5 pb-1">
+                                    {mode === 'customer' && selected.tipping && selected.tipping.recipients.length > 0 && (
+                                        <button
+                                            type="button"
+                                            disabled={!selected.tipping.enabled}
+                                            onClick={() => setTipModalOpen(true)}
+                                            className="grid h-8 w-8 place-items-center rounded-lg text-amber-500 transition hover:bg-amber-100 hover:text-amber-600 disabled:cursor-not-allowed disabled:opacity-35 dark:text-amber-300 dark:hover:bg-amber-500/15 dark:hover:text-amber-200"
+                                            aria-label="Gửi quà cảm ơn"
+                                            title={selected.tipping.enabled ? 'Gửi quà cảm ơn người hỗ trợ' : tippingDisabledReason(selected.tipping)}
+                                        >
+                                            <Gift className="h-4 w-4" />
+                                        </button>
+                                    )}
                                     <button
                                         type="button"
                                         disabled={!selected.permissions.reply || selected.status === 'closed' || pendingImages.length >= CHAT_IMAGE_MAX_COUNT}
@@ -2979,6 +3559,26 @@ export default function ChatWorkspace({
                     </>
                 ) : null}
             </main>
+
+            {mode === 'customer' && selected?.tipping && (
+                <TipModal
+                    open={tipModalOpen}
+                    userId={currentUserId}
+                    conversationId={selected.id}
+                    config={selected.tipping}
+                    onClose={() => setTipModalOpen(false)}
+                    onSubmit={sendTip}
+                />
+            )}
+
+            {canStartCustomerChat && (
+                <StartCustomerChatModal
+                    open={customerPickerOpen}
+                    baseUrl={baseUrl}
+                    onClose={() => setCustomerPickerOpen(false)}
+                    onResolved={handleCustomerConversationResolved}
+                />
+            )}
 
             {!compact && mode === 'agent' && selected && (
                 <aside className="hidden w-72 shrink-0 flex-col border-l border-slate-200 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-900/50 xl:flex">

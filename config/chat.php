@@ -12,4 +12,10 @@ return [
     'reactions' => [
         'allowed' => ['👍', '❤️', '😂', '😮', '😢', '🙏', '🎉'],
     ],
+
+    'tips' => [
+        'min_amount' => (int) env('CHAT_TIP_MIN_AMOUNT', 1000),
+        'max_amount' => (int) env('CHAT_TIP_MAX_AMOUNT', 1000000),
+        'daily_limit' => (int) env('CHAT_TIP_DAILY_LIMIT', 2000000),
+    ],
 ];

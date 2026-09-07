@@ -3,10 +3,15 @@ import React, { useState } from 'react';
 import { router, usePage } from "@inertiajs/react";
 import AdminLayout from "@/Layouts/AdminLayout";
 import { PageProps, PaginatedData } from "@/types";
-import { Eye } from 'lucide-react';
+import { Eye, MessageCircle } from 'lucide-react';
 import ServiceOrdersTable from './Components/ServiceOrdersTable';
 import ServiceOrderDetailModal from './ServiceOrderDetailModal';
 import { useToast } from "@/Components/ToastProvider";
+import {
+    canMessageServiceOrderCustomer,
+    chatRequestErrorMessage,
+    resolveServiceOrderConversation,
+} from '@/Features/Chat/serviceOrderChat';
 
 interface IUser {
     id: number;
@@ -36,7 +41,7 @@ interface IServiceOrder {
 }
 
 export default function ServiceOrdersPage() {
-    const { service_orders, filters: serverFilters, flash } = usePage<
+    const { service_orders, filters: serverFilters, flash, auth } = usePage<
         PageProps & {
             service_orders: PaginatedData<IServiceOrder>;
             filters: {
@@ -54,6 +59,7 @@ export default function ServiceOrdersPage() {
     const toast = useToast();
     const [selectedOrder, setSelectedOrder] = useState<IServiceOrder | null>(null);
     const [viewModalVisible, setViewModalVisible] = useState(false);
+    const [messagingOrderId, setMessagingOrderId] = useState<number | null>(null);
 
     // Handlers
     const handleView = (order: IServiceOrder) => {
@@ -77,6 +83,18 @@ export default function ServiceOrdersPage() {
         });
     };
 
+    const handleMessageCustomer = async (order: IServiceOrder) => {
+        if (!canMessageServiceOrderCustomer(auth, order) || messagingOrderId !== null) return;
+        setMessagingOrderId(order.id);
+        try {
+            const conversation = await resolveServiceOrderConversation(order.id);
+            router.visit(`/admin/chats?conversation=${conversation.id}`);
+        } catch (error) {
+            toast.error(chatRequestErrorMessage(error));
+            setMessagingOrderId(null);
+        }
+    };
+
     return (
         <>
             {/* 🎯 Shared ServiceOrdersTable */}
@@ -90,6 +108,13 @@ export default function ServiceOrdersPage() {
                 showPassword={false} // No password display for admin orders
                 onView={handleView}
                 customActions={{
+                    message: {
+                        label: 'Nhắn khách',
+                        icon: MessageCircle,
+                        handler: handleMessageCustomer,
+                        className: 'text-indigo-600 hover:text-indigo-800',
+                        condition: (order: IServiceOrder) => canMessageServiceOrderCustomer(auth, order),
+                    },
                     accept: {
                         label: 'Nhận Đơn',
                         icon: Eye,
@@ -106,6 +131,10 @@ export default function ServiceOrdersPage() {
                 order={selectedOrder}
                 onClose={handleCloseModal}
                 onAccept={handleAccept}
+                onMessageCustomer={selectedOrder && canMessageServiceOrderCustomer(auth, selectedOrder)
+                    ? handleMessageCustomer
+                    : undefined}
+                messageCustomerLoading={selectedOrder?.id === messagingOrderId}
                 showPassword={false} // No password display for admin modal
             />
         </>

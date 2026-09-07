@@ -38,11 +38,41 @@ export interface ChatReaction {
     users?: ChatUser[];
 }
 
+export type ChatTipStatus = 'pending' | 'completed' | 'failed' | 'refunded';
+
+export interface ChatTip {
+    id: number;
+    uuid: string;
+    conversation_id: number;
+    message_id?: number | null;
+    payer?: ChatUser | null;
+    recipient?: ChatUser | null;
+    amount: number;
+    platform_fee: number;
+    recipient_amount: number;
+    currency: 'VND' | string;
+    status: ChatTipStatus;
+    note?: string | null;
+    completed_at?: string | null;
+    refunded_at?: string | null;
+    created_at?: string | null;
+}
+
+export interface ChatTippingConfig {
+    enabled: boolean;
+    min_amount: number;
+    max_amount: number;
+    daily_limit: number;
+    remaining_daily_limit: number;
+    balance: number;
+    recipients: ChatUser[];
+}
+
 export interface ChatMessage {
     id: number;
     conversation_id: number;
     sender_kind: 'customer' | 'agent' | 'system';
-    type: 'text' | 'image' | 'system' | 'internal_note';
+    type: 'text' | 'image' | 'system' | 'internal_note' | 'tip';
     body: string;
     reply_to_id?: number | null;
     client_message_id?: string | null;
@@ -54,6 +84,7 @@ export interface ChatMessage {
     attachments: ChatAttachment[];
     attachments_expired?: boolean;
     reactions: ChatReaction[];
+    tip?: ChatTip | null;
     edited_at?: string | null;
     created_at: string;
     /** Trạng thái cục bộ, chỉ tồn tại trong lúc client đang gửi/tự thử lại. */
@@ -96,6 +127,7 @@ export interface ChatConversation {
         manage: boolean;
         assign: boolean;
     };
+    tipping?: ChatTippingConfig;
 }
 
 export interface PaginatedChatConversations {

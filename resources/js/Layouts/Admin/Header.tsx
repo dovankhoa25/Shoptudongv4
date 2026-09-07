@@ -1,6 +1,7 @@
 // resources/js/Layouts/Admin/Header.tsx - Simple version
-import React from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { usePage } from '@inertiajs/react';
+import { useEcho } from '@laravel/echo-react';
 import { PageProps } from '@/types';
 import NotificationDropdown from './components/NotificationDropdown';
 import UserDropdown from './components/UserDropdown';
@@ -12,12 +13,68 @@ interface HeaderProps {
     isMenuCollapsed?: boolean;
 }
 
+interface UserBalanceEvent {
+    userId?: number | string;
+    type: string;
+    payload?: {
+        balance?: number | string;
+        remaining_daily_limit?: number | string;
+    };
+}
+
+interface LocalBalanceEventDetail {
+    user_id?: number | string;
+    balance?: number | string;
+    remaining_daily_limit?: number | string;
+}
+
+function dispatchTipPayerState(detail?: LocalBalanceEventDetail): void {
+    const remainingDailyLimit = Number(detail?.remaining_daily_limit);
+    if (!Number.isFinite(remainingDailyLimit)) return;
+
+    window.dispatchEvent(new CustomEvent('chat:tip-payer-state-updated', { detail }));
+}
+
 export default function Header({ title, onMenuClick, isMenuCollapsed = false }: HeaderProps) {
     const { props } = usePage<PageProps>();
 
     const notifications = props.notifications || [];
     const user = props.auth.user;
     const roles = props.auth.roles;
+    const [liveBalance, setLiveBalance] = useState(() => Number(user?.balance ?? 0));
+
+    useEffect(() => {
+        setLiveBalance(Number(user?.balance ?? 0));
+    }, [user?.balance, user?.id]);
+
+    const handleUserEvent = useCallback((event: UserBalanceEvent) => {
+        if (event.type !== 'update_balance'
+            || (event.userId && Number(event.userId) !== Number(user?.id))) return;
+
+        const balance = Number(event.payload?.balance);
+        if (Number.isFinite(balance)) setLiveBalance(balance);
+        dispatchTipPayerState(event.payload);
+    }, [user?.id]);
+
+    useEffect(() => {
+        const handleLocalBalance = (event: Event) => {
+            const detail = (event as CustomEvent<LocalBalanceEventDetail>).detail;
+            if (detail?.user_id && Number(detail.user_id) !== Number(user?.id)) return;
+
+            const balance = Number(detail?.balance);
+            if (Number.isFinite(balance)) setLiveBalance(balance);
+        };
+
+        window.addEventListener('user:balance-updated', handleLocalBalance);
+        return () => window.removeEventListener('user:balance-updated', handleLocalBalance);
+    }, [user?.id]);
+
+    useEcho<UserBalanceEvent>(`User.${user.id}`, '.UserEvent', handleUserEvent, [handleUserEvent]);
+
+    const userWithLiveBalance = useMemo(
+        () => ({ ...user, balance: liveBalance }),
+        [liveBalance, user],
+    );
 
     return (
         <header className="sticky top-0 z-30 p-2 pb-0">
@@ -47,7 +104,7 @@ export default function Header({ title, onMenuClick, isMenuCollapsed = false }: 
                         <div className="flex items-center space-x-1 flex-shrink-0">
                             <ThemeToggle />
                             <NotificationDropdown notifications={notifications} compact />
-                            <UserDropdown user={user} roles={roles} compact />
+                            <UserDropdown user={userWithLiveBalance} roles={roles} compact />
                         </div>
                     </div>
                 </div>

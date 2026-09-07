@@ -19,7 +19,7 @@ class ChatParticipantResource extends JsonResource
             'user' => $this->whenLoaded('user', fn () => $this->user ? [
                 'id' => (int) $this->user->id,
                 'username' => $this->user->username,
-                'avatar' => $this->user->avatar_url,
+                'avatar' => $this->user->chat_avatar_url,
             ] : null),
         ];
     }

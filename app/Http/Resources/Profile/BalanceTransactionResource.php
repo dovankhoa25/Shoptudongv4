@@ -42,12 +42,21 @@ class BalanceTransactionResource extends JsonResource
             Transaction::TYPE_GOLD_ORDER_REFUND => 'Hoàn tiền đơn mua vàng',
             Transaction::TYPE_GOLD_IMPORT_CREDIT => 'Thanh toán đơn bán vàng',
             Transaction::TYPE_GEM_ORDER_REFUND => 'Hoàn tiền đơn mua ngọc',
+            Transaction::TYPE_CHAT_TIP_SENT => 'Ủng hộ trong chat',
+            Transaction::TYPE_CHAT_TIP_RECEIVED => 'Nhận ủng hộ trong chat',
             default => 'Giao dịch số dư',
         };
     }
 
     private function source(): string
     {
+        if (in_array($this->type, [
+            Transaction::TYPE_CHAT_TIP_SENT,
+            Transaction::TYPE_CHAT_TIP_RECEIVED,
+        ], true)) {
+            return 'chat';
+        }
+
         if ($this->performed_by === null) {
             return 'system';
         }

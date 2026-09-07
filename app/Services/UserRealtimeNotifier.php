@@ -39,16 +39,26 @@ class UserRealtimeNotifier
         ));
     }
 
-    public function balanceChanged(int $userId, int $amount, int $balance, string $message): void
-    {
+    public function balanceChanged(
+        int $userId,
+        int $amount,
+        int $balance,
+        string $message,
+        ?int $remainingDailyLimit = null,
+    ): void {
+        $payload = [
+            'amount' => $amount,
+            'balance' => $balance,
+        ];
+        if ($remainingDailyLimit !== null) {
+            $payload['remaining_daily_limit'] = max(0, $remainingDailyLimit);
+        }
+
         $this->send(new UserEvent(
             userId: $userId,
             type: 'update_balance',
             message: $message,
-            payload: [
-                'amount' => $amount,
-                'balance' => $balance,
-            ],
+            payload: $payload,
         ));
     }
 

@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Spatie\MediaLibrary\HasMedia;
 use Spatie\MediaLibrary\InteractsWithMedia;
@@ -24,6 +25,8 @@ class ChatMessage extends Model implements HasMedia
     public const TYPE_TEXT = 'text';
 
     public const TYPE_IMAGE = 'image';
+
+    public const TYPE_TIP = 'tip';
 
     public const TYPE_SYSTEM = 'system';
 
@@ -69,6 +72,11 @@ class ChatMessage extends Model implements HasMedia
     public function reactions(): HasMany
     {
         return $this->hasMany(ChatMessageReaction::class, 'message_id');
+    }
+
+    public function tip(): HasOne
+    {
+        return $this->hasOne(ChatTip::class, 'message_id');
     }
 
     public function registerMediaCollections(): void

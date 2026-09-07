@@ -3,7 +3,7 @@ import React from 'react';
 import { Modal, Descriptions, Tag, Button, Card, Typography, Space, Tooltip } from 'antd';
 import {
     FileText, CheckCircle, Truck, CreditCard, Calendar,
-    Settings, Users, User, Clock, Shield, Copy, XCircle
+    Settings, Users, User, Clock, Shield, Copy, MessageCircle, XCircle
 } from 'lucide-react';
 import { formatDate, formatPrice } from '@/Utils/currencyHelper';
 import { useToast } from "@/Components/ToastProvider";
@@ -45,6 +45,8 @@ interface Props {
     onAccept?: (order: IServiceOrder) => void;
     onCompleted?: (order: IServiceOrder) => void; // Add completed action
     onCancel?: (order: IServiceOrder) => void;    // Add cancel action
+    onMessageCustomer?: (order: IServiceOrder) => void;
+    messageCustomerLoading?: boolean;
     showPassword?: boolean; // Add prop to control password visibility
 }
 
@@ -55,6 +57,8 @@ export default function ServiceOrderDetailModal({
     onAccept,
     onCompleted,
     onCancel,
+    onMessageCustomer,
+    messageCustomerLoading = false,
     showPassword = false
 }: Props) {
     const toast = useToast();
@@ -201,7 +205,18 @@ export default function ServiceOrderDetailModal({
             onCancel={onClose}
             width={900}
             footer={
-                <Space>
+                <Space wrap>
+                    {onMessageCustomer && (
+                        <Button
+                            icon={<MessageCircle className="w-4 h-4" />}
+                            loading={messageCustomerLoading}
+                            disabled={messageCustomerLoading}
+                            onClick={() => order && onMessageCustomer(order)}
+                            className="border-indigo-500 text-indigo-600 hover:!border-indigo-400 hover:!text-indigo-500"
+                        >
+                            Nhắn khách
+                        </Button>
+                    )}
                     {order.status === 'pending' && onAccept && (
                         <Button
                             type="primary"

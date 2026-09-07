@@ -86,6 +86,9 @@ Route::middleware('auth')->group(function () {
         Route::get('/conversations/{conversation}', [ChatController::class, 'show'])->name('conversations.show');
         Route::get('/conversations/{conversation}/messages', [ChatController::class, 'messages'])->name('messages.index');
         Route::post('/conversations/{conversation}/messages', [ChatController::class, 'send'])->name('messages.store');
+        Route::post('/conversations/{conversation}/tips', [ChatController::class, 'tip'])
+            ->middleware('throttle:10,1')
+            ->name('tips.store');
         Route::post('/conversations/{conversation}/messages/{message}/reactions', [ChatController::class, 'toggleReaction'])
             ->name('messages.reactions.toggle');
         Route::patch('/conversations/{conversation}/read', [ChatController::class, 'read'])->name('read');
@@ -825,9 +828,15 @@ Route::prefix('admin/chat')
     ->name('admin.chat.')
     ->middleware(['auth', 'unlocked.user', 'throttle:chat'])
     ->group(function (): void {
+        Route::get('/customers', [ChatController::class, 'customers'])
+            ->middleware(Permission::middleware(Permission::ChatsView, Permission::ChatsReply))
+            ->name('customers.index');
         Route::get('/conversations', [ChatController::class, 'index'])
             ->middleware(Permission::middleware(Permission::ChatsView))
             ->name('conversations.index');
+        Route::post('/conversations/resolve', [ChatController::class, 'resolveForAgent'])
+            ->middleware(Permission::middleware(Permission::ChatsView, Permission::ChatsReply))
+            ->name('conversations.resolve');
         Route::get('/agents', [ChatController::class, 'agents'])
             ->middleware(Permission::middleware(Permission::ChatsAssign))
             ->name('agents.index');

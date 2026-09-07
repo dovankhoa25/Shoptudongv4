@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { usePage } from '@inertiajs/react';
-import { ArrowDownCircle, ArrowRight, ArrowUpCircle, CreditCard, Landmark, UserRound } from 'lucide-react';
+import { ArrowDownCircle, ArrowRight, ArrowUpCircle, CreditCard, Gift, Landmark, UserRound } from 'lucide-react';
 import AdminLayout from '@/Layouts/AdminLayout';
 import { Column, DataTable } from '@/Components/Table/DataTable';
 import { useTableFilters } from '@/Hooks/useTableFilters';
@@ -55,6 +55,16 @@ const TYPE_CONFIG = {
         icon: Landmark,
         className: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
     },
+    chat_tip_sent: {
+        label: 'Ủng hộ trong chat',
+        icon: Gift,
+        className: 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300',
+    },
+    chat_tip_received: {
+        label: 'Nhận ủng hộ trong chat',
+        icon: Gift,
+        className: 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300',
+    },
 } as const;
 
 export default function TransactionsPage() {
@@ -98,6 +108,8 @@ export default function TransactionsPage() {
                 { text: 'Admin trừ tiền', value: 'admin_debit' },
                 { text: 'Nạp tiền bằng thẻ', value: 'card_deposit' },
                 { text: 'Nạp tiền ngân hàng', value: 'bank_deposit' },
+                { text: 'Ủng hộ trong chat', value: 'chat_tip_sent' },
+                { text: 'Nhận ủng hộ trong chat', value: 'chat_tip_received' },
             ],
             render: (type: string) => {
                 const config = TYPE_CONFIG[type as keyof typeof TYPE_CONFIG];

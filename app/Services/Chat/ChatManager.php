@@ -2,10 +2,12 @@
 
 namespace App\Services\Chat;
 
+use App\Enums\Permission;
 use App\Models\ChatConversation;
 use App\Models\ChatConversationEvent;
 use App\Models\ChatMessage;
 use App\Models\ChatParticipant;
+use App\Models\ServiceOrder;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
@@ -22,10 +24,25 @@ class ChatManager
      */
     public function resolve(User $customer, array $attributes): array
     {
+        [$conversation, $created, $previousAssigneeId] = $this->resolveConversation(
+            $customer,
+            $attributes,
+            $customer,
+        );
+
+        return [$conversation, $created, $previousAssigneeId];
+    }
+
+    /**
+     * @param  array<string, mixed>  $attributes
+     * @return array{0: ChatConversation, 1: bool, 2: int|null, 3: string|null, 4: bool}
+     */
+    private function resolveConversation(User $customer, array $attributes, User $initiator): array
+    {
         $type = $attributes['subject_type'] ?? null;
         $subjectId = isset($attributes['subject_id']) ? (int) $attributes['subject_id'] : null;
 
-        return DB::transaction(function () use ($customer, $attributes, $type, $subjectId): array {
+        return DB::transaction(function () use ($customer, $attributes, $type, $subjectId, $initiator): array {
             $subject = $type && $subjectId
                 ? $this->subjects->resolveOwned($type, $subjectId, $customer, true)
                 : null;
@@ -37,6 +54,8 @@ class ChatManager
             $assigneeId = $this->eligibleAssigneeId($suggestedAssigneeId, $customer);
             $conversation = null;
             $previousAssigneeId = null;
+            $resolutionAction = null;
+            $enteredActive = false;
 
             if ($type) {
                 $conversation = ChatConversation::query()
@@ -86,7 +105,7 @@ class ChatManager
 
                             ChatConversationEvent::query()->create([
                                 'conversation_id' => $generalConversation->id,
-                                'actor_id' => $customer->getKey(),
+                                'actor_id' => $initiator->getKey(),
                                 'event_type' => 'subject_attached',
                                 'old_value' => [
                                     'subject_type' => null,
@@ -100,11 +119,16 @@ class ChatManager
                                 ],
                             ]);
 
-                            if ($this->changeAssignee($generalConversation, $customer, $newAssigneeId)) {
+                            if ($this->changeAssignee($generalConversation, $initiator, $newAssigneeId)) {
                                 $previousAssigneeId = $oldAssigneeId ? (int) $oldAssigneeId : null;
                             }
 
                             $conversation = $generalConversation;
+                            $resolutionAction = 'subject_attached';
+                            $enteredActive = ! in_array($oldStatus, [
+                                ChatConversation::STATUS_WAITING_AGENT,
+                                ChatConversation::STATUS_WAITING_CUSTOMER,
+                            ], true);
                         }
                     }
                 }
@@ -144,9 +168,11 @@ class ChatManager
                 $created = $conversation->wasRecentlyCreated;
 
                 if ($created) {
+                    $resolutionAction = 'created';
+                    $enteredActive = true;
                     ChatConversationEvent::query()->create([
                         'conversation_id' => $conversation->id,
-                        'actor_id' => $customer->getKey(),
+                        'actor_id' => $initiator->getKey(),
                         'event_type' => 'created',
                         'new_value' => [
                             'subject_type' => $type,
@@ -158,6 +184,8 @@ class ChatManager
             }
 
             if (! $created && $conversation->status === ChatConversation::STATUS_CLOSED) {
+                $resolutionAction = 'reopened';
+                $enteredActive = true;
                 $conversation->update([
                     'status' => ChatConversation::STATUS_WAITING_AGENT,
                     'resolved_by' => null,
@@ -166,7 +194,7 @@ class ChatManager
 
                 ChatConversationEvent::query()->create([
                     'conversation_id' => $conversation->id,
-                    'actor_id' => $customer->getKey(),
+                    'actor_id' => $initiator->getKey(),
                     'event_type' => 'reopened',
                     'old_value' => ['status' => ChatConversation::STATUS_CLOSED],
                     'new_value' => ['status' => ChatConversation::STATUS_WAITING_AGENT],
@@ -185,7 +213,188 @@ class ChatManager
                 );
             }
 
-            return [$conversation->fresh(), $created, $previousAssigneeId];
+            return [$conversation->fresh(), $created, $previousAssigneeId, $resolutionAction, $enteredActive];
+        });
+    }
+
+    /**
+     * Resolve an agent-started conversation and add its first visible system
+     * message in the same transaction. Repeating the request for an active
+     * conversation only returns that conversation and does not add noise.
+     *
+     * @param  array<string, mixed>  $attributes
+     * @return array{0: ChatConversation, 1: bool, 2: ChatMessage|null, 3: int|null, 4: bool}
+     */
+    public function resolveForAgent(User $actor, array $attributes): array
+    {
+        return DB::transaction(function () use ($actor, $attributes): array {
+            $actor = User::query()->findOrFail($actor->getKey());
+            $this->authorizeOutboundActor($actor);
+
+            $type = $attributes['subject_type'] ?? null;
+            $subjectId = isset($attributes['subject_id']) ? (int) $attributes['subject_id'] : null;
+            $order = null;
+
+            if ($type !== null) {
+                if ($type !== 'service_order' || ! $subjectId) {
+                    throw ValidationException::withMessages([
+                        'subject_type' => 'Hiện chỉ hỗ trợ chủ động mở chat từ đơn dịch vụ.',
+                    ]);
+                }
+
+                $order = ServiceOrder::withoutReceiverOwnedScope()
+                    ->whereKey($subjectId)
+                    ->lockForUpdate()
+                    ->first();
+
+                if (! $order) {
+                    throw ValidationException::withMessages([
+                        'subject_id' => 'Không tìm thấy đơn dịch vụ.',
+                    ]);
+                }
+
+                $customerId = (int) $order->user_id;
+                if (isset($attributes['customer_id'])
+                    && (int) $attributes['customer_id'] !== $customerId) {
+                    throw ValidationException::withMessages([
+                        'customer_id' => 'Khách hàng không khớp với đơn dịch vụ.',
+                    ]);
+                }
+
+                $this->authorizeOutboundServiceOrder($actor, $order);
+            } else {
+                if (! $actor->canViewAllAdminData()) {
+                    throw new AuthorizationException('CTV chỉ có thể chủ động chat từ đơn dịch vụ đang nhận.');
+                }
+
+                $customerId = isset($attributes['customer_id'])
+                    ? (int) $attributes['customer_id']
+                    : 0;
+            }
+
+            $customer = User::query()
+                ->whereKey($customerId)
+                ->where('status', User::STATUS_ACTIVE)
+                ->first();
+
+            if (! $customer || $customer->isLocked()) {
+                throw ValidationException::withMessages([
+                    'customer_id' => 'Không tìm thấy khách hàng đang hoạt động.',
+                ]);
+            }
+
+            if ((int) $customer->getKey() === (int) $actor->getKey()) {
+                throw ValidationException::withMessages([
+                    'customer_id' => 'Không thể tạo cuộc trò chuyện hỗ trợ với chính mình.',
+                ]);
+            }
+
+            if (! $type && $customer->isChatAgent()) {
+                throw ValidationException::withMessages([
+                    'customer_id' => 'Hãy chọn một tài khoản khách hàng.',
+                ]);
+            }
+
+            $attributes['customer_id'] = $customer->getKey();
+            [$conversation, $created, $previousAssigneeId, $resolutionAction, $enteredActive] = $this->resolveConversation(
+                $customer,
+                $attributes,
+                $actor,
+            );
+
+            if ($resolutionAction === null
+                && $conversation->status === ChatConversation::STATUS_RESOLVED) {
+                $conversation->update([
+                    'status' => ChatConversation::STATUS_WAITING_AGENT,
+                    'resolved_by' => null,
+                    'resolved_at' => null,
+                ]);
+
+                ChatConversationEvent::query()->create([
+                    'conversation_id' => $conversation->id,
+                    'actor_id' => $actor->getKey(),
+                    'event_type' => 'reopened',
+                    'old_value' => ['status' => ChatConversation::STATUS_RESOLVED],
+                    'new_value' => ['status' => ChatConversation::STATUS_WAITING_AGENT],
+                ]);
+
+                $conversation = $conversation->fresh();
+                $resolutionAction = 'reopened';
+                $enteredActive = true;
+            }
+
+            if ($order
+                && ! $actor->canViewAllAdminData()
+                && (int) $conversation->assigned_to_id !== (int) $actor->getKey()) {
+                $previousAssigneeId = $conversation->assigned_to_id
+                    ? (int) $conversation->assigned_to_id
+                    : $previousAssigneeId;
+                $this->changeAssignee($conversation, $actor, (int) $actor->getKey());
+                $conversation = $conversation->fresh();
+            }
+
+            if ($resolutionAction === null) {
+                return [$conversation, false, null, $previousAssigneeId, false];
+            }
+
+            if (! $conversation->assigned_to_id) {
+                $this->changeAssignee($conversation, $actor, (int) $actor->getKey());
+            }
+
+            ChatParticipant::query()->updateOrCreate(
+                ['conversation_id' => $conversation->id, 'user_id' => $actor->getKey()],
+                ['role' => ChatParticipant::ROLE_AGENT, 'joined_at' => now(), 'left_at' => null],
+            );
+
+            ChatConversationEvent::query()->create([
+                'conversation_id' => $conversation->id,
+                'actor_id' => $actor->getKey(),
+                'event_type' => 'agent_initiated',
+                'new_value' => [
+                    'action' => $resolutionAction,
+                    'customer_id' => (int) $customer->getKey(),
+                    'subject_type' => $type,
+                    'subject_id' => $subjectId,
+                    'initiated_from' => $type ? 'service_order' : 'admin',
+                    'source_app' => $attributes['source_app'] ?? null,
+                    'source_url' => $attributes['source_url'] ?? null,
+                ],
+            ]);
+
+            $message = $conversation->messages()->create([
+                'sender_id' => null,
+                'sender_kind' => ChatMessage::SENDER_SYSTEM,
+                'type' => ChatMessage::TYPE_SYSTEM,
+                'body' => $this->outboundSystemMessage($actor, $order, $resolutionAction),
+                'metadata' => [
+                    'event' => 'agent_initiated',
+                    'actor_id' => (int) $actor->getKey(),
+                    'actor_username' => $actor->username,
+                    'action' => $resolutionAction,
+                    'subject_type' => $type,
+                    'subject_id' => $subjectId,
+                    'initiated_from' => $type ? 'service_order' : 'admin',
+                ],
+                'is_internal' => false,
+            ]);
+
+            ChatParticipant::query()
+                ->where('conversation_id', $conversation->id)
+                ->where('user_id', $actor->getKey())
+                ->update([
+                    'last_read_message_id' => $message->id,
+                    'last_read_at' => now(),
+                ]);
+
+            $conversation->update([
+                'last_message_id' => $message->id,
+                'last_message_at' => $message->created_at,
+                'status' => ChatConversation::STATUS_WAITING_CUSTOMER,
+                'resolved_by' => null,
+                'resolved_at' => null,
+            ]);
+
+            return [$conversation->fresh(), $created, $message, $previousAssigneeId, $enteredActive];
         });
     }
 
@@ -395,6 +604,50 @@ class ChatManager
 
             return $locked->fresh();
         });
+    }
+
+    private function authorizeOutboundActor(User $actor): void
+    {
+        $hasRequiredChatPermissions = $actor->hasRole('super-admin')
+            || ($actor->can(Permission::ChatsView->value)
+                && $actor->can(Permission::ChatsReply->value));
+
+        if ($actor->isLocked()
+            || $actor->status !== User::STATUS_ACTIVE
+            || ! $actor->isChatAgent()
+            || ! $hasRequiredChatPermissions) {
+            throw new AuthorizationException('Bạn không có quyền chủ động tạo cuộc trò chuyện.');
+        }
+    }
+
+    private function authorizeOutboundServiceOrder(User $actor, ServiceOrder $order): void
+    {
+        if ($actor->canViewAllAdminData()) {
+            return;
+        }
+
+        $canViewServiceOrders = $actor->can(Permission::ServiceOrdersView->value)
+            || $actor->can(Permission::ServiceOrdersProcess->value);
+
+        if (! $canViewServiceOrders
+            || (int) $order->receiver_id !== (int) $actor->getKey()
+            || $order->status !== 'approved') {
+            throw new AuthorizationException('Bạn chỉ có thể chủ động chat với đơn dịch vụ đang nhận.');
+        }
+    }
+
+    private function outboundSystemMessage(
+        User $actor,
+        ?ServiceOrder $order,
+        string $resolutionAction,
+    ): string {
+        $verb = $resolutionAction === 'reopened' ? 'đã mở lại' : 'đã bắt đầu';
+
+        if ($order) {
+            return "{$actor->username} {$verb} hỗ trợ đơn dịch vụ #{$order->getKey()}.";
+        }
+
+        return "{$actor->username} {$verb} cuộc trò chuyện hỗ trợ.";
     }
 
     private function changeAssignee(ChatConversation $conversation, User $actor, ?int $newAssigneeId): bool

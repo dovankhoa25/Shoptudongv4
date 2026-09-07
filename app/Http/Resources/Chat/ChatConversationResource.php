@@ -39,12 +39,12 @@ class ChatConversationResource extends JsonResource
             'customer' => $this->whenLoaded('customer', fn () => $this->customer ? [
                 'id' => (int) $this->customer->id,
                 'username' => $this->customer->username,
-                'avatar' => $this->customer->avatar_url,
+                'avatar' => $this->customer->chat_avatar_url,
             ] : null),
             'assignee' => $this->whenLoaded('assignee', fn () => $this->assignee ? [
                 'id' => (int) $this->assignee->id,
                 'username' => $this->assignee->username,
-                'avatar' => $this->assignee->avatar_url,
+                'avatar' => $this->assignee->chat_avatar_url,
             ] : null),
             'participants' => ChatParticipantResource::collection($this->whenLoaded('participants')),
             'last_message' => $lastMessage ? (new ChatMessageResource($lastMessage))->resolve($request) : null,
@@ -63,6 +63,10 @@ class ChatConversationResource extends JsonResource
                 'manage' => $user?->can('manage', $this->resource) ?? false,
                 'assign' => $user?->can('assign', $this->resource) ?? false,
             ],
+            'tipping' => $this->when(
+                array_key_exists('tipping', $this->resource->getAttributes()),
+                fn () => $this->resource->getAttribute('tipping'),
+            ),
         ];
     }
 }

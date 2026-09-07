@@ -106,6 +106,11 @@ class ChatConversation extends Model
         return $this->hasMany(ChatConversationEvent::class, 'conversation_id');
     }
 
+    public function tips(): HasMany
+    {
+        return $this->hasMany(ChatTip::class, 'conversation_id');
+    }
+
     public function scopeVisibleTo(Builder $query, User $user): Builder
     {
         if ($user->canViewAllChats() && $user->can('chats.view')) {

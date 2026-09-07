@@ -115,6 +115,16 @@ class User extends Authenticatable implements HasMedia
         return $this->hasMany(ChatMessage::class, 'sender_id');
     }
 
+    public function sentChatTips(): HasMany
+    {
+        return $this->hasMany(ChatTip::class, 'payer_id');
+    }
+
+    public function receivedChatTips(): HasMany
+    {
+        return $this->hasMany(ChatTip::class, 'recipient_id');
+    }
+
     public function authProviders()
     {
         return $this->hasMany(UserAuthProvider::class);
@@ -314,6 +324,15 @@ class User extends Authenticatable implements HasMedia
         }
 
         return $this->getFirstMediaUrl('avatar') ?: asset('images/placeholder.jpg');
+    }
+
+    public function getChatAvatarUrlAttribute(): ?string
+    {
+        if (! empty($this->attributes['avatar'])) {
+            return $this->attributes['avatar'];
+        }
+
+        return $this->getFirstMediaUrl('avatar') ?: null;
     }
 
     public function isLocked(): bool
