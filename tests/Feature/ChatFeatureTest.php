@@ -37,6 +37,7 @@ class ChatFeatureTest extends TestCase
 
         foreach ([
             AppPermission::ChatsView,
+            AppPermission::ChatsViewAll,
             AppPermission::ChatsReply,
             AppPermission::ChatsAssign,
             AppPermission::ChatsManage,
@@ -267,6 +268,29 @@ class ChatFeatureTest extends TestCase
             $expected = collect([$customer->id, $receiver->id])->sort()->values()->all();
 
             return $recipients === $expected;
+        });
+    }
+
+    public function test_direct_view_all_permission_receives_realtime_for_unrelated_chat(): void
+    {
+        $customer = User::factory()->create();
+        $globalCtv = $this->agent('ctv', [
+            AppPermission::ChatsView,
+            AppPermission::ChatsViewAll,
+        ]);
+        $scopedCtv = $this->agent('ctv', [AppPermission::ChatsView]);
+        $conversation = $this->conversationFor($customer);
+
+        Event::fake([ChatMessageSent::class]);
+
+        app(ChatRealtimeNotifier::class)->message($conversation, ['id' => 124], false);
+
+        Event::assertDispatched(ChatMessageSent::class, function (ChatMessageSent $event) use ($customer, $globalCtv, $scopedCtv): bool {
+            $recipients = collect($event->recipientIds);
+
+            return $recipients->contains($customer->id)
+                && $recipients->contains($globalCtv->id)
+                && ! $recipients->contains($scopedCtv->id);
         });
     }
 
@@ -798,6 +822,111 @@ class ChatFeatureTest extends TestCase
         $this->actingAs($receiver)
             ->getJson("/admin/chat/conversations/{$conversationId}")
             ->assertForbidden();
+    }
+
+    public function test_user_with_direct_view_all_permission_can_see_every_conversation_without_role(): void
+    {
+        $viewer = User::factory()->create(['status' => User::STATUS_ACTIVE]);
+        $viewer->givePermissionTo([
+            AppPermission::ChatsView->value,
+            AppPermission::ChatsViewAll->value,
+        ]);
+        $assigned = $this->conversationFor(User::factory()->create());
+        $assigned->update(['assigned_to_id' => $viewer->id]);
+        $unrelated = $this->conversationFor(User::factory()->create());
+
+        $this->assertTrue($viewer->getRoleNames()->isEmpty());
+        $this->assertFalse($viewer->canViewAllAdminData());
+        $this->assertTrue($viewer->canViewAllChats());
+
+        $this->actingAs($viewer)
+            ->get('/admin/chats')
+            ->assertOk();
+
+        $response = $this->actingAs($viewer)
+            ->getJson('/admin/chat/conversations?view=all')
+            ->assertOk()
+            ->assertJsonCount(2, 'data');
+
+        $this->assertEqualsCanonicalizing(
+            [$assigned->id, $unrelated->id],
+            collect($response->json('data'))->pluck('id')->all(),
+        );
+
+        $this->actingAs($viewer)
+            ->getJson("/admin/chat/conversations/{$unrelated->id}")
+            ->assertOk();
+    }
+
+    public function test_ctv_without_view_all_permission_stays_scoped_even_with_other_chat_permissions(): void
+    {
+        $ctv = $this->agent('ctv', [
+            AppPermission::ChatsView,
+            AppPermission::ChatsReply,
+            AppPermission::ChatsAssign,
+            AppPermission::ChatsManage,
+        ]);
+        $assigned = $this->conversationFor(User::factory()->create());
+        $assigned->update(['assigned_to_id' => $ctv->id]);
+        $unrelated = $this->conversationFor(User::factory()->create());
+        $assignee = $this->agent('ctv', [AppPermission::ChatsView, AppPermission::ChatsReply]);
+
+        $this->assertFalse($ctv->canViewAllChats());
+
+        $this->actingAs($ctv)
+            ->getJson('/admin/chat/conversations?view=all')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $assigned->id);
+
+        $this->actingAs($ctv)
+            ->getJson("/admin/chat/conversations/{$unrelated->id}")
+            ->assertForbidden();
+
+        $this->actingAs($ctv)
+            ->patchJson("/admin/chat/conversations/{$unrelated->id}/assign", [
+                'assigned_to_id' => $assignee->id,
+            ])
+            ->assertForbidden();
+    }
+
+    public function test_global_chat_assignment_still_requires_assign_permission(): void
+    {
+        $conversation = $this->conversationFor(User::factory()->create());
+        $assignee = User::factory()->create(['status' => User::STATUS_ACTIVE]);
+        $assignee->givePermissionTo([
+            AppPermission::ChatsView->value,
+            AppPermission::ChatsReply->value,
+        ]);
+        $viewer = $this->agent('ctv', [
+            AppPermission::ChatsView,
+            AppPermission::ChatsViewAll,
+        ]);
+        $dispatcher = $this->agent('ctv', [
+            AppPermission::ChatsView,
+            AppPermission::ChatsViewAll,
+            AppPermission::ChatsAssign,
+        ]);
+
+        $this->assertTrue($assignee->getRoleNames()->isEmpty());
+
+        $this->actingAs($viewer)
+            ->patchJson("/admin/chat/conversations/{$conversation->id}/assign", [
+                'assigned_to_id' => $assignee->id,
+            ])
+            ->assertForbidden();
+
+        $this->actingAs($dispatcher)
+            ->getJson('/admin/chat/agents')
+            ->assertOk()
+            ->assertJsonFragment(['id' => $assignee->id]);
+
+        $this->actingAs($dispatcher)
+            ->patchJson("/admin/chat/conversations/{$conversation->id}/assign", [
+                'assigned_to_id' => $assignee->id,
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.assignee.id', $assignee->id);
     }
 
     public function test_admin_needs_view_permission_in_addition_to_assign_permission(): void

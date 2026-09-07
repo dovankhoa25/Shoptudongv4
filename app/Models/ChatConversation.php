@@ -108,7 +108,7 @@ class ChatConversation extends Model
 
     public function scopeVisibleTo(Builder $query, User $user): Builder
     {
-        if ($user->canViewAllAdminData() && $user->can('chats.view')) {
+        if ($user->canViewAllChats() && $user->can('chats.view')) {
             return $query;
         }
 
@@ -149,7 +149,7 @@ class ChatConversation extends Model
             return true;
         }
 
-        if ($user->canViewAllAdminData() && $user->can('chats.view')) {
+        if ($user->canViewAllChats() && $user->can('chats.view')) {
             return true;
         }
 

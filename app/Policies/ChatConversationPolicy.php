@@ -23,7 +23,7 @@ class ChatConversationPolicy
             return false;
         }
 
-        return $user->canViewAllAdminData()
+        return $user->canViewAllChats()
             || $conversation->isVisibleTo($user);
     }
 
@@ -43,7 +43,7 @@ class ChatConversationPolicy
             return false;
         }
 
-        if ($user->canViewAllAdminData()) {
+        if ($user->canViewAllChats()) {
             return $user->can('chats.view');
         }
 
@@ -60,7 +60,7 @@ class ChatConversationPolicy
             return false;
         }
 
-        if ($user->canViewAllAdminData()) {
+        if ($user->canViewAllChats()) {
             return $user->can('chats.view');
         }
 
@@ -70,7 +70,7 @@ class ChatConversationPolicy
     public function assign(User $user, ChatConversation $conversation): bool
     {
         return $user->status === User::STATUS_ACTIVE
-            && $user->canViewAllAdminData()
+            && $user->canViewAllChats()
             && $user->can('chats.view')
             && $user->can('chats.assign');
     }

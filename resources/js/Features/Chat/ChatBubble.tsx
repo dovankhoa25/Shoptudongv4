@@ -86,7 +86,11 @@ export default function ChatBubble({ mode, baseUrl }: ChatBubbleProps) {
     const roles = Array.isArray(props.auth.roles) ? props.auth.roles : [];
     const permissions = Array.isArray(props.auth.permissions) ? props.auth.permissions : [];
     const currentUserId = Number(props.auth.user?.id);
-    const isAdmin = mode === 'agent' && (props.auth.is_super_admin || roles.includes('admin'));
+    const canViewAllChats = mode === 'agent' && (
+        props.auth.is_super_admin
+        || roles.includes('admin')
+        || permissions.includes('chats.view_all')
+    );
     const channel = props.auth.realtime_channel;
     const fullPageUrl = mode === 'agent' ? '/admin/chats' : '/messages';
     const hidden = url.split('?')[0] === fullPageUrl;
@@ -104,7 +108,7 @@ export default function ChatBubble({ mode, baseUrl }: ChatBubbleProps) {
             const response = await window.axios.get<PaginatedChatConversations>(`${baseUrl}/conversations`, {
                 params: {
                     per_page: 1,
-                    assignment: mode === 'agent' && !isAdmin ? 'mine' : undefined,
+                    assignment: mode === 'agent' && !canViewAllChats ? 'mine' : undefined,
                     view: mode === 'agent' ? 'active' : undefined,
                 },
                 signal: controller.signal,
@@ -118,7 +122,7 @@ export default function ChatBubble({ mode, baseUrl }: ChatBubbleProps) {
                 unreadAbortRef.current = null;
             }
         }
-    }, [baseUrl, isAdmin, mode]);
+    }, [baseUrl, canViewAllChats, mode]);
 
     useEffect(() => {
         if (!hidden && !open) void loadUnread();

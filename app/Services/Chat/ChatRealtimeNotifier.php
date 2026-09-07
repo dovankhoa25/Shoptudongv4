@@ -2,6 +2,7 @@
 
 namespace App\Services\Chat;
 
+use App\Enums\Permission;
 use App\Events\ChatInboxUpdated;
 use App\Events\ChatMessageSent;
 use App\Events\ChatReadUpdated;
@@ -114,7 +115,13 @@ class ChatRealtimeNotifier
                 $users
                     ->whereIn('id', $candidateIds->unique()->filter()->values())
                     ->orWhereHas('roles', fn ($roles) => $roles
-                        ->whereIn('name', ['admin', 'super-admin']));
+                        ->whereIn('name', ['admin', 'super-admin']))
+                    ->orWhereHas('permissions', fn ($permissions) => $permissions
+                        ->where('name', Permission::ChatsViewAll->value)
+                        ->where('guard_name', 'web'))
+                    ->orWhereHas('roles.permissions', fn ($permissions) => $permissions
+                        ->where('name', Permission::ChatsViewAll->value)
+                        ->where('guard_name', 'web'));
             })
             ->with(['roles.permissions', 'permissions'])
             ->get()
@@ -127,7 +134,7 @@ class ChatRealtimeNotifier
                 ->where('status', User::STATUS_ACTIVE)
                 ->whereIn('id', array_unique($additionalRecipientIds))
                 ->get()
-                ->filter(fn (User $user): bool => ! $user->canViewAllAdminData()
+                ->filter(fn (User $user): bool => ! $user->canViewAllChats()
                     && $user->isChatAgent()
                     && $user->can('chats.view'))
                 ->each(fn (User $user) => $recipientIds->push((int) $user->getKey()));

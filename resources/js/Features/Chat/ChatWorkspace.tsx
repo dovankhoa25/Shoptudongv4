@@ -485,10 +485,15 @@ export default function ChatWorkspace({
     const currentUserId = Number(props.auth.user?.id);
     const roles = Array.isArray(props.auth.roles) ? props.auth.roles : [];
     const permissions = Array.isArray(props.auth.permissions) ? props.auth.permissions : [];
-    const isAdminInbox = mode === 'agent' && (props.auth.is_super_admin || roles.includes('admin'));
+    const canViewAllChats = mode === 'agent' && (
+        props.auth.is_super_admin
+        || roles.includes('admin')
+        || permissions.includes('chats.view_all')
+    );
     const realtimeChannel = props.auth.realtime_channel;
     const canWriteInternalNote = props.auth.is_super_admin || permissions.includes('chats.manage');
-    const canAssignGlobally = props.auth.is_super_admin || permissions.includes('chats.assign');
+    const canAssignGlobally = canViewAllChats
+        && (props.auth.is_super_admin || permissions.includes('chats.assign'));
 
     const [conversations, setConversations] = useState<ChatConversation[]>([]);
     const [unreadTotal, setUnreadTotal] = useState(0);
@@ -504,7 +509,7 @@ export default function ChatWorkspace({
     const [conversationCounts, setConversationCounts] = useState<ChatConversationCounts>({});
     const [conversationTotal, setConversationTotal] = useState(0);
     const [completionUndo, setCompletionUndo] = useState<CompletionUndo | null>(null);
-    const [assignment, setAssignment] = useState(mode === 'agent' && !isAdminInbox ? 'mine' : '');
+    const [assignment, setAssignment] = useState(mode === 'agent' && !canViewAllChats ? 'mine' : '');
     const [creating, setCreating] = useState(false);
     const [loadingList, setLoadingList] = useState(true);
     const [loadingMoreConversations, setLoadingMoreConversations] = useState(false);
@@ -1218,7 +1223,7 @@ export default function ChatWorkspace({
     const matchesActiveFilters = useCallback((summary: ChatConversationRealtimeSummary) => {
         if (mode === 'agent' && !statusBelongsToView(summary.status, inboxView)) return false;
         if (status && summary.status !== status) return false;
-        if (mode !== 'agent' || !isAdminInbox) return true;
+        if (mode !== 'agent' || !canViewAllChats) return true;
         if (assignment === 'mine' && summary.assigned_to_id !== undefined) {
             return summary.assigned_to_id === currentUserId;
         }
@@ -1226,7 +1231,7 @@ export default function ChatWorkspace({
             return summary.assigned_to_id === null;
         }
         return true;
-    }, [assignment, currentUserId, inboxView, isAdminInbox, mode, status]);
+    }, [assignment, canViewAllChats, currentUserId, inboxView, mode, status]);
 
     const updateConversationFromMessage = useCallback((
         incoming: ChatMessage,
@@ -2105,8 +2110,8 @@ export default function ChatWorkspace({
                                     className="rounded-xl border-slate-200 bg-white py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
                                 >
                                     <option value="mine">Của tôi</option>
-                                    {isAdminInbox && <option value="unassigned">Chưa phân công</option>}
-                                    {isAdminInbox && <option value="">Tất cả</option>}
+                                    {canViewAllChats && <option value="unassigned">Chưa phân công</option>}
+                                    {canViewAllChats && <option value="">Tất cả</option>}
                                 </select>
                                 <select
                                     value={status}

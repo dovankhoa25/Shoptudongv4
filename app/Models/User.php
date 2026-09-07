@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\Permission;
 use App\Support\AdminTableSearch;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -78,6 +79,13 @@ class User extends Authenticatable implements HasMedia
     public function canViewAllAdminData(): bool
     {
         return $this->hasAnyRole(['super-admin', 'admin']);
+    }
+
+    public function canViewAllChats(): bool
+    {
+        return $this->status === self::STATUS_ACTIVE
+            && $this->can(Permission::ChatsView->value)
+            && ($this->canViewAllAdminData() || $this->can(Permission::ChatsViewAll->value));
     }
 
     public function isChatAgent(): bool

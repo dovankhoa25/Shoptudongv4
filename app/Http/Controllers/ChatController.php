@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Enums\Permission;
 use App\Http\Resources\Chat\ChatConversationResource;
 use App\Http\Resources\Chat\ChatMessageResource;
 use App\Models\ChatConversation;
@@ -60,7 +61,7 @@ class ChatController extends Controller
         $baseQuery = ChatConversation::query()
             ->visibleTo($user)
             ->when(
-                ($validated['assignment'] ?? null) === 'mine' && $user->canViewAllAdminData(),
+                ($validated['assignment'] ?? null) === 'mine' && $user->canViewAllChats(),
                 fn (Builder $query) => $query->where('assigned_to_id', $user->getKey()),
             )
             ->when(($validated['assignment'] ?? null) === 'unassigned', fn (Builder $query) => $query->whereNull('assigned_to_id'))
@@ -401,7 +402,7 @@ class ChatController extends Controller
     {
         abort_unless(
             $request->user()->status === User::STATUS_ACTIVE
-                && $request->user()->canViewAllAdminData()
+                && $request->user()->canViewAllChats()
                 && $request->user()->can('chats.view')
                 && $request->user()->can('chats.assign'),
             403,
@@ -409,8 +410,23 @@ class ChatController extends Controller
 
         $agents = User::query()
             ->where('status', User::STATUS_ACTIVE)
-            ->whereHas('roles', fn (Builder $query) => $query->whereIn('name', ['admin', 'super-admin', 'ctv']))
-            ->with('roles:id,name')
+            ->where(function (Builder $query): void {
+                $chatPermissions = [
+                    Permission::ChatsView->value,
+                    Permission::ChatsReply->value,
+                ];
+
+                $query
+                    ->whereHas('roles', fn (Builder $roles) => $roles
+                        ->whereIn('name', ['admin', 'super-admin', 'ctv']))
+                    ->orWhereHas('permissions', fn (Builder $permissions) => $permissions
+                        ->whereIn('name', $chatPermissions)
+                        ->where('guard_name', 'web'))
+                    ->orWhereHas('roles.permissions', fn (Builder $permissions) => $permissions
+                        ->whereIn('name', $chatPermissions)
+                        ->where('guard_name', 'web'));
+            })
+            ->with(['roles.permissions', 'permissions'])
             ->orderBy('username')
             ->get(['id', 'username', 'avatar'])
             ->filter(fn (User $user) => $user->can('chats.view') && $user->can('chats.reply'))
