@@ -13,6 +13,8 @@ class ChatConversationResource extends JsonResource
     {
         $user = $request->user();
         $lastMessage = $this->relationLoaded('lastMessage') ? $this->lastMessage : null;
+        $canSeeInternalNotes = $user
+            && (int) $this->customer_id !== (int) $user->getKey();
 
         if ($lastMessage && $lastMessage->is_internal && (int) $this->customer_id === (int) $user?->getKey()) {
             $lastMessage = null;
@@ -39,15 +41,27 @@ class ChatConversationResource extends JsonResource
             'customer' => $this->whenLoaded('customer', fn () => $this->customer ? [
                 'id' => (int) $this->customer->id,
                 'username' => $this->customer->username,
+                'display_name' => $this->customer->username,
                 'avatar' => $this->customer->chat_avatar_url,
             ] : null),
             'assignee' => $this->whenLoaded('assignee', fn () => $this->assignee ? [
                 'id' => (int) $this->assignee->id,
                 'username' => $this->assignee->username,
+                'display_name' => $this->assignee->chatDisplayName(),
                 'avatar' => $this->assignee->chat_avatar_url,
             ] : null),
             'participants' => ChatParticipantResource::collection($this->whenLoaded('participants')),
             'last_message' => $lastMessage ? (new ChatMessageResource($lastMessage))->resolve($request) : null,
+            'pinned_note' => $this->when(
+                $canSeeInternalNotes && $this->relationLoaded('pinnedNote'),
+                fn () => $this->pinnedNote
+                    ? (new ChatMessageResource($this->pinnedNote))->resolve($request)
+                    : null,
+            ),
+            'internal_notes_count' => $this->when(
+                $canSeeInternalNotes && isset($this->internal_notes_count),
+                fn () => (int) $this->internal_notes_count,
+            ),
             'latest_message_id' => isset($this->latest_visible_message_id)
                 ? (int) $this->latest_visible_message_id
                 : ($lastMessage ? (int) $lastMessage->id : null),

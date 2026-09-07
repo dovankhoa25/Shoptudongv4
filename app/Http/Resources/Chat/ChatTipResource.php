@@ -18,11 +18,13 @@ class ChatTipResource extends JsonResource
             'payer' => $this->whenLoaded('payer', fn () => $this->payer ? [
                 'id' => (int) $this->payer->id,
                 'username' => $this->payer->username,
+                'display_name' => $this->payer->username,
                 'avatar' => $this->payer->chat_avatar_url,
             ] : null),
             'recipient' => $this->whenLoaded('recipient', fn () => $this->recipient ? [
                 'id' => (int) $this->recipient->id,
                 'username' => $this->recipient->username,
+                'display_name' => $this->recipient->chatDisplayName(),
                 'avatar' => $this->recipient->chat_avatar_url,
             ] : null),
             'amount' => (int) $this->amount,

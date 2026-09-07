@@ -42,6 +42,7 @@ class ChatConversation extends Model
         'source_app',
         'source_url',
         'last_message_id',
+        'pinned_note_id',
         'last_message_at',
         'resolved_by',
         'resolved_at',
@@ -94,6 +95,12 @@ class ChatConversation extends Model
     public function lastMessage(): BelongsTo
     {
         return $this->belongsTo(ChatMessage::class, 'last_message_id')->withTrashed();
+    }
+
+    public function pinnedNote(): BelongsTo
+    {
+        return $this->belongsTo(ChatMessage::class, 'pinned_note_id')
+            ->where('is_internal', true);
     }
 
     public function participants(): HasMany

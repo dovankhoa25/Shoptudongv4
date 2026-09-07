@@ -224,8 +224,12 @@ final class AdminTableSearch
 
         return match ($preset) {
             'users' => [
-                ['username', 'email'],
-                ['username' => self::text('username'), 'email' => self::text('email')],
+                ['username', 'chat_display_name', 'email'],
+                [
+                    'username' => self::text('username'),
+                    'chat_name' => self::text('chat_display_name'),
+                    'email' => self::text('email'),
+                ],
             ],
             'roles' => [
                 ['name'],

@@ -18,6 +18,8 @@ import {
     LoaderCircle,
     MessageCircle,
     MoreHorizontal,
+    Pin,
+    PinOff,
     Plus,
     RotateCcw,
     Search,
@@ -309,6 +311,17 @@ function formatVnd(amount: number): string {
     return `${new Intl.NumberFormat('vi-VN').format(Math.max(0, amount))}đ`;
 }
 
+function chatUserName(user?: ChatUser | null, fallback = 'Hỗ trợ'): string {
+    return user?.display_name?.trim() || user?.username?.trim() || fallback;
+}
+
+function internalChatUserName(user?: ChatUser | null, fallback = 'Chưa phân công'): string {
+    const displayName = chatUserName(user, fallback);
+    const username = user?.username?.trim();
+
+    return username && username !== displayName ? `${displayName} · @${username}` : displayName;
+}
+
 function defaultTipAmount(config: ChatTippingConfig): number {
     const payableMaximum = Math.min(config.max_amount, config.balance, config.remaining_daily_limit);
     return TIP_PRESET_AMOUNTS.find(amount => amount >= config.min_amount && amount <= payableMaximum)
@@ -444,8 +457,8 @@ function TipMessageCard({ message, compact }: { message: ChatMessage; compact: b
     const metadataStatus = typeof message.metadata?.status === 'string' ? message.metadata.status : null;
     const status = tip?.status ?? metadataStatus;
     const refunded = status === 'refunded' || Boolean(tip?.refunded_at);
-    const payerName = tip?.payer?.username ?? message.sender?.username ?? 'Khách hàng';
-    const recipientName = tip?.recipient?.username ?? 'người hỗ trợ';
+    const payerName = chatUserName(tip?.payer ?? message.sender, 'Khách hàng');
+    const recipientName = chatUserName(tip?.recipient, 'người hỗ trợ');
 
     return (
         <article className="flex justify-center px-1" aria-label="Tin nhắn ủng hộ">
@@ -634,7 +647,7 @@ function TipModal({
                                         : 'border-slate-200 hover:border-indigo-200 hover:bg-slate-50 dark:border-slate-700 dark:hover:border-indigo-500/40 dark:hover:bg-slate-900'}`}
                                 >
                                     <Avatar user={recipient} className="h-8 w-8 text-[11px]" />
-                                    <span className="min-w-0 flex-1 truncate text-xs font-semibold text-slate-800 dark:text-slate-100">{recipient.username}</span>
+                                    <span className="min-w-0 flex-1 truncate text-xs font-semibold text-slate-800 dark:text-slate-100">{chatUserName(recipient)}</span>
                                 </button>
                             ))}
                         </div>
@@ -730,7 +743,7 @@ function isPageActive(): boolean {
 }
 
 function conversationTitle(conversation: ChatConversation, mode: 'customer' | 'agent'): string {
-    if (mode === 'agent' && conversation.customer?.username) return conversation.customer.username;
+    if (mode === 'agent' && conversation.customer) return chatUserName(conversation.customer, 'Khách hàng');
     if (conversation.subject?.label) return conversation.subject.label;
     return 'Hỗ trợ chung';
 }
@@ -852,7 +865,8 @@ function AssigneePicker({
     const normalizedQuery = query.trim().toLocaleLowerCase('vi-VN');
     const filteredAgents = useMemo(() => agents.filter(agent => {
         if (!normalizedQuery) return true;
-        return agent.username.toLocaleLowerCase('vi-VN').includes(normalizedQuery)
+        return chatUserName(agent).toLocaleLowerCase('vi-VN').includes(normalizedQuery)
+            || agent.username.toLocaleLowerCase('vi-VN').includes(normalizedQuery)
             || agent.roles?.some(role => role.toLocaleLowerCase('vi-VN').includes(normalizedQuery));
     }), [agents, normalizedQuery]);
 
@@ -889,7 +903,7 @@ function AssigneePicker({
                 className="flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-sm transition hover:border-indigo-300 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-indigo-500"
             >
                 <Avatar user={selected} className="h-7 w-7 text-[10px]" />
-                <span className="min-w-0 flex-1 truncate text-slate-700 dark:text-slate-200">{selected?.username ?? 'Chưa phân công'}</span>
+                <span className="min-w-0 flex-1 truncate text-slate-700 dark:text-slate-200">{internalChatUserName(selected)}</span>
                 <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition ${open ? 'rotate-180' : ''}`} />
             </button>
 
@@ -929,8 +943,11 @@ function AssigneePicker({
                             >
                                 <Avatar user={agent} className="h-8 w-8 text-[10px]" />
                                 <span className="min-w-0 flex-1">
-                                    <strong className="block truncate text-sm font-medium text-slate-800 dark:text-slate-100">{agent.username}</strong>
-                                    <span className="block truncate text-[11px] text-slate-500">{agent.roles?.join(', ') || 'Nhân viên hỗ trợ'}</span>
+                                    <strong className="block truncate text-sm font-medium text-slate-800 dark:text-slate-100">{chatUserName(agent)}</strong>
+                                    <span className="block truncate text-[11px] text-slate-500">
+                                        {agent.display_name && agent.display_name !== agent.username ? `@${agent.username} · ` : ''}
+                                        {agent.roles?.join(', ') || 'Nhân viên hỗ trợ'}
+                                    </span>
                                 </span>
                                 {selected?.id === agent.id && <CheckCheck className="h-4 w-4 text-emerald-500" />}
                             </button>
@@ -978,6 +995,151 @@ function RelatedOrderModal({ detail, onClose }: { detail: RelatedOrderDetail | n
                     )}
                 </div>
             )}
+        </Modal>
+    );
+}
+
+function InternalNotesModal({
+    open,
+    notes,
+    pinnedNoteId,
+    notesCount,
+    draft,
+    error,
+    canWrite,
+    sending,
+    loadingMore,
+    hasMore,
+    pinningNoteId,
+    onDraftChange,
+    onClose,
+    onSubmit,
+    onLoadMore,
+    onPin,
+    onOpenAttachment,
+}: {
+    open: boolean;
+    notes: ChatMessage[];
+    pinnedNoteId?: number | null;
+    notesCount: number;
+    draft: string;
+    error: string | null;
+    canWrite: boolean;
+    sending: boolean;
+    loadingMore: boolean;
+    hasMore: boolean;
+    pinningNoteId: number | null;
+    onDraftChange: (value: string) => void;
+    onClose: () => void;
+    onSubmit: (event: FormEvent) => void;
+    onLoadMore: () => void;
+    onPin: (note: ChatMessage, pinned: boolean) => void;
+    onOpenAttachment: (attachment: ChatAttachment) => void;
+}) {
+    return (
+        <Modal
+            open={open}
+            onCancel={sending ? undefined : onClose}
+            footer={null}
+            centered
+            width={620}
+            closable={!sending}
+            maskClosable={!sending}
+            destroyOnHidden
+            title={(
+                <span className="flex items-center gap-2">
+                    <span className="grid h-8 w-8 place-items-center rounded-xl bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-300"><Pin className="h-4 w-4" /></span>
+                    Ghi chú nội bộ <span className="text-sm font-normal text-slate-400">({notesCount})</span>
+                </span>
+            )}
+        >
+            <div className="space-y-4 pt-3">
+                {canWrite && (
+                    <form onSubmit={onSubmit} className="rounded-2xl border border-amber-200 bg-amber-50/70 p-3 dark:border-amber-500/20 dark:bg-amber-500/10">
+                        <label className="mb-2 block text-xs font-bold uppercase tracking-wide text-amber-700 dark:text-amber-300">Thêm ghi chú cho đội hỗ trợ</label>
+                        <textarea
+                            value={draft}
+                            onChange={event => onDraftChange(event.target.value)}
+                            rows={3}
+                            maxLength={5000}
+                            disabled={sending}
+                            placeholder="Nội dung này chỉ admin và cộng tác viên được phép xem…"
+                            className="w-full resize-none rounded-xl border-amber-200 bg-white text-sm text-slate-900 shadow-sm focus:border-amber-400 focus:ring-amber-300 disabled:opacity-60 dark:border-amber-500/30 dark:bg-slate-950 dark:text-white"
+                        />
+                        <div className="mt-2 flex items-center justify-between gap-3">
+                            <span className="text-[11px] text-amber-700/70 dark:text-amber-300/70">Khách hàng không nhận ghi chú hoặc sự kiện realtime này.</span>
+                            <button
+                                type="submit"
+                                disabled={!draft.trim() || sending}
+                                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-2 text-xs font-bold text-white transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                                {sending ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <SendHorizontal className="h-3.5 w-3.5" />}
+                                Lưu ghi chú
+                            </button>
+                        </div>
+                    </form>
+                )}
+
+                {error && <div className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">{error}</div>}
+
+                <div className="max-h-[52vh] space-y-2 overflow-y-auto pr-1">
+                    {notes.length === 0 && (
+                        <div className="rounded-xl border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-500 dark:border-slate-700">
+                            Chưa có ghi chú nội bộ.
+                        </div>
+                    )}
+                    {[...notes].reverse().map(note => {
+                        const pinned = note.id === pinnedNoteId;
+                        const attachments = messageAttachments(note);
+                        return (
+                            <article key={note.client_message_id ?? note.id} className={`rounded-xl border p-3 ${pinned ? 'border-amber-300 bg-amber-50 dark:border-amber-500/40 dark:bg-amber-500/10' : 'border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900'}`}>
+                                <div className="flex items-start gap-2.5">
+                                    <Avatar user={note.sender} className="h-8 w-8 text-[10px]" />
+                                    <div className="min-w-0 flex-1">
+                                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                                            <strong className="truncate text-xs text-slate-800 dark:text-slate-100">{internalChatUserName(note.sender, 'Nhân viên hỗ trợ')}</strong>
+                                            <span className="text-[10px] text-slate-400">{formatTime(note.created_at)}</span>
+                                            {pinned && <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:bg-amber-500/20 dark:text-amber-200"><Pin className="h-2.5 w-2.5" /> Đang ghim</span>}
+                                        </div>
+                                        {note.body && <p className="mt-1.5 whitespace-pre-wrap break-words text-sm leading-5 text-slate-700 dark:text-slate-200">{note.body}</p>}
+                                        {attachments.length > 0 && (
+                                            <div className="mt-2">
+                                                <MessageAttachments attachments={attachments} compact onOpen={onOpenAttachment} />
+                                            </div>
+                                        )}
+                                    </div>
+                                    {canWrite && note.id > 0 && (
+                                        <button
+                                            type="button"
+                                            disabled={pinningNoteId !== null}
+                                            onClick={() => onPin(note, pinned)}
+                                            className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg transition disabled:opacity-50 ${pinned ? 'bg-amber-500 text-white hover:bg-amber-400' : 'text-slate-400 hover:bg-amber-100 hover:text-amber-600 dark:hover:bg-amber-500/15'}`}
+                                            aria-label={pinned ? 'Bỏ ghim ghi chú' : 'Ghim ghi chú'}
+                                            title={pinned ? 'Bỏ ghim' : 'Ghim lên đầu cuộc trò chuyện'}
+                                        >
+                                            {pinningNoteId === note.id
+                                                ? <LoaderCircle className="h-4 w-4 animate-spin" />
+                                                : pinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
+                                        </button>
+                                    )}
+                                </div>
+                            </article>
+                        );
+                    })}
+                </div>
+
+                {hasMore && (
+                    <button
+                        type="button"
+                        disabled={loadingMore}
+                        onClick={onLoadMore}
+                        className="mx-auto flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-indigo-600 transition hover:bg-indigo-50 disabled:opacity-50 dark:border-slate-700 dark:text-indigo-300 dark:hover:bg-indigo-500/10"
+                    >
+                        {loadingMore && <LoaderCircle className="h-3.5 w-3.5 animate-spin" />}
+                        Xem ghi chú cũ hơn
+                    </button>
+                )}
+            </div>
         </Modal>
     );
 }
@@ -1078,6 +1240,15 @@ export default function ChatWorkspace({
     const [selectedId, setSelectedId] = useState<number | null>(initialConversationId);
     const [selected, setSelected] = useState<ChatConversation | null>(null);
     const [messages, setMessages] = useState<ChatMessage[]>([]);
+    const [internalNotes, setInternalNotes] = useState<ChatMessage[]>([]);
+    const [internalNotesHasMore, setInternalNotesHasMore] = useState(false);
+    const [internalNotesNextBefore, setInternalNotesNextBefore] = useState<number | null>(null);
+    const [loadingOlderInternalNotes, setLoadingOlderInternalNotes] = useState(false);
+    const [internalNotesOpen, setInternalNotesOpen] = useState(false);
+    const [internalNoteDraft, setInternalNoteDraft] = useState('');
+    const [internalNoteError, setInternalNoteError] = useState<string | null>(null);
+    const [sendingInternalNote, setSendingInternalNote] = useState(false);
+    const [pinningNoteId, setPinningNoteId] = useState<number | null>(null);
     const [contexts, setContexts] = useState<ChatSubject[]>([]);
     const [agents, setAgents] = useState<ChatUser[]>([]);
     const [search, setSearch] = useState('');
@@ -1108,7 +1279,6 @@ export default function ChatWorkspace({
     const [lightboxAttachment, setLightboxAttachment] = useState<ChatAttachment | null>(null);
     const [customerPickerOpen, setCustomerPickerOpen] = useState(false);
     const [tipModalOpen, setTipModalOpen] = useState(false);
-    const [internalNote, setInternalNote] = useState(false);
     const [realtimeStatus, setRealtimeStatus] = useState<RealtimeConnectionStatus>('connecting');
     const conversationPerPage = compact ? 15 : 30;
     const conversationFilterSignature = useMemo(() => JSON.stringify({
@@ -1143,6 +1313,7 @@ export default function ChatWorkspace({
     const conversationsRef = useRef<ChatConversation[]>(conversations);
     const selectedRef = useRef<ChatConversation | null>(selected);
     const messagesRef = useRef<ChatMessage[]>(messages);
+    const internalNotesRef = useRef<ChatMessage[]>(internalNotes);
     const unreadTotalRef = useRef(unreadTotal);
     const fetchConversationsRef = useRef<(quiet?: boolean) => Promise<void>>(async () => undefined);
     const realtimeRefreshTimerRef = useRef<number | null>(null);
@@ -1229,6 +1400,7 @@ export default function ChatWorkspace({
         selectedIdRef.current = null;
         openRequestRef.current += 1;
         setSelectedId(null);
+        setInternalNotesOpen(false);
     }, []);
 
     const recordConversationListSnapshot = useCallback((items: ChatConversation[]) => {
@@ -1296,6 +1468,10 @@ export default function ChatWorkspace({
     useEffect(() => {
         messagesRef.current = messages;
     }, [messages]);
+
+    useEffect(() => {
+        internalNotesRef.current = internalNotes;
+    }, [internalNotes]);
 
     useEffect(() => {
         unreadTotalRef.current = unreadTotal;
@@ -1367,13 +1543,22 @@ export default function ChatWorkspace({
         commitSelected(null);
         messagesRef.current = [];
         setMessages([]);
+        internalNotesRef.current = [];
+        setInternalNotes([]);
+        setInternalNotesHasMore(false);
+        setInternalNotesNextBefore(null);
+        setLoadingOlderInternalNotes(false);
+        setInternalNotesOpen(false);
+        setInternalNoteDraft('');
+        setInternalNoteError(null);
+        setSendingInternalNote(false);
+        setPinningNoteId(null);
         setDraft('');
         setPendingImages([]);
         setEmojiPickerOpen(false);
         setReactionPickerMessageId(null);
         setLightboxAttachment(null);
         setTipModalOpen(false);
-        setInternalNote(false);
         pendingSendRef.current = null;
         failedSendsRef.current.clear();
         attachmentRefreshAtRef.current.clear();
@@ -1683,6 +1868,9 @@ export default function ChatWorkspace({
                 data: ChatConversation;
                 messages: ChatMessage[];
                 has_more: boolean;
+                internal_notes?: ChatMessage[];
+                internal_notes_has_more?: boolean;
+                internal_notes_next_before?: number | null;
             }>(`${baseUrl}/conversations/${conversationId}`);
             if (requestId !== openRequestRef.current || selectedIdRef.current !== conversationId) return;
 
@@ -1714,7 +1902,17 @@ export default function ChatWorkspace({
             messagesRef.current = normalizedMessages;
             setMessages(normalizedMessages);
             setHasMoreMessages(response.data.has_more);
-            const lastMessage = normalizedMessages.reduce<ChatMessage | null>((latest, message) => (
+            const normalizedInternalNotes = mode === 'agent'
+                ? mergeMessages(
+                    response.data.internal_notes ?? [],
+                    response.data.data.pinned_note ? [response.data.data.pinned_note] : [],
+                )
+                : [];
+            internalNotesRef.current = normalizedInternalNotes;
+            setInternalNotes(normalizedInternalNotes);
+            setInternalNotesHasMore(response.data.internal_notes_has_more === true);
+            setInternalNotesNextBefore(response.data.internal_notes_next_before ?? null);
+            const lastMessage = [...normalizedMessages, ...normalizedInternalNotes].reduce<ChatMessage | null>((latest, message) => (
                 message.id > 0 && (!latest || message.id > latest.id) ? message : latest
             ), null);
             if (lastMessage) scheduleMarkRead(conversationId, lastMessage.id);
@@ -1725,6 +1923,10 @@ export default function ChatWorkspace({
             commitSelected(null);
             messagesRef.current = [];
             setMessages([]);
+            internalNotesRef.current = [];
+            setInternalNotes([]);
+            setInternalNotesHasMore(false);
+            setInternalNotesNextBefore(null);
             setHasMoreMessages(false);
             const statusCode = (requestError as { response?: { status?: number } }).response?.status;
             if (statusCode === 403 || statusCode === 404) {
@@ -1734,7 +1936,7 @@ export default function ChatWorkspace({
         } finally {
             if (requestId === openRequestRef.current) setLoadingThread(false);
         }
-    }, [baseUrl, commitSelected, mergeConversationSnapshot, scheduleMarkRead]);
+    }, [baseUrl, commitSelected, mergeConversationSnapshot, mode, scheduleMarkRead]);
 
     const refreshExpiredAttachment = useCallback((attachment: ChatAttachment) => {
         const conversationId = selectedIdRef.current;
@@ -1754,6 +1956,10 @@ export default function ChatWorkspace({
             commitSelected(null);
             messagesRef.current = [];
             setMessages([]);
+            internalNotesRef.current = [];
+            setInternalNotes([]);
+            setInternalNotesHasMore(false);
+            setInternalNotesNextBefore(null);
             setHasMoreMessages(false);
         }
     }, [commitSelected, openConversation, selectedId]);
@@ -1888,6 +2094,74 @@ export default function ChatWorkspace({
             }
         }
     };
+
+    const loadOlderInternalNotes = async () => {
+        const conversationId = selectedIdRef.current;
+        const before = internalNotesNextBefore;
+        if (mode !== 'agent' || !conversationId || !before || loadingOlderInternalNotes || !internalNotesHasMore) return;
+
+        setLoadingOlderInternalNotes(true);
+        setInternalNoteError(null);
+        try {
+            const response = await window.axios.get<{
+                data: ChatMessage[];
+                count: number;
+                has_more: boolean;
+                next_before?: number | null;
+            }>(`${baseUrl}/conversations/${conversationId}/notes`, {
+                params: { before, limit: 30 },
+            });
+            if (selectedIdRef.current !== conversationId) return;
+
+            setInternalNotes(previous => {
+                const next = mergeMessages(previous, response.data.data);
+                internalNotesRef.current = next;
+                return next;
+            });
+            setInternalNotesHasMore(response.data.has_more);
+            setInternalNotesNextBefore(response.data.next_before ?? null);
+        } catch (requestError) {
+            if (selectedIdRef.current === conversationId) setInternalNoteError(errorMessage(requestError));
+        } finally {
+            if (selectedIdRef.current === conversationId) setLoadingOlderInternalNotes(false);
+        }
+    };
+
+    const refreshInternalNotes = useCallback(async () => {
+        const conversationId = selectedIdRef.current;
+        if (mode !== 'agent' || !conversationId || loadingThread) return;
+
+        try {
+            const response = await window.axios.get<{
+                data: ChatMessage[];
+                count: number;
+                has_more: boolean;
+                next_before?: number | null;
+            }>(`${baseUrl}/conversations/${conversationId}/notes`, {
+                params: { limit: 30 },
+            });
+            if (selectedIdRef.current !== conversationId) return;
+
+            const pending = internalNotesRef.current.filter(note => note.id < 0);
+            const pinnedNote = selectedRef.current?.id === conversationId
+                ? selectedRef.current.pinned_note
+                : null;
+            const next = mergeMessages(
+                response.data.data,
+                [...pending, ...(pinnedNote ? [pinnedNote] : [])],
+            );
+            internalNotesRef.current = next;
+            setInternalNotes(next);
+            setInternalNotesHasMore(response.data.has_more);
+            setInternalNotesNextBefore(response.data.next_before ?? null);
+            const current = selectedRef.current;
+            if (current?.id === conversationId) {
+                commitSelected({ ...current, internal_notes_count: response.data.count });
+            }
+        } catch {
+            // Realtime reconnect will retry on the next focus/subscription event.
+        }
+    }, [baseUrl, commitSelected, loadingThread, mode]);
 
     useEffect(() => {
         if (mode !== 'customer') return;
@@ -2032,6 +2306,7 @@ export default function ChatWorkspace({
                 ? {
                     id: currentUserId,
                     username: props.auth.user?.username ?? 'Bạn',
+                    display_name: props.auth.user?.chat_display_name ?? props.auth.user?.username ?? 'Bạn',
                     avatar: props.auth.user?.avatar ?? null,
                 }
                 : existing.assignee;
@@ -2180,7 +2455,8 @@ export default function ChatWorkspace({
         scheduleConversationRefresh();
         flushPendingRead();
         void recoverMissingMessages();
-    }, [flushPendingRead, recoverMissingMessages, scheduleConversationRefresh]);
+        void refreshInternalNotes();
+    }, [flushPendingRead, recoverMissingMessages, refreshInternalNotes, scheduleConversationRefresh]);
 
     const handleRealtimeSubscriptionError = useCallback(() => {
         setRealtimeStatus('disconnected');
@@ -2225,6 +2501,7 @@ export default function ChatWorkspace({
         const resumeActiveChat = () => {
             if (!isPageActive()) return;
             void recoverMissingMessages();
+            void refreshInternalNotes();
             scheduleConversationRefresh();
             flushPendingRead();
         };
@@ -2234,12 +2511,37 @@ export default function ChatWorkspace({
             document.removeEventListener('visibilitychange', resumeActiveChat);
             window.removeEventListener('focus', resumeActiveChat);
         };
-    }, [flushPendingRead, recoverMissingMessages, scheduleConversationRefresh]);
+    }, [flushPendingRead, recoverMissingMessages, refreshInternalNotes, scheduleConversationRefresh]);
 
     const handleRealtimeMessage = useCallback((event: ChatMessageEvent) => {
         const incoming = event.message;
         updateConversationFromMessage(incoming, event.conversation);
         if (selectedIdRef.current === incoming.conversation_id) {
+            if (incoming.is_internal) {
+                setInternalNotes(previous => {
+                    const alreadyTracked = previous.some(note => (
+                        (incoming.id > 0 && note.id === incoming.id)
+                        || (incoming.client_message_id && note.client_message_id === incoming.client_message_id)
+                    ));
+                    const next = mergeMessages(previous, incoming);
+                    internalNotesRef.current = next;
+
+                    if (!alreadyTracked) {
+                        const current = selectedRef.current;
+                        if (current?.id === incoming.conversation_id) {
+                            commitSelected({
+                                ...current,
+                                internal_notes_count: (current.internal_notes_count ?? previous.filter(note => note.id > 0).length) + 1,
+                            });
+                        }
+                    }
+
+                    return next;
+                });
+                if (!isMessageMine(incoming, currentUserId)) scheduleMarkRead(incoming.conversation_id, incoming.id);
+                return;
+            }
+
             setMessages(previous => {
                 const next = mergeMessages(previous, incoming);
                 messagesRef.current = next;
@@ -2247,7 +2549,7 @@ export default function ChatWorkspace({
             });
             if (!isMessageMine(incoming, currentUserId)) scheduleMarkRead(incoming.conversation_id, incoming.id);
         }
-    }, [currentUserId, scheduleMarkRead, updateConversationFromMessage]);
+    }, [commitSelected, currentUserId, scheduleMarkRead, updateConversationFromMessage]);
 
     const handleRealtimeRead = useCallback((event: ChatReadEvent) => {
         if (event.reader.id === currentUserId) {
@@ -2323,6 +2625,16 @@ export default function ChatWorkspace({
 
     const handleInboxChange = useCallback((event: ChatInboxEvent) => {
         if (event.action === 'message') return;
+        const isInternalNoteUpdate = event.action === 'note_pinned' || event.action === 'note_unpinned';
+        if (isInternalNoteUpdate
+            && selectedIdRef.current === event.conversation.id
+            && event.conversation.pinned_note) {
+            setInternalNotes(previous => {
+                const next = mergeMessages(previous, event.conversation.pinned_note as ChatMessage);
+                internalNotesRef.current = next;
+                return next;
+            });
+        }
         const existing = conversationsRef.current.find(item => item.id === event.conversation.id);
         const remainsVisible = matchesActiveFilters(event.conversation);
         if (existing) {
@@ -2337,7 +2649,7 @@ export default function ChatWorkspace({
             setConversations(next);
             if (!remainsVisible) applyUnreadDelta(-existing.unread_count);
         }
-        scheduleConversationRefresh();
+        if (!isInternalNoteUpdate) scheduleConversationRefresh();
         if (selectedIdRef.current === event.conversation.id) {
             if (!remainsVisible) {
                 clearSelection();
@@ -2448,7 +2760,7 @@ export default function ChatWorkspace({
         const images = retryPayload?.images ?? pendingImages;
         if (!selected || (!body && images.length === 0) || sending) return;
         const conversationId = selected.id;
-        const isInternal = retryPayload?.isInternal ?? internalNote;
+        const isInternal = retryPayload?.isInternal ?? false;
         const conversationBeforeSend = conversationsRef.current.find(item => item.id === conversationId);
         setSending(true);
         setError(null);
@@ -2472,6 +2784,9 @@ export default function ChatWorkspace({
             sender: {
                 id: currentUserId,
                 username: props.auth.user?.username ?? 'Bạn',
+                display_name: mode === 'agent'
+                    ? props.auth.user?.chat_display_name ?? props.auth.user?.username ?? 'Bạn'
+                    : props.auth.user?.username ?? 'Bạn',
                 avatar: props.auth.user?.avatar ?? null,
             },
             seen_by: [],
@@ -2500,7 +2815,6 @@ export default function ChatWorkspace({
         });
         setDraft(current => retryPayload && current !== body ? current : '');
         setPendingImages(previous => previous.filter(image => !images.some(sentImage => sentImage.id === image.id)));
-        setInternalNote(false);
         setEmojiPickerOpen(false);
         try {
             const formData = new FormData();
@@ -2555,6 +2869,7 @@ export default function ChatWorkspace({
                         assignee: selected.assignee ?? {
                             id: currentUserId,
                             username: props.auth.user?.username ?? 'Bạn',
+                            display_name: props.auth.user?.chat_display_name ?? props.auth.user?.username ?? 'Bạn',
                             avatar: props.auth.user?.avatar ?? null,
                         },
                     } : {}),
@@ -2600,7 +2915,6 @@ export default function ChatWorkspace({
                     ...current,
                     ...images.filter(image => !current.some(candidate => candidate.id === image.id)),
                 ].slice(0, CHAT_IMAGE_MAX_COUNT));
-                setInternalNote(current => current || isInternal);
             }
             if (conversationBeforeSend) {
                 const currentConversation = conversationsRef.current.find(item => item.id === conversationId);
@@ -2639,6 +2953,113 @@ export default function ChatWorkspace({
             setError(errorMessage(requestError));
         } finally {
             setSending(false);
+        }
+    };
+
+    const sendInternalNote = async (event: FormEvent) => {
+        event.preventDefault();
+        const conversation = selectedRef.current;
+        const body = internalNoteDraft.trim();
+        if (mode !== 'agent'
+            || !conversation
+            || !canWriteInternalNote
+            || conversation.status === 'closed'
+            || !body
+            || sendingInternalNote) return;
+
+        const conversationId = conversation.id;
+        const clientMessageId = crypto.randomUUID();
+        const optimisticNote: ChatMessage = {
+            id: optimisticMessageIdRef.current--,
+            conversation_id: conversationId,
+            sender_kind: 'agent',
+            type: 'internal_note',
+            body,
+            client_message_id: clientMessageId,
+            is_internal: true,
+            is_mine: true,
+            sender: {
+                id: currentUserId,
+                username: props.auth.user?.username ?? 'Bạn',
+                display_name: props.auth.user?.chat_display_name ?? props.auth.user?.username ?? 'Bạn',
+                avatar: props.auth.user?.avatar ?? null,
+            },
+            seen_by: [],
+            attachments: [],
+            reactions: [],
+            created_at: new Date().toISOString(),
+            delivery_state: 'sending',
+        };
+
+        setSendingInternalNote(true);
+        setInternalNoteError(null);
+        setInternalNoteDraft('');
+        setInternalNotes(previous => {
+            const next = mergeMessages(previous, optimisticNote);
+            internalNotesRef.current = next;
+            return next;
+        });
+
+        try {
+            const response = await window.axios.post<{
+                data: ChatMessage;
+                conversation?: ChatConversation;
+            }>(`${baseUrl}/conversations/${conversationId}/messages`, {
+                body,
+                client_message_id: clientMessageId,
+                is_internal: true,
+            });
+            const sent = {
+                ...response.data.data,
+                attachments: messageAttachments(response.data.data),
+                reactions: messageReactions(response.data.data),
+            };
+            if (selectedIdRef.current !== conversationId) return;
+
+            setInternalNotes(previous => {
+                const next = mergeMessages(previous, sent);
+                internalNotesRef.current = next;
+                return next;
+            });
+            if (response.data.conversation) {
+                commitSelected(mergeConversationSnapshot(conversationId, response.data.conversation, [sent]));
+            }
+        } catch (requestError) {
+            const delivered = deliveredClientMessageIdsRef.current.has(clientMessageId)
+                || internalNotesRef.current.some(note => note.id > 0 && note.client_message_id === clientMessageId);
+            if (!delivered && selectedIdRef.current === conversationId) {
+                setInternalNotes(previous => {
+                    const next = previous.filter(note => note.client_message_id !== clientMessageId);
+                    internalNotesRef.current = next;
+                    return next;
+                });
+                setInternalNoteDraft(current => current || body);
+                setInternalNoteError(errorMessage(requestError));
+            }
+        } finally {
+            if (selectedIdRef.current === conversationId) setSendingInternalNote(false);
+        }
+    };
+
+    const togglePinnedNote = async (note: ChatMessage, pinned: boolean) => {
+        const conversation = selectedRef.current;
+        if (!conversation || note.id <= 0 || pinningNoteId !== null) return;
+
+        const conversationId = conversation.id;
+        setPinningNoteId(note.id);
+        setInternalNoteError(null);
+        try {
+            const response = await window.axios.patch<{ data: ChatConversation }>(
+                `${baseUrl}/conversations/${conversationId}/pinned-note`,
+                { pinned_note_id: pinned ? null : note.id },
+            );
+            if (selectedIdRef.current === conversationId) {
+                commitSelected(mergeConversationSnapshot(conversationId, response.data.data));
+            }
+        } catch (requestError) {
+            if (selectedIdRef.current === conversationId) setInternalNoteError(errorMessage(requestError));
+        } finally {
+            if (selectedIdRef.current === conversationId) setPinningNoteId(null);
         }
     };
 
@@ -3259,13 +3680,34 @@ export default function ChatWorkspace({
                                     <h2 className="truncate text-sm font-bold text-slate-900 dark:text-white sm:text-base">{conversationTitle(selected, mode)}</h2>
                                     <div className="mt-1 flex items-center gap-2">
                                         <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ${statusStyles[selected.status]}`}>{statusLabels[selected.status]}</span>
-                                        {selected.assignee && <span className="hidden truncate text-xs text-slate-500 sm:inline">{selected.assignee.username} phụ trách</span>}
+                                        {selected.assignee && <span className="hidden truncate text-xs text-slate-500 sm:inline">{mode === 'agent' ? internalChatUserName(selected.assignee) : chatUserName(selected.assignee)} phụ trách</span>}
                                     </div>
                                 </div>
                             </div>
-                            {compact && (
-                                <Link href={mode === 'agent' ? `/admin/chats?conversation=${selected.id}` : `/messages?conversation=${selected.id}`} className="rounded-xl p-2 text-slate-500 transition hover:bg-slate-100 hover:text-indigo-600 dark:hover:bg-slate-800" title="Mở trang tin nhắn"><ExternalLink className="h-4 w-4" /></Link>
-                            )}
+                            <div className="flex shrink-0 items-center gap-1">
+                                {mode === 'agent' && (
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setInternalNoteError(null);
+                                            setInternalNotesOpen(true);
+                                        }}
+                                        className={`inline-flex items-center gap-1.5 rounded-xl text-amber-600 transition hover:bg-amber-50 dark:text-amber-300 dark:hover:bg-amber-500/10 ${compact ? 'p-2' : 'px-2.5 py-2'}`}
+                                        title="Mở ghi chú nội bộ"
+                                    >
+                                        <Pin className="h-4 w-4" />
+                                        {!compact && <span className="text-xs font-bold">Ghi chú</span>}
+                                        {(selected.internal_notes_count ?? internalNotes.filter(note => note.id > 0).length) > 0 && (
+                                            <span className="min-w-5 rounded-full bg-amber-100 px-1.5 py-0.5 text-center text-[10px] font-bold text-amber-700 dark:bg-amber-500/20 dark:text-amber-200">
+                                                {selected.internal_notes_count ?? internalNotes.filter(note => note.id > 0).length}
+                                            </span>
+                                        )}
+                                    </button>
+                                )}
+                                {compact && (
+                                    <Link href={mode === 'agent' ? `/admin/chats?conversation=${selected.id}` : `/messages?conversation=${selected.id}`} className="rounded-xl p-2 text-slate-500 transition hover:bg-slate-100 hover:text-indigo-600 dark:hover:bg-slate-800" title="Mở trang tin nhắn"><ExternalLink className="h-4 w-4" /></Link>
+                                )}
+                            </div>
                         </header>
 
                         {!compact && mode === 'agent' && (
@@ -3279,7 +3721,7 @@ export default function ChatWorkspace({
                                             disabled={actionLoading}
                                             onChange={value => void assignConversation(value)}
                                         />
-                                    ) : <div className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm text-slate-700 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700"><Avatar user={selected.assignee} className="h-7 w-7 text-[10px]" /><span className="truncate">{selected.assignee?.username ?? 'Chưa phân công'}</span></div>}
+                                    ) : <div className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm text-slate-700 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700"><Avatar user={selected.assignee} className="h-7 w-7 text-[10px]" /><span className="truncate">{mode === 'agent' ? internalChatUserName(selected.assignee) : chatUserName(selected.assignee, 'Chưa phân công')}</span></div>}
                                 </div>
 
                                 <div>
@@ -3299,6 +3741,21 @@ export default function ChatWorkspace({
                                     ) : <span className={`inline-flex rounded-full px-2.5 py-1 text-xs ring-1 ring-inset ${statusStyles[selected.status]}`}>{statusLabels[selected.status]}</span>}
                                 </div>
                             </div>
+                        )}
+
+                        {mode === 'agent' && selected.pinned_note && (
+                            <button
+                                type="button"
+                                onClick={() => setInternalNotesOpen(true)}
+                                className="mx-3 mt-3 flex items-center gap-2.5 rounded-xl border border-amber-200 bg-amber-50/80 px-3 py-2 text-left transition hover:border-amber-300 hover:bg-amber-50 dark:border-amber-500/20 dark:bg-amber-500/10 dark:hover:border-amber-500/40 sm:mx-5"
+                            >
+                                <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-amber-500 text-white"><Pin className="h-3.5 w-3.5" /></span>
+                                <span className="min-w-0 flex-1">
+                                    <span className="block text-[10px] font-bold uppercase tracking-wide text-amber-700 dark:text-amber-300">Ghi chú đang ghim</span>
+                                    <span className="block truncate text-xs text-slate-700 dark:text-slate-200">{selected.pinned_note.body || 'Ghi chú có ảnh đính kèm'}</span>
+                                </span>
+                                <span className="hidden shrink-0 text-[10px] text-slate-400 sm:block">{internalChatUserName(selected.pinned_note.sender)}</span>
+                            </button>
                         )}
 
                         {selected.subject && (
@@ -3351,10 +3808,10 @@ export default function ChatWorkspace({
                                         Xem tin nhắn cũ hơn
                                     </button>
                                 )}
-                                {messages.length === 0 && (
+                                {messages.filter(message => !message.is_internal).length === 0 && (
                                     <div className="py-10 text-center text-sm text-slate-500">Hãy gửi tin nhắn đầu tiên để bắt đầu trao đổi.</div>
                                 )}
-                                {messages.map(message => {
+                                {messages.filter(message => !message.is_internal).map(message => {
                                     if (message.type === 'tip') {
                                         return <TipMessageCard key={message.client_message_id ?? message.id} message={message} compact={compact} />;
                                     }
@@ -3372,7 +3829,7 @@ export default function ChatWorkspace({
                                     return (
                                         <article key={message.client_message_id ?? message.id} className={`flex items-end gap-2 ${alignRight ? 'justify-end' : 'justify-start'} ${message.delivery_state === 'failed' ? 'opacity-70' : ''}`}>
                                             <div className={`${compact ? 'max-w-[88%]' : 'max-w-[84%] sm:max-w-[72%]'} ${alignRight ? 'items-end' : 'items-start'} flex min-w-0 flex-col`}>
-                                                {(showAgentIdentity || !alignRight) && <span className="mb-1 px-1 text-[11px] font-medium text-slate-500">{message.sender?.username ?? (message.sender_kind === 'system' ? 'Hệ thống' : 'Hỗ trợ')}{showAgentIdentity && authoredByCurrentUser ? ' · Bạn' : ''}</span>}
+                                                {(showAgentIdentity || !alignRight) && <span className="mb-1 px-1 text-[11px] font-medium text-slate-500">{message.sender_kind === 'system' ? 'Hệ thống' : showAgentIdentity ? internalChatUserName(message.sender, 'Hỗ trợ') : chatUserName(message.sender, 'Hỗ trợ')}{showAgentIdentity && authoredByCurrentUser ? ' · Bạn' : ''}</span>}
                                                 <div className={`w-full overflow-hidden rounded-2xl text-sm leading-6 shadow-sm ${attachments.length > 0 ? 'p-1.5' : 'px-3.5 py-2.5'} ${message.is_internal
                                                     ? 'border border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-100'
                                                     : alignRight
@@ -3447,7 +3904,7 @@ export default function ChatWorkspace({
                                                 </span>
                                                 {message.sender_kind === 'customer' && (message.seen_by ?? []).length > 0 && (
                                                     <span className="mt-0.5 max-w-full truncate px-1 text-[10px] text-emerald-600 dark:text-emerald-400">
-                                                        Đã xem bởi {(message.seen_by ?? []).map(agent => agent.username).filter(Boolean).join(', ')}
+                                                        Đã xem bởi {(message.seen_by ?? []).map(agent => chatUserName(agent)).filter(Boolean).join(', ')}
                                                     </span>
                                                 )}
                                             </div>
@@ -3462,12 +3919,6 @@ export default function ChatWorkspace({
                         {error && <div className="mx-3 mb-2 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:bg-rose-500/10 dark:text-rose-300 sm:mx-5">{error}</div>}
 
                         <form onSubmit={sendMessage} className="border-t border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-950 sm:p-4">
-                            {mode === 'agent' && canWriteInternalNote && (
-                                <label className="mb-2 inline-flex cursor-pointer items-center gap-2 text-xs font-medium text-slate-500">
-                                    <input type="checkbox" checked={internalNote} onChange={event => setInternalNote(event.target.checked)} className="rounded border-slate-300 text-amber-500 focus:ring-amber-400" />
-                                    Ghi chú nội bộ, khách hàng không nhìn thấy
-                                </label>
-                            )}
                             {pendingImages.length > 0 && (
                                 <div className="mb-2 flex gap-2 overflow-x-auto pb-1" aria-label="Ảnh chờ gửi">
                                     {pendingImages.map(image => (
@@ -3487,7 +3938,7 @@ export default function ChatWorkspace({
                                     <span className="self-end pb-1 text-[10px] text-slate-400">{pendingImages.length}/{CHAT_IMAGE_MAX_COUNT}</span>
                                 </div>
                             )}
-                            <div className={`flex items-end gap-2 rounded-2xl border bg-slate-50 p-2 transition focus-within:ring-2 ${internalNote ? 'border-amber-300 focus-within:ring-amber-200 dark:border-amber-500/40' : 'border-slate-200 focus-within:border-indigo-400 focus-within:ring-indigo-100 dark:border-slate-700 dark:focus-within:ring-indigo-500/20'} dark:bg-slate-900`}>
+                            <div className="flex items-end gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-2 transition focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100 dark:border-slate-700 dark:bg-slate-900 dark:focus-within:ring-indigo-500/20">
                                 <input
                                     ref={imageInputRef}
                                     type="file"
@@ -3543,13 +3994,13 @@ export default function ChatWorkspace({
                                     rows={1}
                                     maxLength={5000}
                                     disabled={!selected.permissions.reply || selected.status === 'closed'}
-                                    placeholder={selected.status === 'closed' ? 'Cuộc trò chuyện đã đóng' : internalNote ? 'Viết ghi chú cho đội hỗ trợ…' : 'Nhập tin nhắn…'}
+                                    placeholder={selected.status === 'closed' ? 'Cuộc trò chuyện đã đóng' : 'Nhập tin nhắn…'}
                                     className="max-h-32 min-h-[2.5rem] flex-1 resize-none border-0 bg-transparent px-2 py-2 text-sm leading-6 text-slate-900 shadow-none placeholder:text-slate-400 focus:ring-0 disabled:cursor-not-allowed dark:text-white"
                                 />
                                 <button
                                     type="submit"
                                     disabled={(!draft.trim() && pendingImages.length === 0) || sending || !selected.permissions.reply || selected.status === 'closed'}
-                                    className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl text-white shadow-sm transition disabled:cursor-not-allowed disabled:opacity-40 ${internalNote ? 'bg-amber-500 hover:bg-amber-400' : 'bg-indigo-600 hover:bg-indigo-500'}`}
+                                    className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-indigo-600 text-white shadow-sm transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-40"
                                     aria-label="Gửi tin nhắn"
                                 >
                                     {sending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <SendHorizontal className="h-4 w-4" />}
@@ -3584,7 +4035,7 @@ export default function ChatWorkspace({
                 <aside className="hidden w-72 shrink-0 flex-col border-l border-slate-200 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-900/50 xl:flex">
                     <div className="flex items-center gap-3 border-b border-slate-200 pb-4 dark:border-slate-800">
                         <Avatar user={selected.customer} className="h-11 w-11" />
-                        <div className="min-w-0"><strong className="block truncate text-sm text-slate-900 dark:text-white">{selected.customer?.username}</strong><span className="text-xs text-slate-500">Khách hàng #{selected.customer?.id}</span></div>
+                        <div className="min-w-0"><strong className="block truncate text-sm text-slate-900 dark:text-white">{chatUserName(selected.customer, 'Khách hàng')}</strong><span className="text-xs text-slate-500">Khách hàng #{selected.customer?.id}</span></div>
                     </div>
 
                     <div className="space-y-5 py-5">
@@ -3597,7 +4048,7 @@ export default function ChatWorkspace({
                                     disabled={actionLoading}
                                     onChange={value => void assignConversation(value)}
                                 />
-                            ) : <div className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm text-slate-700 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700"><Avatar user={selected.assignee} className="h-7 w-7 text-[10px]" /><span className="truncate">{selected.assignee?.username ?? 'Chưa phân công'}</span></div>}
+                            ) : <div className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm text-slate-700 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700"><Avatar user={selected.assignee} className="h-7 w-7 text-[10px]" /><span className="truncate">{internalChatUserName(selected.assignee)}</span></div>}
                         </div>
 
                         <div>
@@ -3645,7 +4096,7 @@ export default function ChatWorkspace({
                                 {selected.participants.filter(participant => participant.role === 'agent' && !participant.left_at).map(participant => (
                                     <div key={participant.user?.id} className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
                                         <Avatar user={participant.user} className="h-7 w-7" />
-                                        <span className="min-w-0 flex-1 truncate">{participant.user?.username}</span>
+                                        <span className="min-w-0 flex-1 truncate">{internalChatUserName(participant.user, 'Nhân viên hỗ trợ')}</span>
                                         {participant.last_read_at && <CheckCheck className="h-3.5 w-3.5 text-emerald-500" />}
                                     </div>
                                 ))}
@@ -3707,6 +4158,27 @@ export default function ChatWorkspace({
                     </div>
                 )}
             </Modal>
+            {mode === 'agent' && selected && (
+                <InternalNotesModal
+                    open={internalNotesOpen}
+                    notes={internalNotes}
+                    pinnedNoteId={selected.pinned_note?.id}
+                    notesCount={selected.internal_notes_count ?? internalNotes.filter(note => note.id > 0).length}
+                    draft={internalNoteDraft}
+                    error={internalNoteError}
+                    canWrite={canWriteInternalNote && selected.status !== 'closed'}
+                    sending={sendingInternalNote}
+                    loadingMore={loadingOlderInternalNotes}
+                    hasMore={internalNotesHasMore}
+                    pinningNoteId={pinningNoteId}
+                    onDraftChange={setInternalNoteDraft}
+                    onClose={() => setInternalNotesOpen(false)}
+                    onSubmit={event => void sendInternalNote(event)}
+                    onLoadMore={() => void loadOlderInternalNotes()}
+                    onPin={(note, pinned) => void togglePinnedNote(note, pinned)}
+                    onOpenAttachment={setLightboxAttachment}
+                />
+            )}
             <RelatedOrderModal detail={relatedOrderDetail} onClose={() => setRelatedOrderDetail(null)} />
         </section>
     );

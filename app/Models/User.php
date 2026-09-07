@@ -38,6 +38,7 @@ class User extends Authenticatable implements HasMedia
 
     protected $fillable = [
         'username',
+        'chat_display_name',
         'email',
         'password',
         'balance',
@@ -333,6 +334,13 @@ class User extends Authenticatable implements HasMedia
         }
 
         return $this->getFirstMediaUrl('avatar') ?: null;
+    }
+
+    public function chatDisplayName(): string
+    {
+        $displayName = trim((string) ($this->attributes['chat_display_name'] ?? ''));
+
+        return $displayName !== '' ? $displayName : (string) $this->username;
     }
 
     public function isLocked(): bool

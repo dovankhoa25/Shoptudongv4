@@ -95,6 +95,46 @@ class AdminAuthorizationTest extends TestCase
         $this->assertTrue($actor->can('updateRolePermission', $target));
     }
 
+    public function test_admin_can_set_and_clear_a_ctv_chat_display_name(): void
+    {
+        Role::findOrCreate('admin', 'web');
+        Role::findOrCreate('ctv', 'web');
+        $actor = User::factory()->create();
+        $target = User::factory()->create();
+        $actor->assignRole('admin');
+        $target->assignRole('ctv');
+        $actor->givePermissionTo(AppPermission::UsersUpdate->value);
+
+        $payload = [
+            'username' => $target->username,
+            'email' => $target->email,
+            'avatar' => null,
+        ];
+
+        $this->actingAs($actor)
+            ->putJson("/admin/users/{$target->id}", [
+                ...$payload,
+                'chat_display_name' => '  Hỗ trợ viên Linh  ',
+            ])
+            ->assertOk()
+            ->assertJsonPath('user.chat_display_name', 'Hỗ trợ viên Linh');
+
+        $this->assertSame('Hỗ trợ viên Linh', $target->fresh()->chat_display_name);
+        $this->assertSame('Hỗ trợ viên Linh', $target->fresh()->chatDisplayName());
+
+        $this->actingAs($actor)
+            ->putJson("/admin/users/{$target->id}", [
+                ...$payload,
+                'chat_display_name' => '   ',
+            ])
+            ->assertOk()
+            ->assertJsonPath('user.chat_display_name', null);
+
+        $target->refresh();
+        $this->assertNull($target->chat_display_name);
+        $this->assertSame($target->username, $target->chatDisplayName());
+    }
+
     private function runMiddlewareAs(User $user, string ...$permissions): mixed
     {
         $request = Request::create('/admin/test');

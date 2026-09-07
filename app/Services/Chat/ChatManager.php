@@ -370,6 +370,7 @@ class ChatManager
                     'event' => 'agent_initiated',
                     'actor_id' => (int) $actor->getKey(),
                     'actor_username' => $actor->username,
+                    'actor_display_name' => $actor->chatDisplayName(),
                     'action' => $resolutionAction,
                     'subject_type' => $type,
                     'subject_id' => $subjectId,
@@ -644,10 +645,10 @@ class ChatManager
         $verb = $resolutionAction === 'reopened' ? 'đã mở lại' : 'đã bắt đầu';
 
         if ($order) {
-            return "{$actor->username} {$verb} hỗ trợ đơn dịch vụ #{$order->getKey()}.";
+            return "{$actor->chatDisplayName()} {$verb} hỗ trợ đơn dịch vụ #{$order->getKey()}.";
         }
 
-        return "{$actor->username} {$verb} cuộc trò chuyện hỗ trợ.";
+        return "{$actor->chatDisplayName()} {$verb} cuộc trò chuyện hỗ trợ.";
     }
 
     private function changeAssignee(ChatConversation $conversation, User $actor, ?int $newAssigneeId): bool

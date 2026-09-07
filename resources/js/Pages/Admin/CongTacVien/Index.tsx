@@ -6,6 +6,7 @@ import { IUser } from "@/InterFaces/user";
 import { PageProps, PaginatedData } from "@/types";
 import UserPermissionModal from "../Users/UserPermissionModal";
 import UserModel from "../Users/UserModel";
+import UserFormModal from "../Users/UserFormModal";
 import LockUserModal from "../Users/LockUserModal";
 import axios from "axios";
 import { formatCurrency } from "@/Utils/currencyHelper";
@@ -81,6 +82,7 @@ export default function CongTacVienPage() {
 
     // Modal states
     const [showModal, setShowModal] = useState(false);
+    const [openProfileModal, setOpenProfileModal] = useState(false);
     const [selectedCongTacVien, setSelectedCongTacVien] = useState<IUser | null>(null);
     const [openPermissionModal, setOpenPermissionModal] = useState(false);
     const [openLockModal, setOpenLockModal] = useState(false);
@@ -104,6 +106,7 @@ export default function CongTacVienPage() {
 
     const handleCloseModal = () => {
         setShowModal(false);
+        setOpenProfileModal(false);
         setOpenPermissionModal(false);
         setOpenLockModal(false);
         setSelectedCongTacVien(null);
@@ -131,7 +134,7 @@ export default function CongTacVienPage() {
 
     const handleEdit = (congTacVien: IUser) => {
         setSelectedCongTacVien(congTacVien);
-        setShowModal(true);
+        setOpenProfileModal(true);
     };
 
     const formatDate = (dateString: string): string => {
@@ -175,6 +178,9 @@ export default function CongTacVienPage() {
                             <Users className="w-4 h-4 text-orange-500" />
                             {value}
                         </div>
+                        {record.chat_display_name && (
+                            <div className="text-sm font-medium text-indigo-600">Chat: {record.chat_display_name}</div>
+                        )}
                         <div className="text-sm ">{record.email}</div>
                     </div>
                 </div>
@@ -425,6 +431,14 @@ export default function CongTacVienPage() {
                 <UserModel
                     user={selectedCongTacVien}
                     onClose={handleCloseModal}
+                />
+            )}
+
+            {openProfileModal && selectedCongTacVien && (
+                <UserFormModal
+                    user={selectedCongTacVien}
+                    onClose={handleCloseModal}
+                    onSaved={() => router.reload({ only: ['congTacViens', 'statistics'] })}
                 />
             )}
 

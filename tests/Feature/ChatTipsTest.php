@@ -48,6 +48,7 @@ class ChatTipsTest extends TestCase
     {
         $customer = User::factory()->create(['balance' => 100_000]);
         $agent = $this->agent('ctv', 20_000);
+        $agent->update(['chat_display_name' => 'Hỗ trợ viên Quỳnh']);
         $conversation = $this->conversationFor($customer, $agent, ChatConversation::STATUS_WAITING_CUSTOMER);
         Event::fake([ChatMessageSent::class, UserEvent::class]);
 
@@ -69,12 +70,14 @@ class ChatTipsTest extends TestCase
             ->assertJsonPath('data.status', ChatTip::STATUS_COMPLETED)
             ->assertJsonPath('message.type', ChatMessage::TYPE_TIP)
             ->assertJsonPath('message.tip.recipient.username', $agent->username)
+            ->assertJsonPath('message.tip.recipient.display_name', 'Hỗ trợ viên Quỳnh')
             ->assertJsonPath('message.tip.amount', 25_000)
             ->assertJsonPath('balances.payer.balance', 75_000)
             ->assertJsonPath('balances.payer.remaining_daily_limit', 1_975_000)
             ->assertJsonPath('conversation.status', ChatConversation::STATUS_WAITING_CUSTOMER)
             ->assertJsonPath('conversation.tipping.balance', 75_000)
-            ->assertJsonPath('conversation.tipping.recipients.0.id', $agent->id);
+            ->assertJsonPath('conversation.tipping.recipients.0.id', $agent->id)
+            ->assertJsonPath('conversation.tipping.recipients.0.display_name', 'Hỗ trợ viên Quỳnh');
 
         $tipId = (int) $response->json('data.id');
         $messageId = (int) $response->json('message.id');

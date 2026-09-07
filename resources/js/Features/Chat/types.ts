@@ -1,6 +1,7 @@
 export interface ChatUser {
     id: number;
     username: string;
+    display_name?: string | null;
     avatar?: string | null;
     roles?: string[];
 }
@@ -116,6 +117,8 @@ export interface ChatConversation {
     assignee?: ChatUser | null;
     participants: ChatParticipant[];
     last_message?: ChatMessage | null;
+    pinned_note?: ChatMessage | null;
+    internal_notes_count?: number;
     latest_message_id?: number | null;
     last_message_at?: string | null;
     unread_count: number;

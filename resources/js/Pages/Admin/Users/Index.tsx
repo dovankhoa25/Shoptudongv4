@@ -93,6 +93,11 @@ export default function UserPage() {
                     </div>
                     <div className="min-w-0">
                         <div className="truncate font-medium text-slate-900 dark:text-white">{value}</div>
+                        {user.chat_display_name && (
+                            <div className="truncate text-xs font-medium text-indigo-600 dark:text-indigo-300">
+                                Chat: {user.chat_display_name}
+                            </div>
+                        )}
                         <div className="truncate text-xs text-slate-500 dark:text-slate-400">{user.email || 'Chưa có email'}</div>
                     </div>
                 </div>
@@ -159,7 +164,7 @@ export default function UserPage() {
                 loading={loading}
                 searchValue={filters.search}
                 searchPreset="users"
-                searchPlaceholder="Tìm username, email hoặc #ID chính xác..."
+                searchPlaceholder="Tìm username, tên chat, email hoặc #ID chính xác..."
                 title="Quản lý người dùng"
                 description={`${users.meta.total.toLocaleString('vi-VN')} tài khoản trong hệ thống`}
                 addButtonText="Thêm người dùng"

@@ -44,6 +44,7 @@ class ChatOutboundConversationTest extends TestCase
             AppPermission::ChatsView,
             AppPermission::ChatsReply,
         ]);
+        $admin->update(['chat_display_name' => 'Hỗ trợ viên Mai']);
         $customer = User::factory()->create();
         Event::fake([ChatMessageSent::class, ChatInboxUpdated::class]);
 
@@ -58,9 +59,12 @@ class ChatOutboundConversationTest extends TestCase
             ->assertJsonPath('data.customer.id', $customer->id)
             ->assertJsonPath('data.customer.avatar', null)
             ->assertJsonPath('data.assignee.id', $admin->id)
+            ->assertJsonPath('data.assignee.username', $admin->username)
+            ->assertJsonPath('data.assignee.display_name', 'Hỗ trợ viên Mai')
             ->assertJsonPath('data.assignee.avatar', null)
             ->assertJsonPath('data.status', ChatConversation::STATUS_WAITING_CUSTOMER)
             ->assertJsonPath('data.last_message.type', ChatMessage::TYPE_SYSTEM)
+            ->assertJsonPath('data.last_message.body', 'Hỗ trợ viên Mai đã bắt đầu cuộc trò chuyện hỗ trợ.')
             ->assertJsonPath('entered_active', true);
 
         $conversationId = (int) $first->json('data.id');

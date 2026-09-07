@@ -24,6 +24,7 @@ class ChatMessageResource extends JsonResource
                 ->map(fn (ChatParticipant $participant): array => [
                     'id' => (int) $participant->user_id,
                     'username' => $participant->user?->username,
+                    'display_name' => $participant->user?->chatDisplayName(),
                     'avatar' => $participant->user?->chat_avatar_url,
                     'read_at' => $participant->last_read_at?->toIso8601String(),
                 ])
@@ -71,14 +72,19 @@ class ChatMessageResource extends JsonResource
             'sender' => $this->whenLoaded('sender', fn () => $this->sender ? [
                 'id' => (int) $this->sender->id,
                 'username' => $this->sender->username,
+                'display_name' => $this->sender_kind === $this->resource::SENDER_AGENT
+                    ? $this->sender->chatDisplayName()
+                    : $this->sender->username,
                 'avatar' => $this->sender->chat_avatar_url,
             ] : null),
             'seen_by' => $seenBy,
             'attachments' => $attachments,
             'attachments_expired' => isset($metadata['attachments_purged_at']),
-            'reactions' => $this->resource->reactionSummary(
-                $request->user() ? (int) $request->user()->getKey() : null,
-            ),
+            'reactions' => $this->is_internal
+                ? []
+                : $this->resource->reactionSummary(
+                    $request->user() ? (int) $request->user()->getKey() : null,
+                ),
             'tip' => $this->whenLoaded(
                 'tip',
                 fn () => $this->tip

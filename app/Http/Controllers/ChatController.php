@@ -196,7 +196,7 @@ class ChatController extends Controller
         $conversationPayload = $this->inboxPayload($conversation);
 
         if ($message) {
-            $message->loadMissing(['sender:id,username,avatar', 'media', 'reactions', 'tip.payer', 'tip.recipient']);
+            $message->loadMissing(['sender:id,username,chat_display_name,avatar', 'media', 'reactions', 'tip.payer', 'tip.recipient']);
             $message->setRelation('conversation', $conversation);
             $messagePayload = (new ChatMessageResource($message))->resolve($request);
             unset($messagePayload['is_mine']);
@@ -271,6 +271,7 @@ class ChatController extends Controller
             ->map(fn (User $customer): array => [
                 'id' => (int) $customer->id,
                 'username' => $customer->username,
+                'display_name' => $customer->username,
                 'avatar' => $customer->chat_avatar_url,
             ])
             ->values();
@@ -284,11 +285,8 @@ class ChatController extends Controller
         $this->prepareConversation($conversation, $request->user());
 
         $messages = $conversation->messages()
-            ->with(['sender:id,username,avatar', 'media', 'reactions', 'tip.payer', 'tip.recipient'])
-            ->when(
-                (int) $conversation->customer_id === (int) $request->user()->getKey(),
-                fn (Builder $query) => $query->where('is_internal', false),
-            )
+            ->with(['sender:id,username,chat_display_name,avatar', 'media', 'reactions', 'tip.payer', 'tip.recipient'])
+            ->where('is_internal', false)
             ->latest('id')
             ->limit(61)
             ->get();
@@ -297,12 +295,33 @@ class ChatController extends Controller
 
         $messages->each(fn (ChatMessage $message) => $message->setRelation('conversation', $conversation));
 
-        return response()->json([
+        $internalNotes = collect();
+        $hasMoreInternalNotes = false;
+        if ((int) $conversation->customer_id !== (int) $request->user()->getKey()) {
+            $internalNotes = $conversation->messages()
+                ->with(['sender:id,username,chat_display_name,avatar', 'media'])
+                ->where('is_internal', true)
+                ->latest('id')
+                ->limit(31)
+                ->get();
+            $hasMoreInternalNotes = $internalNotes->count() > 30;
+            $internalNotes = $internalNotes->take(30)->reverse()->values();
+            $internalNotes->each(fn (ChatMessage $message) => $message->setRelation('conversation', $conversation));
+        }
+
+        $response = [
             'data' => (new ChatConversationResource($conversation))->resolve($request),
             'messages' => ChatMessageResource::collection($messages)->resolve($request),
             'has_more' => $hasMore,
             'next_before' => $hasMore ? $messages->first()?->id : null,
-        ]);
+        ];
+        if ((int) $conversation->customer_id !== (int) $request->user()->getKey()) {
+            $response['internal_notes'] = ChatMessageResource::collection($internalNotes)->resolve($request);
+            $response['internal_notes_has_more'] = $hasMoreInternalNotes;
+            $response['internal_notes_next_before'] = $hasMoreInternalNotes ? $internalNotes->first()?->id : null;
+        }
+
+        return response()->json($response);
     }
 
     public function messages(Request $request, ChatConversation $conversation): JsonResponse
@@ -325,13 +344,10 @@ class ChatController extends Controller
         $this->prepareConversation($conversation, $request->user(), false);
 
         $query = $conversation->messages()
-            ->with(['sender:id,username,avatar', 'media', 'reactions', 'tip.payer', 'tip.recipient'])
+            ->with(['sender:id,username,chat_display_name,avatar', 'media', 'reactions', 'tip.payer', 'tip.recipient'])
             ->when($validated['before'] ?? null, fn (Builder $query, int $before) => $query->where('id', '<', $before))
             ->when($validated['after_id'] ?? null, fn (Builder $query, int $afterId) => $query->where('id', '>', $afterId))
-            ->when(
-                (int) $conversation->customer_id === (int) $request->user()->getKey(),
-                fn (Builder $query) => $query->where('is_internal', false),
-            );
+            ->where('is_internal', false);
 
         $query->orderBy('id', $isDeltaRequest ? 'asc' : 'desc');
 
@@ -350,6 +366,96 @@ class ChatController extends Controller
             'next_before' => ! $isDeltaRequest && $hasMore ? $messages->first()?->id : null,
             'next_after' => $isDeltaRequest && $hasMore ? $messages->last()?->id : null,
         ]);
+    }
+
+    public function notes(Request $request, ChatConversation $conversation): JsonResponse
+    {
+        Gate::authorize('view', $conversation);
+        abort_if((int) $conversation->customer_id === (int) $request->user()->getKey(), 403);
+
+        $validated = $request->validate([
+            'before' => ['nullable', 'integer', 'min:1'],
+            'limit' => ['nullable', 'integer', 'min:1', 'max:100'],
+        ]);
+        $limit = (int) ($validated['limit'] ?? 30);
+        $conversation->loadCount([
+            'messages as internal_notes_count' => fn (Builder $query) => $query->where('is_internal', true),
+        ]);
+
+        $notes = $conversation->messages()
+            ->with(['sender:id,username,chat_display_name,avatar', 'media'])
+            ->where('is_internal', true)
+            ->when($validated['before'] ?? null, fn (Builder $query, int $before) => $query->where('id', '<', $before))
+            ->latest('id')
+            ->limit($limit + 1)
+            ->get();
+        $hasMore = $notes->count() > $limit;
+        $notes = $notes->take($limit)->reverse()->values();
+        $notes->each(fn (ChatMessage $message) => $message->setRelation('conversation', $conversation));
+
+        return response()->json([
+            'data' => ChatMessageResource::collection($notes)->resolve($request),
+            'count' => (int) ($conversation->internal_notes_count ?? 0),
+            'has_more' => $hasMore,
+            'next_before' => $hasMore ? $notes->first()?->id : null,
+        ]);
+    }
+
+    public function pinNote(Request $request, ChatConversation $conversation): JsonResponse
+    {
+        Gate::authorize('manage', $conversation);
+        abort_unless($request->user()->can('chats.manage'), 403);
+
+        $validated = $request->validate([
+            'pinned_note_id' => ['nullable', 'integer', 'min:1'],
+        ]);
+        $noteId = isset($validated['pinned_note_id']) ? (int) $validated['pinned_note_id'] : null;
+
+        $conversation = DB::transaction(function () use ($conversation, $noteId, $request): ChatConversation {
+            $lockedConversation = ChatConversation::query()
+                ->lockForUpdate()
+                ->findOrFail($conversation->getKey());
+            Gate::forUser($request->user())->authorize('manage', $lockedConversation);
+
+            if ($noteId !== null) {
+                $noteExists = ChatMessage::query()
+                    ->whereKey($noteId)
+                    ->where('conversation_id', $lockedConversation->getKey())
+                    ->where('type', ChatMessage::TYPE_INTERNAL_NOTE)
+                    ->where('is_internal', true)
+                    ->exists();
+
+                if (! $noteExists) {
+                    throw ValidationException::withMessages([
+                        'pinned_note_id' => 'Ghi chú không thuộc cuộc trò chuyện này.',
+                    ]);
+                }
+            }
+
+            $lockedConversation->forceFill(['pinned_note_id' => $noteId])->save();
+
+            return $lockedConversation;
+        });
+
+        $this->prepareConversation($conversation, $request->user(), false);
+        $payload = (new ChatConversationResource($conversation))->resolve($request);
+        $realtimePinnedNote = $payload['pinned_note'] ?? null;
+        if (is_array($realtimePinnedNote)) {
+            unset($realtimePinnedNote['is_mine']);
+        }
+        $this->realtime->inbox(
+            $noteId === null ? 'note_unpinned' : 'note_pinned',
+            $conversation,
+            [
+                'id' => (int) $conversation->id,
+                'status' => $conversation->status,
+                'pinned_note' => $realtimePinnedNote,
+                'internal_notes_count' => (int) ($payload['internal_notes_count'] ?? 0),
+            ],
+            internal: true,
+        );
+
+        return response()->json(['data' => $payload]);
     }
 
     public function send(Request $request, ChatConversation $conversation): JsonResponse
@@ -428,7 +534,7 @@ class ChatController extends Controller
         }
 
         $this->prepareConversation($conversation, $request->user());
-        $message->loadMissing(['sender:id,username,avatar', 'media', 'reactions', 'tip.payer', 'tip.recipient']);
+        $message->loadMissing(['sender:id,username,chat_display_name,avatar', 'media', 'reactions', 'tip.payer', 'tip.recipient']);
         $message->setRelation('conversation', $conversation);
         $messagePayload = (new ChatMessageResource($message))->resolve($request);
 
@@ -451,6 +557,9 @@ class ChatController extends Controller
                     [
                         'id' => (int) $request->user()->id,
                         'username' => $request->user()->username,
+                        'display_name' => $senderParticipant->role === 'agent'
+                            ? $request->user()->chatDisplayName()
+                            : $request->user()->username,
                         'avatar' => $request->user()->chat_avatar_url,
                         'kind' => $senderParticipant->role,
                     ],
@@ -490,7 +599,7 @@ class ChatController extends Controller
 
         $message = $result['message'];
         $message->loadMissing([
-            'sender:id,username,avatar',
+            'sender:id,username,chat_display_name,avatar',
             'media',
             'reactions',
             'tip.payer',
@@ -532,6 +641,9 @@ class ChatController extends Controller
                     [
                         'id' => (int) $request->user()->id,
                         'username' => $request->user()->username,
+                        'display_name' => $senderParticipant->role === 'agent'
+                            ? $request->user()->chatDisplayName()
+                            : $request->user()->username,
                         'avatar' => $request->user()->chat_avatar_url,
                         'kind' => $senderParticipant->role,
                     ],
@@ -654,6 +766,9 @@ class ChatController extends Controller
                 [
                     'id' => (int) $request->user()->id,
                     'username' => $request->user()->username,
+                    'display_name' => $participant->role === 'agent'
+                        ? $request->user()->chatDisplayName()
+                        : $request->user()->username,
                     'avatar' => $request->user()->chat_avatar_url,
                     'kind' => $participant->role,
                 ],
@@ -775,11 +890,12 @@ class ChatController extends Controller
             })
             ->with(['roles.permissions', 'permissions'])
             ->orderBy('username')
-            ->get(['id', 'username', 'avatar'])
+            ->get(['id', 'username', 'chat_display_name', 'avatar'])
             ->filter(fn (User $user) => $user->can('chats.view') && $user->can('chats.reply'))
             ->map(fn (User $user): array => [
                 'id' => (int) $user->id,
                 'username' => $user->username,
+                'display_name' => $user->chatDisplayName(),
                 'avatar' => $user->chat_avatar_url,
                 'roles' => $user->getRoleNames()->values(),
             ])
@@ -792,10 +908,10 @@ class ChatController extends Controller
     private function conversationRelations(): array
     {
         return [
-            'customer:id,username,avatar',
-            'assignee:id,username,avatar',
-            'participants.user:id,username,avatar',
-            'lastMessage.sender:id,username,avatar',
+            'customer:id,username,chat_display_name,avatar',
+            'assignee:id,username,chat_display_name,avatar',
+            'participants.user:id,username,chat_display_name,avatar',
+            'lastMessage.sender:id,username,chat_display_name,avatar',
             'lastMessage.media',
             'lastMessage.reactions',
             'lastMessage.tip.payer',
@@ -835,7 +951,25 @@ class ChatController extends Controller
         User $viewer,
         bool $includeTipping = true,
     ): void {
-        $conversation->load($this->conversationRelations());
+        $relations = $this->conversationRelations();
+        $canSeeInternalNotes = (int) $conversation->customer_id !== (int) $viewer->getKey();
+        if ($canSeeInternalNotes) {
+            $relations = [
+                ...$relations,
+                'pinnedNote.sender:id,username,chat_display_name,avatar',
+                'pinnedNote.media',
+            ];
+        }
+
+        $conversation->load($relations);
+        if ($canSeeInternalNotes) {
+            $conversation->loadCount([
+                'messages as internal_notes_count' => fn (Builder $query) => $query->where('is_internal', true),
+            ]);
+            if ($conversation->pinnedNote) {
+                $conversation->pinnedNote->setRelation('conversation', $conversation);
+            }
+        }
         $conversation->setAttribute('unread_count', $conversation->unreadCountFor($viewer));
         if ($includeTipping) {
             $conversation->setAttribute('tipping', $this->tips->options($conversation, $viewer));
@@ -852,6 +986,7 @@ class ChatController extends Controller
             'assignee' => $conversation->assignee ? [
                 'id' => (int) $conversation->assignee->id,
                 'username' => $conversation->assignee->username,
+                'display_name' => $conversation->assignee->chatDisplayName(),
                 'avatar' => $conversation->assignee->chat_avatar_url,
             ] : null,
             'category' => $conversation->category,

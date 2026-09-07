@@ -24,6 +24,7 @@ export default function UserDetailModal({ user, onClose }: Props) {
             <Descriptions bordered column={{ xs: 1, sm: 2 }} size="small">
                 <Descriptions.Item label="ID">#{user.id}</Descriptions.Item>
                 <Descriptions.Item label="Số dư">{formatCurrency(user.balance || '0')}</Descriptions.Item>
+                <Descriptions.Item label="Tên hiển thị trong chat" span={2}>{user.chat_display_name || 'Dùng tên đăng nhập'}</Descriptions.Item>
                 <Descriptions.Item label="Vai trò" span={2}>{user.roles?.length ? user.roles.map(role => <Tag key={role.id}>{role.name}</Tag>) : 'Chưa có vai trò'}</Descriptions.Item>
                 <Descriptions.Item label="Xác thực email" span={2}>{date(user.email_verified_at)}</Descriptions.Item>
                 {user.locked_reason && <Descriptions.Item label="Lý do khóa" span={2}>{user.locked_reason}</Descriptions.Item>}

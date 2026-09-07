@@ -25,7 +25,7 @@ class ChatTipService
      *     daily_limit: int,
      *     remaining_daily_limit: int,
      *     balance: int,
-     *     recipients: list<array{id: int, username: string, avatar: string|null}>
+     *     recipients: list<array{id: int, username: string, display_name: string, avatar: string|null}>
      * }
      */
     public function options(ChatConversation $conversation, User $viewer): array
@@ -63,6 +63,7 @@ class ChatTipService
                 ->map(fn (User $recipient): array => [
                     'id' => (int) $recipient->getKey(),
                     'username' => $recipient->username,
+                    'display_name' => $recipient->chatDisplayName(),
                     'avatar' => $recipient->chat_avatar_url,
                 ])
                 ->values()
@@ -227,7 +228,7 @@ class ChatTipService
                 userId: (int) $lockedPayer->getKey(),
                 type: Transaction::TYPE_CHAT_TIP_SENT,
                 amount: -$amount,
-                description: 'Ủng hộ '.$recipient->username.' trong cuộc trò chuyện #'.$lockedConversation->getKey(),
+                description: 'Ủng hộ '.$recipient->chatDisplayName().' trong cuộc trò chuyện #'.$lockedConversation->getKey(),
                 performedBy: (int) $lockedPayer->getKey(),
                 related: $tip,
                 oldBalance: $payerBalanceBefore,
@@ -261,7 +262,7 @@ class ChatTipService
                 'sender_id' => $lockedPayer->getKey(),
                 'sender_kind' => ChatMessage::SENDER_CUSTOMER,
                 'type' => ChatMessage::TYPE_TIP,
-                'body' => $lockedPayer->username.' đã ủng hộ '.$recipient->username.' '
+                'body' => $lockedPayer->username.' đã ủng hộ '.$recipient->chatDisplayName().' '
                     .number_format($amount, 0, ',', '.').' đ 🎉',
                 'metadata' => [
                     'tip_id' => (int) $tip->getKey(),
@@ -324,7 +325,7 @@ class ChatTipService
             ->sortBy(fn (User $user): string => sprintf(
                 '%d:%s:%020d',
                 (int) $user->getKey() === $assigneeId ? 0 : 1,
-                mb_strtolower($user->username),
+                mb_strtolower($user->chatDisplayName()),
                 (int) $user->getKey(),
             ))
             ->values();
@@ -389,7 +390,10 @@ class ChatTipService
         int $payerBalance,
         int $recipientBalance,
     ): array {
-        $tip->load(['payer:id,username,avatar', 'recipient:id,username,avatar']);
+        $tip->load([
+            'payer:id,username,chat_display_name,avatar',
+            'recipient:id,username,chat_display_name,avatar',
+        ]);
         $message = ChatMessage::withTrashed()->findOrFail($tip->message_id);
 
         return [

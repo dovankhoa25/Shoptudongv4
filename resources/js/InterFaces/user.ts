@@ -3,6 +3,7 @@ import { IRole } from "./role";
 export interface IUser {
     id: number;
     username?: string;
+    chat_display_name?: string | null;
     email?: string;
     balance?: string;
     avatar?: string;
@@ -30,4 +31,3 @@ export interface IUser {
         can_post: boolean;
     }>;
 }
-

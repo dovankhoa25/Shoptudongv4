@@ -723,6 +723,7 @@ class ChatFeatureTest extends TestCase
             AppPermission::ChatsAssign,
             AppPermission::ChatsManage,
         ]);
+        $admin->update(['chat_display_name' => 'Hỗ trợ viên An']);
         $conversation = $this->conversationFor($customer);
 
         $customerMessageId = $this->actingAs($customer)
@@ -741,7 +742,9 @@ class ChatFeatureTest extends TestCase
                 'body' => 'Mình đang kiểm tra đơn cho bạn.',
             ])
             ->assertCreated()
-            ->assertJsonPath('data.sender_kind', ChatMessage::SENDER_AGENT);
+            ->assertJsonPath('data.sender_kind', ChatMessage::SENDER_AGENT)
+            ->assertJsonPath('data.sender.username', $admin->username)
+            ->assertJsonPath('data.sender.display_name', 'Hỗ trợ viên An');
 
         $this->assertDatabaseHas('chat_conversations', [
             'id' => $conversation->id,
@@ -751,13 +754,16 @@ class ChatFeatureTest extends TestCase
 
         $customerView = $this->actingAs($customer)
             ->getJson("/chat/conversations/{$conversation->id}")
-            ->assertOk();
+            ->assertOk()
+            ->assertJsonPath('data.assignee.username', $admin->username)
+            ->assertJsonPath('data.assignee.display_name', 'Hỗ trợ viên An');
 
         $customerMessage = collect($customerView->json('messages'))
             ->firstWhere('id', $customerMessageId);
 
         $this->assertSame($admin->id, $customerMessage['seen_by'][0]['id']);
         $this->assertSame($admin->username, $customerMessage['seen_by'][0]['username']);
+        $this->assertSame('Hỗ trợ viên An', $customerMessage['seen_by'][0]['display_name']);
     }
 
     public function test_read_receipt_is_only_broadcast_when_the_pointer_advances(): void
@@ -1260,6 +1266,144 @@ class ChatFeatureTest extends TestCase
             ->assertJsonPath('data.label', "Đơn vàng #{$order->id}")
             ->assertJsonPath('data.fields.1.value', 'Vũ Trụ 2')
             ->assertJsonPath('data.fields.2.value', 'em8ahsb');
+    }
+
+    public function test_internal_notes_are_separated_from_public_messages_and_paginated_for_agents(): void
+    {
+        $customer = User::factory()->create();
+        $admin = $this->agent('admin', [
+            AppPermission::ChatsView,
+            AppPermission::ChatsManage,
+        ]);
+        $conversation = $this->conversationFor($customer);
+        $publicMessage = ChatMessage::query()->create([
+            'conversation_id' => $conversation->id,
+            'sender_id' => $customer->id,
+            'sender_kind' => ChatMessage::SENDER_CUSTOMER,
+            'type' => ChatMessage::TYPE_TEXT,
+            'body' => 'Tin nhắn khách hàng.',
+            'is_internal' => false,
+        ]);
+        $notes = collect(range(1, 35))->map(fn (int $number) => ChatMessage::query()->create([
+            'conversation_id' => $conversation->id,
+            'sender_id' => $admin->id,
+            'sender_kind' => ChatMessage::SENDER_AGENT,
+            'type' => ChatMessage::TYPE_INTERNAL_NOTE,
+            'body' => "Ghi chú {$number}",
+            'is_internal' => true,
+        ]));
+
+        $this->actingAs($admin)
+            ->getJson("/admin/chat/conversations/{$conversation->id}")
+            ->assertOk()
+            ->assertJsonCount(1, 'messages')
+            ->assertJsonPath('messages.0.id', $publicMessage->id)
+            ->assertJsonCount(30, 'internal_notes')
+            ->assertJsonPath('internal_notes.0.id', $notes[5]->id)
+            ->assertJsonPath('internal_notes.29.id', $notes[34]->id)
+            ->assertJsonPath('internal_notes_has_more', true)
+            ->assertJsonPath('data.internal_notes_count', 35);
+
+        $this->actingAs($admin)
+            ->getJson("/admin/chat/conversations/{$conversation->id}/notes?before={$notes[5]->id}&limit=30")
+            ->assertOk()
+            ->assertJsonCount(5, 'data')
+            ->assertJsonPath('data.0.id', $notes[0]->id)
+            ->assertJsonPath('data.4.id', $notes[4]->id)
+            ->assertJsonPath('count', 35)
+            ->assertJsonPath('has_more', false);
+
+        $this->actingAs($customer)
+            ->getJson("/chat/conversations/{$conversation->id}")
+            ->assertOk()
+            ->assertJsonMissingPath('internal_notes')
+            ->assertJsonMissingPath('data.internal_notes_count')
+            ->assertJsonMissingPath('data.pinned_note');
+    }
+
+    public function test_only_manage_agents_can_pin_a_note_from_the_same_conversation(): void
+    {
+        $customer = User::factory()->create();
+        $admin = $this->agent('admin', [
+            AppPermission::ChatsView,
+            AppPermission::ChatsManage,
+        ]);
+        $viewer = $this->agent('ctv', [AppPermission::ChatsView, AppPermission::ChatsViewAll]);
+        $conversation = $this->conversationFor($customer);
+        $otherConversation = $this->conversationFor(User::factory()->create());
+        $note = ChatMessage::query()->create([
+            'conversation_id' => $conversation->id,
+            'sender_id' => $admin->id,
+            'sender_kind' => ChatMessage::SENDER_AGENT,
+            'type' => ChatMessage::TYPE_INTERNAL_NOTE,
+            'body' => 'Ưu tiên kiểm tra lịch sử đơn.',
+            'is_internal' => true,
+        ]);
+        $otherNote = ChatMessage::query()->create([
+            'conversation_id' => $otherConversation->id,
+            'sender_id' => $admin->id,
+            'sender_kind' => ChatMessage::SENDER_AGENT,
+            'type' => ChatMessage::TYPE_INTERNAL_NOTE,
+            'body' => 'Ghi chú của hội thoại khác.',
+            'is_internal' => true,
+        ]);
+        $publicMessage = ChatMessage::query()->create([
+            'conversation_id' => $conversation->id,
+            'sender_id' => $customer->id,
+            'sender_kind' => ChatMessage::SENDER_CUSTOMER,
+            'type' => ChatMessage::TYPE_TEXT,
+            'body' => 'Tin công khai.',
+            'is_internal' => false,
+        ]);
+
+        $this->actingAs($viewer)
+            ->getJson("/admin/chat/conversations/{$conversation->id}/notes")
+            ->assertOk()
+            ->assertJsonPath('data.0.id', $note->id);
+        $this->actingAs($viewer)
+            ->patchJson("/admin/chat/conversations/{$conversation->id}/pinned-note", [
+                'pinned_note_id' => $note->id,
+            ])
+            ->assertForbidden();
+
+        Event::fake([ChatInboxUpdated::class]);
+
+        $this->actingAs($admin)
+            ->patchJson("/admin/chat/conversations/{$conversation->id}/pinned-note", [
+                'pinned_note_id' => $note->id,
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.pinned_note.id', $note->id)
+            ->assertJsonPath('data.internal_notes_count', 1);
+
+        $this->assertSame($note->id, $conversation->refresh()->pinned_note_id);
+        Event::assertDispatched(ChatInboxUpdated::class, fn (ChatInboxUpdated $event): bool => $event->action === 'note_pinned'
+            && ($event->conversation['pinned_note']['id'] ?? null) === $note->id
+            && ! array_key_exists('is_mine', $event->conversation['pinned_note'])
+            && in_array($admin->id, $event->recipientIds, true)
+            && ! in_array($customer->id, $event->recipientIds, true));
+
+        $this->actingAs($customer)
+            ->getJson("/chat/conversations/{$conversation->id}")
+            ->assertOk()
+            ->assertJsonMissingPath('data.pinned_note');
+
+        foreach ([$otherNote, $publicMessage] as $invalidNote) {
+            $this->actingAs($admin)
+                ->patchJson("/admin/chat/conversations/{$conversation->id}/pinned-note", [
+                    'pinned_note_id' => $invalidNote->id,
+                ])
+                ->assertUnprocessable()
+                ->assertJsonValidationErrors('pinned_note_id');
+        }
+
+        $this->actingAs($admin)
+            ->patchJson("/admin/chat/conversations/{$conversation->id}/pinned-note", [
+                'pinned_note_id' => null,
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.pinned_note', null);
+        $this->assertNull($conversation->refresh()->pinned_note_id);
     }
 
     private function conversationFor(User $customer): ChatConversation

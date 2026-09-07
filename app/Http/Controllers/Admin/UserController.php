@@ -91,6 +91,7 @@ class UserController extends Controller
     {
         $data = $request->validate([
             'username' => ['required', 'string', 'max:191', 'unique:users,username'],
+            'chat_display_name' => ['nullable', 'string', 'max:80'],
             'email' => ['nullable', 'string', 'email', 'max:191', 'unique:users,email'],
             'password' => ['required', 'string', 'min:6'],
             'avatar' => ['nullable', 'string', 'max:2048'],
@@ -112,6 +113,7 @@ class UserController extends Controller
         $user = DB::transaction(function () use ($data, $initialBalance, $actor, $request, $transactions): User {
             $user = User::create([
                 'username' => $data['username'],
+                'chat_display_name' => $this->normalizeChatDisplayName($data['chat_display_name'] ?? null),
                 'email' => $data['email'] ?? null,
                 'password' => $data['password'],
                 'avatar' => $data['avatar'] ?? null,
@@ -155,6 +157,7 @@ class UserController extends Controller
 
         $data = $request->validate([
             'username' => ['required', 'string', 'max:191', Rule::unique('users', 'username')->ignore($user->id)],
+            'chat_display_name' => ['nullable', 'string', 'max:80'],
             'email' => ['nullable', 'string', 'email', 'max:191', Rule::unique('users', 'email')->ignore($user->id)],
             'password' => ['nullable', 'string', 'min:6'],
             'avatar' => ['nullable', 'string', 'max:2048'],
@@ -162,6 +165,7 @@ class UserController extends Controller
 
         $user->fill([
             'username' => $data['username'],
+            'chat_display_name' => $this->normalizeChatDisplayName($data['chat_display_name'] ?? null),
             'email' => $data['email'] ?? null,
             'avatar' => $data['avatar'] ?? null,
         ]);
@@ -202,10 +206,11 @@ class UserController extends Controller
         $users = User::query()
             ->where(function ($query) use ($search) {
                 $query->where('username', 'like', "%{$search}%")
+                    ->orWhere('chat_display_name', 'like', "%{$search}%")
                     ->orWhere('email', 'like', "%{$search}%");
             })
             ->limit(10)
-            ->get(['id', 'username', 'email', 'balance', 'avatar']);
+            ->get(['id', 'username', 'chat_display_name', 'email', 'balance', 'avatar']);
 
         return response()->json(['users' => $users]);
     }
@@ -367,5 +372,12 @@ class UserController extends Controller
             'ip_address' => $request->ip(),
             'user_agent' => Str::limit((string) $request->userAgent(), 500, ''),
         ];
+    }
+
+    private function normalizeChatDisplayName(mixed $value): ?string
+    {
+        $displayName = trim((string) $value);
+
+        return $displayName !== '' ? $displayName : null;
     }
 }

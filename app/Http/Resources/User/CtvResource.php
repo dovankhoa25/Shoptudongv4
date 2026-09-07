@@ -15,12 +15,13 @@ class CtvResource extends JsonResource
     public function toArray(Request $request): array
     {
         return [
-            'id'    => $this->id,
-            'username'  => $this->username,
+            'id' => $this->id,
+            'username' => $this->username,
+            'chat_display_name' => $this->chat_display_name,
             'email' => $this->email,
-            'balance'      => $this->balance,
-            'avatar'      => $this->avatar,
-            'created_at'      => $this->created_at,
+            'balance' => $this->balance,
+            'avatar' => $this->avatar,
+            'created_at' => $this->created_at,
             'roles' => $this->roles->pluck('name'),
             'categories' => $this->categories->map(function ($category) {
                 return [

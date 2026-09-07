@@ -19,6 +19,9 @@ class ChatParticipantResource extends JsonResource
             'user' => $this->whenLoaded('user', fn () => $this->user ? [
                 'id' => (int) $this->user->id,
                 'username' => $this->user->username,
+                'display_name' => $this->role === $this->resource::ROLE_AGENT
+                    ? $this->user->chatDisplayName()
+                    : $this->user->username,
                 'avatar' => $this->user->chat_avatar_url,
             ] : null),
         ];

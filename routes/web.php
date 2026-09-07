@@ -849,9 +849,15 @@ Route::prefix('admin/chat')
         Route::get('/conversations/{conversation}/messages', [ChatController::class, 'messages'])
             ->middleware(Permission::middleware(Permission::ChatsView))
             ->name('messages.index');
+        Route::get('/conversations/{conversation}/notes', [ChatController::class, 'notes'])
+            ->middleware(Permission::middleware(Permission::ChatsView))
+            ->name('notes.index');
         Route::post('/conversations/{conversation}/messages', [ChatController::class, 'send'])
             ->middleware(Permission::middleware(Permission::ChatsReply))
             ->name('messages.store');
+        Route::patch('/conversations/{conversation}/pinned-note', [ChatController::class, 'pinNote'])
+            ->middleware(Permission::middleware(Permission::ChatsManage))
+            ->name('pinned-note.update');
         Route::post('/conversations/{conversation}/messages/{message}/reactions', [ChatController::class, 'toggleReaction'])
             ->middleware(Permission::middleware(Permission::ChatsReply))
             ->name('messages.reactions.toggle');
