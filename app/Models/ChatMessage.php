@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -31,6 +32,8 @@ class ChatMessage extends Model implements HasMedia
     public const TYPE_SYSTEM = 'system';
 
     public const TYPE_INTERNAL_NOTE = 'internal_note';
+
+    public const EVENT_WELCOME_MESSAGE = 'welcome_message';
 
     protected $fillable = [
         'conversation_id',
@@ -85,6 +88,17 @@ class ChatMessage extends Model implements HasMedia
             ->useDisk((string) config('chat.attachments.disk', 'chat'))
             ->acceptsMimeTypes(['image/jpeg', 'image/png', 'image/webp'])
             ->onlyKeepLatest(max(1, (int) config('chat.attachments.max_files', 4)));
+    }
+
+    public function scopeWithoutAutomatedWelcome(Builder $query): Builder
+    {
+        $metadataEvent = $query->qualifyColumn('metadata').'->event';
+
+        return $query->where(function (Builder $messages) use ($metadataEvent): void {
+            $messages
+                ->whereNull($metadataEvent)
+                ->orWhere($metadataEvent, '!=', self::EVENT_WELCOME_MESSAGE);
+        });
     }
 
     /**

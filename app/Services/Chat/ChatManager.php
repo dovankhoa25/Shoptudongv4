@@ -20,17 +20,42 @@ class ChatManager
 
     /**
      * @param  array<string, mixed>  $attributes
-     * @return array{0: ChatConversation, 1: bool, 2: int|null}
+     * @return array{0: ChatConversation, 1: bool, 2: int|null, 3: ChatMessage|null}
      */
     public function resolve(User $customer, array $attributes): array
     {
-        [$conversation, $created, $previousAssigneeId] = $this->resolveConversation(
-            $customer,
-            $attributes,
-            $customer,
-        );
+        return DB::transaction(function () use ($customer, $attributes): array {
+            [$conversation, $created, $previousAssigneeId] = $this->resolveConversation(
+                $customer,
+                $attributes,
+                $customer,
+            );
+            $welcomeMessage = null;
 
-        return [$conversation, $created, $previousAssigneeId];
+            if ($created) {
+                $welcomeMessage = $conversation->messages()->create([
+                    'sender_id' => null,
+                    'sender_kind' => ChatMessage::SENDER_SYSTEM,
+                    'type' => ChatMessage::TYPE_SYSTEM,
+                    'body' => (string) config('chat.welcome_message'),
+                    'metadata' => [
+                        'event' => ChatMessage::EVENT_WELCOME_MESSAGE,
+                        'automated' => true,
+                    ],
+                    'is_internal' => false,
+                ]);
+
+                ChatParticipant::query()
+                    ->where('conversation_id', $conversation->id)
+                    ->where('user_id', $customer->getKey())
+                    ->update([
+                        'last_read_message_id' => $welcomeMessage->id,
+                        'last_read_at' => now(),
+                    ]);
+            }
+
+            return [$conversation->fresh(), $created, $previousAssigneeId, $welcomeMessage];
+        });
     }
 
     /**

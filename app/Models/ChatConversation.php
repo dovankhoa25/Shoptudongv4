@@ -199,6 +199,7 @@ class ChatConversation extends Model
             ->value('last_read_message_id') ?? 0;
 
         return $this->messages()
+            ->withoutAutomatedWelcome()
             ->where('id', '>', $lastReadId)
             ->where(fn (Builder $query) => $query
                 ->whereNull('sender_id')
@@ -217,6 +218,7 @@ class ChatConversation extends Model
         return $query
             ->withCount([
                 'messages as unread_count' => fn (Builder $messages) => $messages
+                    ->withoutAutomatedWelcome()
                     ->where(fn (Builder $sender) => $sender
                         ->whereNull('chat_messages.sender_id')
                         ->orWhere('chat_messages.sender_id', '!=', $userId))
@@ -230,6 +232,7 @@ class ChatConversation extends Model
             ])
             ->withMax([
                 'messages as latest_visible_message_id' => fn (Builder $messages) => $messages
+                    ->withoutAutomatedWelcome()
                     ->where(fn (Builder $visibility) => $visibility
                         ->where('chat_messages.is_internal', false)
                         ->orWhereRaw('chat_conversations.customer_id != ?', [$userId])),

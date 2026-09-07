@@ -93,6 +93,69 @@ class ChatFeatureTest extends TestCase
         ]);
     }
 
+    public function test_new_customer_conversation_gets_one_non_actionable_system_welcome(): void
+    {
+        $customer = User::factory()->create();
+        $admin = $this->agent('admin', [AppPermission::ChatsView]);
+        $payload = [
+            'category' => ChatConversation::CATEGORY_GENERAL,
+            'source_app' => 'web-game',
+        ];
+
+        $firstResponse = $this->actingAs($customer)
+            ->postJson('/chat/conversations/resolve', $payload)
+            ->assertCreated()
+            ->assertJsonPath('data.status', ChatConversation::STATUS_WAITING_AGENT)
+            ->assertJsonPath('data.last_message', null)
+            ->assertJsonPath('data.latest_message_id', null)
+            ->assertJsonPath('data.unread_count', 0)
+            ->assertJsonPath('welcome_message.sender_kind', ChatMessage::SENDER_SYSTEM)
+            ->assertJsonPath('welcome_message.type', ChatMessage::TYPE_SYSTEM)
+            ->assertJsonPath('welcome_message.body', 'Hỗ trợ viên đã sẵn sàng. Bạn cần hỗ trợ gì không?')
+            ->assertJsonPath('welcome_message.metadata.event', ChatMessage::EVENT_WELCOME_MESSAGE);
+        $conversationId = (int) $firstResponse->json('data.id');
+        $welcomeMessageId = (int) $firstResponse->json('welcome_message.id');
+
+        $this->actingAs($customer)
+            ->postJson('/chat/conversations/resolve', $payload)
+            ->assertOk()
+            ->assertJsonPath('data.id', $conversationId)
+            ->assertJsonPath('welcome_message', null);
+
+        $this->assertDatabaseCount('chat_messages', 1);
+        $this->assertDatabaseHas('chat_messages', [
+            'id' => $welcomeMessageId,
+            'conversation_id' => $conversationId,
+            'sender_id' => null,
+            'sender_kind' => ChatMessage::SENDER_SYSTEM,
+            'type' => ChatMessage::TYPE_SYSTEM,
+            'is_internal' => false,
+        ]);
+        $this->assertDatabaseHas('chat_participants', [
+            'conversation_id' => $conversationId,
+            'user_id' => $customer->id,
+            'last_read_message_id' => $welcomeMessageId,
+        ]);
+        $this->assertNull(ChatConversation::query()->findOrFail($conversationId)->last_message_id);
+
+        $this->actingAs($customer)
+            ->getJson("/chat/conversations/{$conversationId}")
+            ->assertOk()
+            ->assertJsonCount(1, 'messages')
+            ->assertJsonPath('messages.0.id', $welcomeMessageId);
+
+        foreach ([$customer, $admin] as $viewer) {
+            $baseUrl = $viewer->is($customer) ? '/chat' : '/admin/chat';
+            $this->actingAs($viewer)
+                ->getJson("{$baseUrl}/conversations")
+                ->assertOk()
+                ->assertJsonPath('unread_total', 0)
+                ->assertJsonPath('data.0.unread_count', 0)
+                ->assertJsonPath('data.0.last_message', null)
+                ->assertJsonPath('data.0.latest_message_id', null);
+        }
+    }
+
     public function test_resolve_reuses_the_same_service_order_chat_and_rejects_another_users_order(): void
     {
         $customer = User::factory()->create();
@@ -336,7 +399,7 @@ class ChatFeatureTest extends TestCase
 
         $conversation = ChatConversation::query()->findOrFail($conversationId);
         $this->assertSame($receiver->id, $conversation->assigned_to_id);
-        $this->assertSame(2, $conversation->messages()->count());
+        $this->assertSame(3, $conversation->messages()->count());
         $this->assertNotNull(ChatParticipant::query()
             ->where('conversation_id', $conversationId)
             ->where('user_id', $admin->id)

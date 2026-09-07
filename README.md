@@ -7,3 +7,6 @@
 
 0.0.5.1
 - bonus chat
+
+0.0.5.2
+- welcome

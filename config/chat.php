@@ -1,6 +1,11 @@
 <?php
 
 return [
+    'welcome_message' => env(
+        'CHAT_WELCOME_MESSAGE',
+        'Hỗ trợ viên đã sẵn sàng. Bạn cần hỗ trợ gì không?',
+    ),
+
     'attachments' => [
         'disk' => env('CHAT_MEDIA_DISK', 'chat'),
         'max_files' => (int) env('CHAT_MEDIA_MAX_FILES', 4),

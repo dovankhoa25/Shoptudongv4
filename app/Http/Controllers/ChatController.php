@@ -153,8 +153,16 @@ class ChatController extends Controller
             ]);
         }
 
-        [$conversation, $created, $previousAssigneeId] = $this->manager->resolve($request->user(), $validated);
+        [$conversation, $created, $previousAssigneeId, $welcomeMessage] = $this->manager->resolve(
+            $request->user(),
+            $validated,
+        );
         $this->prepareConversation($conversation, $request->user());
+
+        if ($welcomeMessage) {
+            $welcomeMessage->loadMissing(['media', 'reactions']);
+            $welcomeMessage->setRelation('conversation', $conversation);
+        }
 
         $this->realtime->inbox(
             $created ? 'created' : 'updated',
@@ -165,6 +173,9 @@ class ChatController extends Controller
 
         return response()->json([
             'data' => (new ChatConversationResource($conversation))->resolve($request),
+            'welcome_message' => $welcomeMessage
+                ? (new ChatMessageResource($welcomeMessage))->resolve($request)
+                : null,
         ], $created ? 201 : 200);
     }
 
@@ -1083,6 +1094,7 @@ class ChatController extends Controller
 
         return ChatMessage::query()
             ->whereIn('chat_messages.conversation_id', $conversationIds)
+            ->withoutAutomatedWelcome()
             ->where(fn (Builder $messages) => $messages
                 ->whereNull('chat_messages.sender_id')
                 ->orWhere('chat_messages.sender_id', '!=', $user->getKey()))
@@ -1122,6 +1134,7 @@ class ChatController extends Controller
         $counts = ChatMessage::query()
             ->join('chat_conversations', 'chat_conversations.id', '=', 'chat_messages.conversation_id')
             ->whereIn('chat_messages.conversation_id', $conversationIds)
+            ->withoutAutomatedWelcome()
             ->where(fn (Builder $messages) => $messages
                 ->whereNull('chat_messages.sender_id')
                 ->orWhere('chat_messages.sender_id', '!=', $user->getKey()))
