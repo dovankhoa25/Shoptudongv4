@@ -87,7 +87,7 @@ Route::middleware('auth')->group(function () {
 
 Route::prefix('admin')
     ->name('admin.')
-    ->middleware('auth', 'throttle:30,1')
+    ->middleware('auth', 'throttle:90,1')
     ->group(function () {
         Route::get('/', function () {
             return Inertia::render('Admin/Page');
@@ -827,6 +827,9 @@ Route::prefix('admin/chat')
         Route::get('/conversations/{conversation}', [ChatController::class, 'show'])
             ->middleware(Permission::middleware(Permission::ChatsView))
             ->name('conversations.show');
+        Route::get('/conversations/{conversation}/subject', [ChatController::class, 'subject'])
+            ->middleware(Permission::middleware(Permission::ChatsView))
+            ->name('conversations.subject');
         Route::get('/conversations/{conversation}/messages', [ChatController::class, 'messages'])
             ->middleware(Permission::middleware(Permission::ChatsView))
             ->name('messages.index');

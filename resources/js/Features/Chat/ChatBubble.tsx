@@ -102,7 +102,11 @@ export default function ChatBubble({ mode, baseUrl }: ChatBubbleProps) {
         unreadAbortRef.current = controller;
         try {
             const response = await window.axios.get<PaginatedChatConversations>(`${baseUrl}/conversations`, {
-                params: { per_page: 1, assignment: mode === 'agent' && !isAdmin ? 'mine' : undefined },
+                params: {
+                    per_page: 1,
+                    assignment: mode === 'agent' && !isAdmin ? 'mine' : undefined,
+                    view: mode === 'agent' ? 'active' : undefined,
+                },
                 signal: controller.signal,
             });
             if (controller.signal.aborted || requestGeneration !== unreadRequestGenerationRef.current) return;

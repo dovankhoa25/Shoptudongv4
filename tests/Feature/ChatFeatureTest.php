@@ -10,6 +10,8 @@ use App\Models\Category;
 use App\Models\ChatConversation;
 use App\Models\ChatMessage;
 use App\Models\ChatParticipant;
+use App\Models\GoldTransaction;
+use App\Models\Server;
 use App\Models\Service;
 use App\Models\ServiceOrder;
 use App\Models\User;
@@ -436,6 +438,244 @@ class ChatFeatureTest extends TestCase
             ->assertJsonPath('unread_total', 55);
     }
 
+    public function test_admin_inbox_separates_active_and_completed_conversations_with_scoped_counts(): void
+    {
+        $admin = $this->agent('admin', [AppPermission::ChatsView]);
+        $conversations = [];
+
+        foreach ([
+            ChatConversation::STATUS_WAITING_AGENT,
+            ChatConversation::STATUS_WAITING_CUSTOMER,
+            ChatConversation::STATUS_RESOLVED,
+            ChatConversation::STATUS_CLOSED,
+        ] as $status) {
+            $customer = User::factory()->create();
+            $conversation = $this->conversationFor($customer);
+            $conversation->update([
+                'status' => $status,
+                'assigned_to_id' => in_array($status, [
+                    ChatConversation::STATUS_WAITING_AGENT,
+                    ChatConversation::STATUS_RESOLVED,
+                ], true) ? $admin->id : null,
+                'resolved_at' => in_array($status, [
+                    ChatConversation::STATUS_RESOLVED,
+                    ChatConversation::STATUS_CLOSED,
+                ], true) ? now() : null,
+                'last_message_at' => now(),
+            ]);
+            $conversation->messages()->create([
+                'sender_id' => $customer->id,
+                'sender_kind' => ChatMessage::SENDER_CUSTOMER,
+                'type' => ChatMessage::TYPE_TEXT,
+                'body' => 'Tin chưa đọc '.$status,
+                'is_internal' => false,
+            ]);
+            $conversations[$status] = $conversation;
+        }
+
+        $activeResponse = $this->actingAs($admin)
+            ->getJson('/admin/chat/conversations')
+            ->assertOk()
+            ->assertJsonPath('view', 'active')
+            ->assertJsonPath('period', 'all')
+            ->assertJsonCount(2, 'data')
+            ->assertJsonPath('counts.all', 4)
+            ->assertJsonPath('counts.active', 2)
+            ->assertJsonPath('counts.completed', 2)
+            ->assertJsonPath('counts.waiting_agent', 1)
+            ->assertJsonPath('counts.waiting_customer', 1)
+            ->assertJsonPath('counts.resolved', 1)
+            ->assertJsonPath('counts.closed', 1)
+            ->assertJsonPath('unread_counts.all', 4)
+            ->assertJsonPath('unread_counts.active', 2)
+            ->assertJsonPath('unread_counts.completed', 2)
+            ->assertJsonPath('unread_total', 2);
+
+        $this->assertEqualsCanonicalizing(
+            [
+                $conversations[ChatConversation::STATUS_WAITING_AGENT]->id,
+                $conversations[ChatConversation::STATUS_WAITING_CUSTOMER]->id,
+            ],
+            collect($activeResponse->json('data'))->pluck('id')->all(),
+        );
+
+        $this->actingAs($admin)
+            ->getJson('/admin/chat/conversations?view=completed&status=closed')
+            ->assertOk()
+            ->assertJsonPath('view', 'completed')
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $conversations[ChatConversation::STATUS_CLOSED]->id)
+            ->assertJsonPath('counts.active', 2)
+            ->assertJsonPath('counts.completed', 2)
+            ->assertJsonPath('unread_total', 1);
+
+        $this->actingAs($admin)
+            ->getJson('/admin/chat/conversations?view=all&assignment=mine')
+            ->assertOk()
+            ->assertJsonCount(2, 'data')
+            ->assertJsonPath('counts.all', 2)
+            ->assertJsonPath('counts.active', 1)
+            ->assertJsonPath('counts.completed', 1)
+            ->assertJsonPath('unread_counts.active', 1)
+            ->assertJsonPath('unread_counts.completed', 1);
+    }
+
+    public function test_active_admin_inbox_keeps_status_groups_together_then_prioritizes_unread(): void
+    {
+        $admin = $this->agent('admin', [AppPermission::ChatsView]);
+
+        $readConversation = $this->conversationFor(User::factory()->create());
+        $readConversation->update([
+            'status' => ChatConversation::STATUS_WAITING_AGENT,
+            'last_message_at' => now(),
+        ]);
+
+        $waitingCustomer = $this->conversationFor($waitingCustomerUser = User::factory()->create());
+        $waitingCustomer->update([
+            'status' => ChatConversation::STATUS_WAITING_CUSTOMER,
+            'last_message_at' => now()->subMinute(),
+        ]);
+        $waitingCustomer->messages()->create([
+            'sender_id' => $waitingCustomerUser->id,
+            'sender_kind' => ChatMessage::SENDER_CUSTOMER,
+            'type' => ChatMessage::TYPE_TEXT,
+            'body' => 'Tin chờ khách mới hơn',
+            'is_internal' => false,
+        ]);
+
+        $waitingAgent = $this->conversationFor($waitingAgentUser = User::factory()->create());
+        $waitingAgent->update([
+            'status' => ChatConversation::STATUS_WAITING_AGENT,
+            'last_message_at' => now()->subDay(),
+        ]);
+        $waitingAgent->messages()->create([
+            'sender_id' => $waitingAgentUser->id,
+            'sender_kind' => ChatMessage::SENDER_CUSTOMER,
+            'type' => ChatMessage::TYPE_TEXT,
+            'body' => 'Tin chờ admin cũ hơn',
+            'is_internal' => false,
+        ]);
+
+        $this->actingAs($admin)
+            ->getJson('/admin/chat/conversations?view=active')
+            ->assertOk()
+            ->assertJsonPath('data.0.id', $waitingAgent->id)
+            ->assertJsonPath('data.1.id', $readConversation->id)
+            ->assertJsonPath('data.2.id', $waitingCustomer->id);
+    }
+
+    public function test_completed_period_filter_uses_resolution_time_without_narrowing_counts(): void
+    {
+        $admin = $this->agent('admin', [AppPermission::ChatsView]);
+        $recent = $this->conversationFor(User::factory()->create());
+        $recent->update([
+            'status' => ChatConversation::STATUS_RESOLVED,
+            'resolved_at' => now()->subDays(2),
+        ]);
+        $old = $this->conversationFor(User::factory()->create());
+        $old->update([
+            'status' => ChatConversation::STATUS_RESOLVED,
+            'resolved_at' => now()->subDays(10),
+        ]);
+
+        $this->actingAs($admin)
+            ->getJson('/admin/chat/conversations?view=completed&period=7d')
+            ->assertOk()
+            ->assertJsonPath('period', '7d')
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $recent->id)
+            ->assertJsonPath('counts.completed', 2);
+
+        $this->actingAs($admin)
+            ->getJson('/admin/chat/conversations?view=completed&period=365d')
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('period');
+    }
+
+    public function test_inbox_counts_respect_assignment_and_search_scope(): void
+    {
+        $admin = $this->agent('admin', [AppPermission::ChatsView]);
+        $otherAdmin = $this->agent('admin', [AppPermission::ChatsView]);
+        $matchingCustomer = User::factory()->create(['username' => 'archive-alpha-target']);
+        $otherCustomer = User::factory()->create(['username' => 'archive-beta-target']);
+        $matchingOtherAssignment = User::factory()->create(['username' => 'archive-alpha-other']);
+
+        $matching = $this->conversationFor($matchingCustomer);
+        $matching->update([
+            'assigned_to_id' => $admin->id,
+            'status' => ChatConversation::STATUS_WAITING_AGENT,
+        ]);
+
+        $this->conversationFor($otherCustomer)->update([
+            'assigned_to_id' => $admin->id,
+            'status' => ChatConversation::STATUS_RESOLVED,
+            'resolved_at' => now(),
+        ]);
+        $this->conversationFor($matchingOtherAssignment)->update([
+            'assigned_to_id' => $otherAdmin->id,
+            'status' => ChatConversation::STATUS_CLOSED,
+            'resolved_at' => now(),
+        ]);
+
+        $this->actingAs($admin)
+            ->getJson('/admin/chat/conversations?view=all&assignment=mine&search=archive-alpha')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $matching->id)
+            ->assertJsonPath('counts.all', 1)
+            ->assertJsonPath('counts.active', 1)
+            ->assertJsonPath('counts.completed', 0)
+            ->assertJsonPath('counts.waiting_agent', 1)
+            ->assertJsonPath('counts.waiting_customer', 0)
+            ->assertJsonPath('counts.resolved', 0)
+            ->assertJsonPath('counts.closed', 0);
+    }
+
+    public function test_completed_inbox_orders_by_resolved_at_before_last_message_at(): void
+    {
+        $admin = $this->agent('admin', [AppPermission::ChatsView]);
+        $recentlyResolved = $this->conversationFor(User::factory()->create());
+        $recentlyResolved->update([
+            'status' => ChatConversation::STATUS_RESOLVED,
+            'resolved_at' => now()->subDay(),
+            'last_message_at' => now()->subDays(10),
+        ]);
+        $olderResolutionWithNewerMessage = $this->conversationFor(User::factory()->create());
+        $olderResolutionWithNewerMessage->update([
+            'status' => ChatConversation::STATUS_RESOLVED,
+            'resolved_at' => now()->subDays(5),
+            'last_message_at' => now(),
+        ]);
+
+        $this->actingAs($admin)
+            ->getJson('/admin/chat/conversations?view=completed')
+            ->assertOk()
+            ->assertJsonCount(2, 'data')
+            ->assertJsonPath('data.0.id', $recentlyResolved->id)
+            ->assertJsonPath('data.1.id', $olderResolutionWithNewerMessage->id);
+    }
+
+    public function test_customer_conversation_index_still_defaults_to_all_statuses(): void
+    {
+        $customer = User::factory()->create();
+        $active = $this->conversationFor($customer);
+        $closed = $this->conversationFor($customer);
+        $closed->update(['status' => ChatConversation::STATUS_CLOSED]);
+
+        $response = $this->actingAs($customer)
+            ->getJson('/chat/conversations')
+            ->assertOk()
+            ->assertJsonPath('view', 'all')
+            ->assertJsonCount(2, 'data')
+            ->assertJsonPath('counts.active', 1)
+            ->assertJsonPath('counts.completed', 1);
+
+        $this->assertEqualsCanonicalizing(
+            [$active->id, $closed->id],
+            collect($response->json('data'))->pluck('id')->all(),
+        );
+    }
+
     public function test_unrelated_customer_cannot_read_or_send_to_a_conversation(): void
     {
         $owner = User::factory()->create();
@@ -824,6 +1064,73 @@ class ChatFeatureTest extends TestCase
             ->value('left_at'));
         $this->assertSame(1, $conversation->messages()->count());
         $this->assertSame(ChatConversation::STATUS_WAITING_AGENT, $conversation->refresh()->status);
+    }
+
+    public function test_assigned_agent_can_view_the_related_service_order_from_chat(): void
+    {
+        $customer = User::factory()->create();
+        $agent = $this->agent('ctv', [AppPermission::ChatsView, AppPermission::ChatsReply]);
+        $service = Service::query()->create(['name' => 'Săn đệ tử', 'status' => true]);
+        $order = $this->serviceOrder($customer, $service, $agent);
+        $conversation = ChatConversation::query()->create([
+            'customer_id' => $customer->id,
+            'category' => ChatConversation::CATEGORY_ORDER_SUPPORT,
+            'subject_type' => 'service_order',
+            'subject_id' => $order->id,
+            'assigned_to_id' => $agent->id,
+            'status' => ChatConversation::STATUS_WAITING_AGENT,
+            'priority' => ChatConversation::PRIORITY_NORMAL,
+        ]);
+
+        $this->actingAs($agent)
+            ->getJson("/admin/chat/conversations/{$conversation->id}/subject")
+            ->assertOk()
+            ->assertJsonPath('data.id', $order->id)
+            ->assertJsonPath('data.type', 'service_order')
+            ->assertJsonPath('data.fields.1.value', 'Săn đệ tử')
+            ->assertJsonPath('data.fields.2.value', 'account-test')
+            ->assertJsonMissingPath('data.password');
+    }
+
+    public function test_assigned_agent_can_view_a_related_gold_order_from_chat(): void
+    {
+        $customer = User::factory()->create();
+        $agent = $this->agent('ctv', [AppPermission::ChatsView, AppPermission::ChatsReply]);
+        $server = Server::query()->create([
+            'name' => 'server-1',
+            'name_view' => 'Vũ Trụ 2',
+            'status' => true,
+        ]);
+        $order = GoldTransaction::query()->create([
+            'type' => GoldTransaction::TYPE_ORDER,
+            'user_id' => $customer->id,
+            'server_id' => $server->id,
+            'character_name' => 'em8ahsb',
+            'amount_vnd' => 10000,
+            'gold_qty' => 1000,
+            'gold_bar_qty' => 0,
+            'pure_gold_qty' => 1000,
+            'price_at_transaction' => 10,
+            'status' => GoldTransaction::STATUS_CANCELLED,
+            'updated_by' => 'web',
+        ]);
+        $conversation = ChatConversation::query()->create([
+            'customer_id' => $customer->id,
+            'category' => ChatConversation::CATEGORY_ORDER_SUPPORT,
+            'subject_type' => 'gold_transaction',
+            'subject_id' => $order->id,
+            'assigned_to_id' => $agent->id,
+            'status' => ChatConversation::STATUS_WAITING_AGENT,
+            'priority' => ChatConversation::PRIORITY_NORMAL,
+        ]);
+
+        $this->actingAs($agent)
+            ->getJson("/admin/chat/conversations/{$conversation->id}/subject")
+            ->assertOk()
+            ->assertJsonPath('data.type', 'gold_transaction')
+            ->assertJsonPath('data.label', "Đơn vàng #{$order->id}")
+            ->assertJsonPath('data.fields.1.value', 'Vũ Trụ 2')
+            ->assertJsonPath('data.fields.2.value', 'em8ahsb');
     }
 
     private function conversationFor(User $customer): ChatConversation

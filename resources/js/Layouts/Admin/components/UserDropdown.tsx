@@ -1,10 +1,11 @@
 // resources/js/Layouts/Admin/components/UserDropdown.tsx - Fixed z-index
 import React from 'react';
 import { router } from '@inertiajs/react';
-import { Dropdown, Badge, Avatar } from 'antd';
+import { Dropdown, Badge } from 'antd';
 import { UserOutlined, LogoutOutlined } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import { formatNumber } from '@/Utils/currencyHelper';
+import UserAvatar from '@/Components/UserAvatar';
 
 interface UserDropdownProps {
     user: any;
@@ -24,12 +25,7 @@ export default function UserDropdown({ user, roles, compact = false }: UserDropd
             label: (
                 <div className="py-2 px-1 min-w-[280px]">
                     <div className="flex items-center space-x-3 mb-3">
-                        <Avatar
-                            size={48}
-                            src={user?.avatar}
-                            icon={<UserOutlined />}
-                            className="bg-gradient-to-r from-blue-500 to-purple-600"
-                        />
+                        <UserAvatar user={user} className="h-12 w-12 text-base" />
                         <div className="flex-1 min-w-0">
                             <p className="font-semibold text-gray-700 dark:text-green-500 truncate text-sm">
                                 {user?.username}
@@ -84,12 +80,7 @@ export default function UserDropdown({ user, roles, compact = false }: UserDropd
                 onClick={(e) => e.preventDefault()}
             >
                 <Badge dot={false}>
-                    <Avatar
-                        size={compact ? 28 : 32}
-                        src={user?.avatar}
-                        icon={<UserOutlined />}
-                        className="bg-gradient-to-r from-blue-500 to-purple-600"
-                    />
+                    <UserAvatar user={user} className={`${compact ? 'h-7 w-7' : 'h-8 w-8'} text-xs`} />
                 </Badge>
                 {!compact && (
                     <div className="hidden md:block text-left">

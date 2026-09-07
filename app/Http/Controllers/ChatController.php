@@ -6,6 +6,10 @@ use App\Http\Resources\Chat\ChatConversationResource;
 use App\Http\Resources\Chat\ChatMessageResource;
 use App\Models\ChatConversation;
 use App\Models\ChatMessage;
+use App\Models\GemTransaction;
+use App\Models\GoldTransaction;
+use App\Models\NickOrder;
+use App\Models\ServiceOrder;
 use App\Models\User;
 use App\Services\Chat\ChatManager;
 use App\Services\Chat\ChatRealtimeNotifier;
@@ -35,21 +39,26 @@ class ChatController extends Controller
         );
 
         $validated = $request->validate([
+            'view' => ['nullable', Rule::in(['active', 'completed', 'all'])],
             'status' => ['nullable', Rule::in([
                 ChatConversation::STATUS_WAITING_AGENT,
                 ChatConversation::STATUS_WAITING_CUSTOMER,
                 ChatConversation::STATUS_RESOLVED,
                 ChatConversation::STATUS_CLOSED,
             ])],
+            'period' => ['nullable', Rule::in(['7d', '30d', '90d', 'all'])],
             'assignment' => ['nullable', Rule::in(['mine', 'unassigned'])],
             'search' => ['nullable', 'string', 'max:100'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
         ]);
 
-        $query = ChatConversation::query()
+        // Keep the public/customer inbox backward compatible. Only the dedicated
+        // admin inbox defaults to active work; callers may always request `all`.
+        $view = $validated['view'] ?? ($request->routeIs('admin.chat.conversations.index') ? 'active' : 'all');
+        $period = $validated['period'] ?? 'all';
+
+        $baseQuery = ChatConversation::query()
             ->visibleTo($user)
-            ->with($this->conversationRelations())
-            ->when($validated['status'] ?? null, fn (Builder $query, string $status) => $query->where('status', $status))
             ->when(
                 ($validated['assignment'] ?? null) === 'mine' && $user->canViewAllAdminData(),
                 fn (Builder $query) => $query->where('assigned_to_id', $user->getKey()),
@@ -62,17 +71,54 @@ class ChatController extends Controller
                         ->orWhereHas('customer', fn (Builder $customer) => $customer
                             ->where('username', 'like', '%'.$search.'%'));
                 });
-            })
+            });
+
+        $statusCounts = $this->conversationCountsByStatus($baseQuery);
+        $unreadCounts = $this->unreadCountsByStatus($baseQuery, $user);
+
+        $query = (clone $baseQuery)
+            ->when($view === 'active', fn (Builder $query) => $query->whereIn('status', [
+                ChatConversation::STATUS_WAITING_AGENT,
+                ChatConversation::STATUS_WAITING_CUSTOMER,
+            ]))
+            ->when($view === 'completed', fn (Builder $query) => $query->whereIn('status', [
+                ChatConversation::STATUS_RESOLVED,
+                ChatConversation::STATUS_CLOSED,
+            ]))
+            ->when(
+                $view === 'completed' && $period !== 'all',
+                fn (Builder $query) => $query->whereRaw(
+                    'COALESCE(chat_conversations.resolved_at, chat_conversations.updated_at) >= ?',
+                    [now()->subDays((int) rtrim($period, 'd'))],
+                ),
+            )
+            ->when($validated['status'] ?? null, fn (Builder $query, string $status) => $query->where('status', $status));
+
+        $unreadTotal = $this->unreadTotal($query, $user);
+        $query
+            ->with($this->conversationRelations())
+            ->withUnreadCountFor($user)
+            ->when($view === 'active', fn (Builder $query) => $query
+                ->orderByRaw(
+                    'CASE chat_conversations.status WHEN ? THEN 0 WHEN ? THEN 1 ELSE 2 END',
+                    [ChatConversation::STATUS_WAITING_AGENT, ChatConversation::STATUS_WAITING_CUSTOMER],
+                )
+                ->orderByDesc('unread_count'))
+            ->when($view === 'completed', fn (Builder $query) => $query
+                ->orderByRaw('COALESCE(chat_conversations.resolved_at, chat_conversations.updated_at) DESC'))
             ->orderByDesc('last_message_at')
             ->orderByDesc('id');
 
-        $unreadTotal = $this->unreadTotal($query, $user);
-        $paginator = $query
-            ->withUnreadCountFor($user)
-            ->paginate((int) ($validated['per_page'] ?? 30));
+        $paginator = $query->paginate((int) ($validated['per_page'] ?? 30));
 
         return ChatConversationResource::collection($paginator)
-            ->additional(['unread_total' => $unreadTotal]);
+            ->additional([
+                'view' => $view,
+                'period' => $period,
+                'counts' => $this->groupedConversationCounts($statusCounts),
+                'unread_counts' => $this->groupedConversationCounts($unreadCounts),
+                'unread_total' => $unreadTotal,
+            ]);
     }
 
     public function resolve(Request $request): JsonResponse
@@ -341,6 +387,16 @@ class ChatController extends Controller
         return response()->json(['data' => $this->subjects->listFor($request->user())]);
     }
 
+    public function subject(Request $request, ChatConversation $conversation): JsonResponse
+    {
+        Gate::authorize('view', $conversation);
+        abort_unless($conversation->subject_type && $conversation->subject_id, 404);
+
+        return response()->json([
+            'data' => $this->subjectDetail($conversation),
+        ]);
+    }
+
     public function agents(Request $request): JsonResponse
     {
         abort_unless(
@@ -404,6 +460,84 @@ class ChatController extends Controller
             'subject_id' => $conversation->subject_id ? (int) $conversation->subject_id : null,
             'status' => $conversation->status,
             'last_message_at' => $conversation->last_message_at?->toIso8601String(),
+            'resolved_at' => $conversation->resolved_at?->toIso8601String(),
+            'updated_at' => $conversation->updated_at?->toIso8601String(),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function subjectDetail(ChatConversation $conversation): array
+    {
+        $type = $conversation->subject_type;
+        $subject = match ($type) {
+            'service_order' => ServiceOrder::withoutReceiverOwnedScope()
+                ->with(['user:id,username', 'receiver:id,username', 'service:id,name,processing_time,warranty'])
+                ->where('user_id', $conversation->customer_id)
+                ->findOrFail($conversation->subject_id),
+            'nick_order' => NickOrder::query()
+                ->with(['buyer:id,username', 'seller:id,username', 'nick.category:id,name'])
+                ->where('buyer_id', $conversation->customer_id)
+                ->findOrFail($conversation->subject_id),
+            'gold_transaction' => GoldTransaction::query()
+                ->with(['user:id,username', 'server:id,name,name_view', 'bot:id,name'])
+                ->where('type', GoldTransaction::TYPE_ORDER)
+                ->where('user_id', $conversation->customer_id)
+                ->findOrFail($conversation->subject_id),
+            'gem_transaction' => GemTransaction::query()
+                ->with(['user:id,username', 'server:id,name,name_view'])
+                ->where('user_id', $conversation->customer_id)
+                ->findOrFail($conversation->subject_id),
+            default => abort(404),
+        };
+        $summary = $this->subjects->summary($type, $subject, (int) $conversation->subject_id);
+
+        $fields = match ($type) {
+            'service_order' => [
+                ['label' => 'Khách hàng', 'value' => $subject->user?->username],
+                ['label' => 'Dịch vụ', 'value' => $subject->service?->name],
+                ['label' => 'Tài khoản', 'value' => $subject->account],
+                ['label' => 'Giá dịch vụ', 'value' => number_format((float) $subject->service_price, 0, ',', '.').' đ'],
+                ['label' => 'Người nhận', 'value' => $subject->receiver?->username],
+                ['label' => 'Mô tả', 'value' => $subject->description],
+            ],
+            'nick_order' => [
+                ['label' => 'Người mua', 'value' => $subject->buyer?->username],
+                ['label' => 'Người bán', 'value' => $subject->seller?->username],
+                ['label' => 'Danh mục', 'value' => $subject->nick?->category?->name],
+                ['label' => 'Tài khoản', 'value' => $subject->nick?->account_name],
+                ['label' => 'Giá bán', 'value' => number_format((float) $subject->price, 0, ',', '.').' đ'],
+            ],
+            'gold_transaction' => [
+                ['label' => 'Khách hàng', 'value' => $subject->user?->username],
+                ['label' => 'Máy chủ', 'value' => $subject->server?->name_view ?? $subject->server?->name],
+                ['label' => 'Nhân vật', 'value' => $subject->character_name],
+                ['label' => 'Số vàng', 'value' => number_format((float) $subject->gold_qty, 0, ',', '.')],
+                ['label' => 'Thành tiền', 'value' => number_format((float) $subject->amount_vnd, 0, ',', '.').' đ'],
+                ['label' => 'Bot xử lý', 'value' => $subject->bot?->name],
+                ['label' => 'Lý do hủy', 'value' => $subject->cancel_reason],
+            ],
+            'gem_transaction' => [
+                ['label' => 'Khách hàng', 'value' => $subject->user?->username],
+                ['label' => 'Máy chủ', 'value' => $subject->server?->name_view ?? $subject->server?->name],
+                ['label' => 'Nhân vật', 'value' => $subject->character_name],
+                ['label' => 'Số ngọc', 'value' => number_format((float) $subject->gem_qty, 0, ',', '.')],
+                ['label' => 'Thành tiền', 'value' => number_format((float) $subject->amount_vnd, 0, ',', '.').' đ'],
+            ],
+            default => [],
+        };
+
+        return [
+            'type' => $type,
+            'id' => (int) $subject->getKey(),
+            'label' => $summary['label'] ?? 'Đơn liên quan',
+            'description' => $summary['description'] ?? null,
+            'status' => $subject->getAttribute('status'),
+            'fields' => array_values(array_filter(
+                $fields,
+                fn (array $field): bool => $field['value'] !== null && $field['value'] !== '',
+            )),
+            'created_at' => $subject->getAttribute('created_at')?->toIso8601String(),
+            'updated_at' => $subject->getAttribute('updated_at')?->toIso8601String(),
         ];
     }
 
@@ -427,5 +561,83 @@ class ChatController extends Controller
                 ->orWhereHas('conversation', fn (Builder $conversation) => $conversation
                     ->where('customer_id', '!=', $user->getKey())))
             ->count();
+    }
+
+    /** @return array<string, int> */
+    private function conversationCountsByStatus(Builder $conversationQuery): array
+    {
+        $counts = (clone $conversationQuery)
+            ->reorder()
+            ->select('chat_conversations.status')
+            ->selectRaw('COUNT(*) AS aggregate')
+            ->groupBy('chat_conversations.status')
+            ->pluck('aggregate', 'status');
+
+        return collect($this->conversationStatuses())
+            ->mapWithKeys(fn (string $status): array => [$status => (int) ($counts[$status] ?? 0)])
+            ->all();
+    }
+
+    /** @return array<string, int> */
+    private function unreadCountsByStatus(Builder $conversationQuery, User $user): array
+    {
+        $conversationIds = (clone $conversationQuery)
+            ->reorder()
+            ->select('chat_conversations.id');
+
+        $counts = ChatMessage::query()
+            ->join('chat_conversations', 'chat_conversations.id', '=', 'chat_messages.conversation_id')
+            ->whereIn('chat_messages.conversation_id', $conversationIds)
+            ->where(fn (Builder $messages) => $messages
+                ->whereNull('chat_messages.sender_id')
+                ->orWhere('chat_messages.sender_id', '!=', $user->getKey()))
+            ->whereRaw(
+                'chat_messages.id > COALESCE((SELECT chat_participants.last_read_message_id FROM chat_participants WHERE chat_participants.conversation_id = chat_messages.conversation_id AND chat_participants.user_id = ? LIMIT 1), 0)',
+                [$user->getKey()],
+            )
+            ->where(fn (Builder $messages) => $messages
+                ->where('chat_messages.is_internal', false)
+                ->orWhere('chat_conversations.customer_id', '!=', $user->getKey()))
+            ->select('chat_conversations.status')
+            ->selectRaw('COUNT(*) AS aggregate')
+            ->groupBy('chat_conversations.status')
+            ->pluck('aggregate', 'status');
+
+        return collect($this->conversationStatuses())
+            ->mapWithKeys(fn (string $status): array => [$status => (int) ($counts[$status] ?? 0)])
+            ->all();
+    }
+
+    /**
+     * @param  array<string, int>  $counts
+     * @return array<string, int>
+     */
+    private function groupedConversationCounts(array $counts): array
+    {
+        $active = $counts[ChatConversation::STATUS_WAITING_AGENT]
+            + $counts[ChatConversation::STATUS_WAITING_CUSTOMER];
+        $completed = $counts[ChatConversation::STATUS_RESOLVED]
+            + $counts[ChatConversation::STATUS_CLOSED];
+
+        return [
+            'all' => $active + $completed,
+            'active' => $active,
+            'completed' => $completed,
+            ChatConversation::STATUS_WAITING_AGENT => $counts[ChatConversation::STATUS_WAITING_AGENT],
+            ChatConversation::STATUS_WAITING_CUSTOMER => $counts[ChatConversation::STATUS_WAITING_CUSTOMER],
+            ChatConversation::STATUS_RESOLVED => $counts[ChatConversation::STATUS_RESOLVED],
+            ChatConversation::STATUS_CLOSED => $counts[ChatConversation::STATUS_CLOSED],
+        ];
+    }
+
+    /** @return list<string> */
+    private function conversationStatuses(): array
+    {
+        return [
+            ChatConversation::STATUS_WAITING_AGENT,
+            ChatConversation::STATUS_WAITING_CUSTOMER,
+            ChatConversation::STATUS_RESOLVED,
+            ChatConversation::STATUS_CLOSED,
+        ];
     }
 }

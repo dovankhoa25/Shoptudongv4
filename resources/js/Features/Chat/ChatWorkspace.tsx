@@ -1,13 +1,16 @@
 import { FormEvent, KeyboardEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, usePage } from '@inertiajs/react';
 import { echo } from '@laravel/echo-react';
+import { Modal } from 'antd';
 import {
     ArrowLeft,
     CheckCheck,
+    ChevronDown,
     ChevronRight,
     CircleUserRound,
     Clock3,
     ExternalLink,
+    Eye,
     Headphones,
     Inbox,
     LoaderCircle,
@@ -21,6 +24,7 @@ import {
     UserRoundCheck,
 } from 'lucide-react';
 import type { PageProps } from '@/types';
+import UserAvatar from '@/Components/UserAvatar';
 import type {
     ChatConversation,
     ChatMessage,
@@ -76,6 +80,45 @@ interface OptimisticReadRollback {
 interface ReadRetryState {
     checkpoint: number;
     failures: number;
+}
+
+type ChatInboxView = 'active' | 'completed';
+type CompletedPeriod = '7d' | '30d' | '90d' | 'all';
+
+interface ChatConversationCounts {
+    all?: number;
+    active?: number;
+    completed?: number;
+    waiting_agent?: number;
+    waiting_customer?: number;
+    resolved?: number;
+    closed?: number;
+}
+
+interface CompletionUndo {
+    conversationId: number;
+    conversationTitle: string;
+    previousStatus: Extract<ChatConversation['status'], 'waiting_agent' | 'waiting_customer'>;
+    completedStatus: Extract<ChatConversation['status'], 'resolved' | 'closed'>;
+}
+
+type ChatConversationListResponse = Omit<PaginatedChatConversations, 'meta'> & {
+    counts?: ChatConversationCounts;
+    unread_counts?: ChatConversationCounts;
+    meta?: PaginatedChatConversations['meta'] & {
+        counts?: ChatConversationCounts;
+    };
+};
+
+interface RelatedOrderDetail {
+    type: string;
+    id: number;
+    label: string;
+    description?: string | null;
+    status?: string | null;
+    fields: Array<{ label: string; value: string | number }>;
+    created_at?: string | null;
+    updated_at?: string | null;
 }
 
 type RealtimeConnectionStatus = 'connecting' | 'connected' | 'disconnected';
@@ -195,23 +238,180 @@ function mergeMessages(current: ChatMessage[], incoming: ChatMessage | ChatMessa
     });
 }
 
-function sortConversations(conversations: ChatConversation[]): ChatConversation[] {
+function statusBelongsToView(status: ChatConversation['status'], view: ChatInboxView): boolean {
+    return view === 'active'
+        ? status === 'waiting_agent' || status === 'waiting_customer'
+        : status === 'resolved' || status === 'closed';
+}
+
+function sortConversations(conversations: ChatConversation[], view?: ChatInboxView): ChatConversation[] {
     return [...conversations].sort((left, right) => {
-        const leftTime = new Date(left.last_message_at ?? left.updated_at ?? left.created_at).getTime();
-        const rightTime = new Date(right.last_message_at ?? right.updated_at ?? right.created_at).getTime();
+        if (view === 'active') {
+            const waitingAgentDifference = Number(right.status === 'waiting_agent') - Number(left.status === 'waiting_agent');
+            if (waitingAgentDifference !== 0) return waitingAgentDifference;
+
+            const unreadDifference = right.unread_count - left.unread_count;
+            if (unreadDifference !== 0) return unreadDifference;
+        }
+
+        const leftTime = new Date(view === 'completed'
+            ? left.resolved_at ?? left.updated_at ?? left.created_at
+            : left.last_message_at ?? left.updated_at ?? left.created_at).getTime();
+        const rightTime = new Date(view === 'completed'
+            ? right.resolved_at ?? right.updated_at ?? right.created_at
+            : right.last_message_at ?? right.updated_at ?? right.created_at).getTime();
         return rightTime - leftTime || right.id - left.id;
     });
 }
 
 function Avatar({ user, className = 'h-9 w-9' }: { user?: ChatUser | null; className?: string }) {
-    if (user?.avatar) {
-        return <img src={user.avatar} alt="" className={`${className} rounded-full object-cover ring-1 ring-white/60 dark:ring-slate-700`} />;
-    }
+    return <UserAvatar user={user} className={className} />;
+}
+
+function AssigneePicker({
+    agents,
+    selected,
+    disabled,
+    onChange,
+}: {
+    agents: ChatUser[];
+    selected?: ChatUser | null;
+    disabled: boolean;
+    onChange: (value: string) => void;
+}) {
+    const [open, setOpen] = useState(false);
+    const [query, setQuery] = useState('');
+    const containerRef = useRef<HTMLDivElement | null>(null);
+    const normalizedQuery = query.trim().toLocaleLowerCase('vi-VN');
+    const filteredAgents = useMemo(() => agents.filter(agent => {
+        if (!normalizedQuery) return true;
+        return agent.username.toLocaleLowerCase('vi-VN').includes(normalizedQuery)
+            || agent.roles?.some(role => role.toLocaleLowerCase('vi-VN').includes(normalizedQuery));
+    }), [agents, normalizedQuery]);
+
+    useEffect(() => {
+        if (!open) return;
+        const closeOnOutsideClick = (event: MouseEvent) => {
+            if (!containerRef.current?.contains(event.target as Node)) setOpen(false);
+        };
+        const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+            if (event.key === 'Escape') setOpen(false);
+        };
+        document.addEventListener('mousedown', closeOnOutsideClick);
+        document.addEventListener('keydown', closeOnEscape);
+        return () => {
+            document.removeEventListener('mousedown', closeOnOutsideClick);
+            document.removeEventListener('keydown', closeOnEscape);
+        };
+    }, [open]);
+
+    const selectAgent = (value: string) => {
+        onChange(value);
+        setOpen(false);
+        setQuery('');
+    };
 
     return (
-        <span className={`${className} grid shrink-0 place-items-center rounded-full bg-gradient-to-br from-indigo-500 to-cyan-500 font-semibold text-white shadow-sm`}>
-            {(user?.username?.[0] ?? 'H').toUpperCase()}
-        </span>
+        <div ref={containerRef} className="relative">
+            <button
+                type="button"
+                disabled={disabled}
+                onClick={() => setOpen(value => !value)}
+                aria-haspopup="listbox"
+                aria-expanded={open}
+                className="flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-sm transition hover:border-indigo-300 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-indigo-500"
+            >
+                <Avatar user={selected} className="h-7 w-7 text-[10px]" />
+                <span className="min-w-0 flex-1 truncate text-slate-700 dark:text-slate-200">{selected?.username ?? 'Chưa phân công'}</span>
+                <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition ${open ? 'rotate-180' : ''}`} />
+            </button>
+
+            {open && (
+                <div className="absolute left-0 right-0 z-40 mt-2 min-w-[15rem] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900">
+                    <div className="border-b border-slate-100 p-2 dark:border-slate-800">
+                        <label className="relative block">
+                            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                            <input
+                                autoFocus
+                                value={query}
+                                onChange={event => setQuery(event.target.value)}
+                                placeholder="Tìm tên hoặc vai trò…"
+                                className="w-full rounded-lg border-slate-200 py-2 pl-8 pr-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+                            />
+                        </label>
+                    </div>
+                    <div role="listbox" className="max-h-64 overflow-y-auto p-1.5">
+                        <button
+                            type="button"
+                            role="option"
+                            aria-selected={!selected}
+                            onClick={() => selectAgent('')}
+                            className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+                        >
+                            <Avatar user={null} className="h-7 w-7 text-[10px]" />
+                            Chưa phân công
+                        </button>
+                        {filteredAgents.map(agent => (
+                            <button
+                                key={agent.id}
+                                type="button"
+                                role="option"
+                                aria-selected={selected?.id === agent.id}
+                                onClick={() => selectAgent(String(agent.id))}
+                                className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left transition ${selected?.id === agent.id ? 'bg-indigo-50 dark:bg-indigo-500/10' : 'hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+                            >
+                                <Avatar user={agent} className="h-8 w-8 text-[10px]" />
+                                <span className="min-w-0 flex-1">
+                                    <strong className="block truncate text-sm font-medium text-slate-800 dark:text-slate-100">{agent.username}</strong>
+                                    <span className="block truncate text-[11px] text-slate-500">{agent.roles?.join(', ') || 'Nhân viên hỗ trợ'}</span>
+                                </span>
+                                {selected?.id === agent.id && <CheckCheck className="h-4 w-4 text-emerald-500" />}
+                            </button>
+                        ))}
+                        {filteredAgents.length === 0 && <p className="px-3 py-5 text-center text-xs text-slate-500">Không tìm thấy người phù hợp.</p>}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+function RelatedOrderModal({ detail, onClose }: { detail: RelatedOrderDetail | null; onClose: () => void }) {
+    return (
+        <Modal
+            open={detail !== null}
+            onCancel={onClose}
+            footer={null}
+            width={620}
+            title={detail?.label ?? 'Chi tiết đơn liên quan'}
+            destroyOnHidden
+        >
+            {detail && (
+                <div className="pt-2">
+                    <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-indigo-50 px-4 py-3 dark:bg-indigo-500/10">
+                        <div>
+                            <p className="text-sm font-semibold text-slate-900 dark:text-white">{detail.description || detail.label}</p>
+                            <p className="mt-0.5 text-xs text-slate-500">Mã đơn #{detail.id}</p>
+                        </div>
+                        {detail.status && <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-indigo-700 shadow-sm dark:bg-slate-900 dark:text-indigo-300">{detail.status}</span>}
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                        {detail.fields.map(field => (
+                            <div key={field.label} className="rounded-xl border border-slate-200 px-3 py-2.5 dark:border-slate-700">
+                                <span className="block text-[11px] font-semibold uppercase tracking-wide text-slate-400">{field.label}</span>
+                                <span className="mt-1 block break-words text-sm font-medium text-slate-800 dark:text-slate-100">{field.value}</span>
+                            </div>
+                        ))}
+                    </div>
+                    {(detail.created_at || detail.updated_at) && (
+                        <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 border-t border-slate-100 pt-3 text-xs text-slate-500 dark:border-slate-800">
+                            {detail.created_at && <span>Tạo lúc: {formatTime(detail.created_at)}</span>}
+                            {detail.updated_at && <span>Cập nhật: {formatTime(detail.updated_at)}</span>}
+                        </div>
+                    )}
+                </div>
+            )}
+        </Modal>
     );
 }
 
@@ -299,6 +499,11 @@ export default function ChatWorkspace({
     const [agents, setAgents] = useState<ChatUser[]>([]);
     const [search, setSearch] = useState('');
     const [status, setStatus] = useState('');
+    const [inboxView, setInboxView] = useState<ChatInboxView>('active');
+    const [completedPeriod, setCompletedPeriod] = useState<CompletedPeriod>('all');
+    const [conversationCounts, setConversationCounts] = useState<ChatConversationCounts>({});
+    const [conversationTotal, setConversationTotal] = useState(0);
+    const [completionUndo, setCompletionUndo] = useState<CompletionUndo | null>(null);
     const [assignment, setAssignment] = useState(mode === 'agent' && !isAdminInbox ? 'mine' : '');
     const [creating, setCreating] = useState(false);
     const [loadingList, setLoadingList] = useState(true);
@@ -310,6 +515,8 @@ export default function ChatWorkspace({
     const [hasMoreMessages, setHasMoreMessages] = useState(false);
     const [sending, setSending] = useState(false);
     const [actionLoading, setActionLoading] = useState(false);
+    const [subjectDetailLoading, setSubjectDetailLoading] = useState(false);
+    const [relatedOrderDetail, setRelatedOrderDetail] = useState<RelatedOrderDetail | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [draft, setDraft] = useState('');
     const [internalNote, setInternalNote] = useState(false);
@@ -319,9 +526,11 @@ export default function ChatWorkspace({
         assignment: mode === 'agent' ? assignment : '',
         baseUrl,
         perPage: conversationPerPage,
+        period: mode === 'agent' && inboxView === 'completed' ? completedPeriod : '',
         search,
         status,
-    }), [assignment, baseUrl, conversationPerPage, mode, search, status]);
+        view: mode === 'agent' ? inboxView : '',
+    }), [assignment, baseUrl, completedPeriod, conversationPerPage, inboxView, mode, search, status]);
     const messagesEndRef = useRef<HTMLDivElement | null>(null);
     const messageScrollRef = useRef<HTMLDivElement | null>(null);
     const preservingHistoryScrollRef = useRef(false);
@@ -341,6 +550,7 @@ export default function ChatWorkspace({
     const selectedRef = useRef<ChatConversation | null>(selected);
     const messagesRef = useRef<ChatMessage[]>(messages);
     const unreadTotalRef = useRef(unreadTotal);
+    const fetchConversationsRef = useRef<(quiet?: boolean) => Promise<void>>(async () => undefined);
     const realtimeRefreshTimerRef = useRef<number | null>(null);
     const readTimersRef = useRef<Map<number, number>>(new Map());
     const pendingReadIdsRef = useRef<Map<number, number>>(new Map());
@@ -365,6 +575,12 @@ export default function ChatWorkspace({
     const commitSelected = useCallback((next: ChatConversation | null) => {
         selectedRef.current = next;
         setSelected(next);
+    }, []);
+
+    const clearSelection = useCallback(() => {
+        selectedIdRef.current = null;
+        openRequestRef.current += 1;
+        setSelectedId(null);
     }, []);
 
     const recordConversationListSnapshot = useCallback((items: ChatConversation[]) => {
@@ -437,6 +653,16 @@ export default function ChatWorkspace({
         unreadTotalRef.current = unreadTotal;
     }, [unreadTotal]);
 
+    useEffect(() => {
+        if (!completionUndo) return;
+        const conversationId = completionUndo.conversationId;
+        const timer = window.setTimeout(() => {
+            setCompletionUndo(current => current?.conversationId === conversationId ? null : current);
+        }, 5000);
+
+        return () => window.clearTimeout(timer);
+    }, [completionUndo]);
+
     useEffect(() => () => {
         openRequestRef.current += 1;
         conversationListGenerationRef.current += 1;
@@ -487,11 +713,13 @@ export default function ChatWorkspace({
         setLoadingMoreConversations(false);
         if (!quiet) setLoadingList(true);
         try {
-            const response = await window.axios.get<PaginatedChatConversations>(`${baseUrl}/conversations`, {
+            const response = await window.axios.get<ChatConversationListResponse>(`${baseUrl}/conversations`, {
                 params: {
                     search: search || undefined,
                     status: status || undefined,
                     assignment: mode === 'agent' ? assignment || undefined : undefined,
+                    view: mode === 'agent' ? inboxView : undefined,
+                    period: mode === 'agent' && inboxView === 'completed' ? completedPeriod : undefined,
                     per_page: conversationPerPage,
                 },
                 signal: controller.signal,
@@ -499,12 +727,20 @@ export default function ChatWorkspace({
             if (controller.signal.aborted
                 || requestGeneration !== conversationListGenerationRef.current
                 || requestSignature !== conversationFilterSignatureRef.current) return;
-
-            recordConversationListSnapshot(response.data.data);
-            setConversations(response.data.data);
-            conversationsRef.current = response.data.data;
+            const visibleConversations = mode === 'agent'
+                ? response.data.data.filter(conversation => statusBelongsToView(conversation.status, inboxView))
+                : response.data.data;
+            const nextConversations = sortConversations(
+                visibleConversations,
+                mode === 'agent' ? inboxView : undefined,
+            );
+            recordConversationListSnapshot(nextConversations);
+            setConversations(nextConversations);
+            conversationsRef.current = nextConversations;
             unreadTotalRef.current = response.data.unread_total;
             setUnreadTotal(response.data.unread_total);
+            setConversationCounts(response.data.counts ?? response.data.meta?.counts ?? {});
+            setConversationTotal(response.data.meta?.total ?? nextConversations.length);
             setConversationPage(response.data.meta?.current_page ?? 1);
             setConversationLastPage(response.data.meta?.last_page ?? 1);
             setError(null);
@@ -522,7 +758,8 @@ export default function ChatWorkspace({
                 if (conversationListAbortRef.current === controller) conversationListAbortRef.current = null;
             }
         }
-    }, [assignment, baseUrl, conversationFilterSignature, conversationPerPage, initialConversationId, mode, recordConversationListSnapshot, search, status]);
+    }, [assignment, baseUrl, completedPeriod, conversationFilterSignature, conversationPerPage, inboxView, initialConversationId, mode, recordConversationListSnapshot, search, status]);
+    fetchConversationsRef.current = fetchConversations;
 
     useEffect(() => {
         conversationListGenerationRef.current += 1;
@@ -749,9 +986,9 @@ export default function ChatWorkspace({
         if (realtimeRefreshTimerRef.current !== null) window.clearTimeout(realtimeRefreshTimerRef.current);
         realtimeRefreshTimerRef.current = window.setTimeout(() => {
             realtimeRefreshTimerRef.current = null;
-            void fetchConversations(true);
+            void fetchConversationsRef.current(true);
         }, 100);
-    }, [fetchConversations]);
+    }, []);
 
     const openConversation = useCallback(async (conversationId: number) => {
         selectedIdRef.current = conversationId;
@@ -856,11 +1093,13 @@ export default function ChatWorkspace({
         conversationMoreAbortRef.current = controller;
         setLoadingMoreConversations(true);
         try {
-            const response = await window.axios.get<PaginatedChatConversations>(`${baseUrl}/conversations`, {
+            const response = await window.axios.get<ChatConversationListResponse>(`${baseUrl}/conversations`, {
                 params: {
                     search: search || undefined,
                     status: status || undefined,
                     assignment: mode === 'agent' ? assignment || undefined : undefined,
+                    view: mode === 'agent' ? inboxView : undefined,
+                    period: mode === 'agent' && inboxView === 'completed' ? completedPeriod : undefined,
                     per_page: conversationPerPage,
                     page: requestPage,
                 },
@@ -869,20 +1108,24 @@ export default function ChatWorkspace({
             if (controller.signal.aborted
                 || requestGeneration !== conversationMoreGenerationRef.current
                 || requestSignature !== conversationFilterSignatureRef.current) return;
-
-            recordConversationListSnapshot(response.data.data);
+            const visibleConversations = mode === 'agent'
+                ? response.data.data.filter(conversation => statusBelongsToView(conversation.status, inboxView))
+                : response.data.data;
+            recordConversationListSnapshot(visibleConversations);
             setConversations(previous => {
-                const snapshotsById = new Map(response.data.data.map(conversation => [conversation.id, conversation]));
+                const snapshotsById = new Map(visibleConversations.map(conversation => [conversation.id, conversation]));
                 const existingIds = new Set(previous.map(conversation => conversation.id));
-                const next = [
+                const next = sortConversations([
                     ...previous.map(conversation => snapshotsById.get(conversation.id) ?? conversation),
-                    ...response.data.data.filter(conversation => !existingIds.has(conversation.id)),
-                ];
+                    ...visibleConversations.filter(conversation => !existingIds.has(conversation.id)),
+                ], mode === 'agent' ? inboxView : undefined);
                 conversationsRef.current = next;
                 return next;
             });
             unreadTotalRef.current = response.data.unread_total;
             setUnreadTotal(response.data.unread_total);
+            setConversationCounts(response.data.counts ?? response.data.meta?.counts ?? {});
+            setConversationTotal(response.data.meta?.total ?? conversationTotal);
             setConversationPage(response.data.meta?.current_page ?? requestPage);
             setConversationLastPage(response.data.meta?.last_page ?? conversationLastPage);
         } catch (requestError) {
@@ -973,6 +1216,7 @@ export default function ChatWorkspace({
     }, []);
 
     const matchesActiveFilters = useCallback((summary: ChatConversationRealtimeSummary) => {
+        if (mode === 'agent' && !statusBelongsToView(summary.status, inboxView)) return false;
         if (status && summary.status !== status) return false;
         if (mode !== 'agent' || !isAdminInbox) return true;
         if (assignment === 'mine' && summary.assigned_to_id !== undefined) {
@@ -982,7 +1226,7 @@ export default function ChatWorkspace({
             return summary.assigned_to_id === null;
         }
         return true;
-    }, [assignment, currentUserId, isAdminInbox, mode, status]);
+    }, [assignment, currentUserId, inboxView, isAdminInbox, mode, status]);
 
     const updateConversationFromMessage = useCallback((
         incoming: ChatMessage,
@@ -1042,7 +1286,11 @@ export default function ChatWorkspace({
             if (isSelected && currentSelected) {
                 commitSelected(applyMessageToConversation(currentSelected, incoming, fallbackSummary));
             }
-            if (matchesActiveFilters(fallbackSummary)) scheduleConversationRefresh();
+            // Tin nhắn vẫn được hiển thị trực tiếp bằng realtime. Chỉ tải lại danh sách
+            // đã debounce để đối soát số lượng tab và các hội thoại vừa đổi nhóm.
+            if ((!incoming.is_internal && incoming.id > 0) || matchesActiveFilters(fallbackSummary)) {
+                scheduleConversationRefresh();
+            }
             return;
         }
 
@@ -1073,6 +1321,7 @@ export default function ChatWorkspace({
             isNewestKnownMessage
         );
         const mine = isMessageMine(incoming, currentUserId);
+        const isOptimisticMessage = incoming.delivery_state !== undefined;
         const isActivelyViewed = isSelected && isPageActive() && messageNearBottomRef.current;
         const nextUnread = isActivelyViewed
             ? 0
@@ -1080,6 +1329,7 @@ export default function ChatWorkspace({
                 ? existing.unread_count
                 : existing.unread_count + 1;
         const nextStatus = isLatestPublicMessage ? fallbackSummary.status : existing.status;
+        if (!isOptimisticMessage && nextStatus !== existing.status) scheduleConversationRefresh();
         const nextAssignee = fallbackSummary.assignee !== undefined && isNewestKnownMessage
             ? fallbackSummary.assignee
             : fallbackSummary.assigned_to_id === currentUserId && !existing.assignee
@@ -1108,26 +1358,28 @@ export default function ChatWorkspace({
             unread_count: nextUnread,
         };
         const unreadDelta = nextUnread - existing.unread_count;
-        const remainsVisible = matchesActiveFilters(effectiveSummary);
+        // Giữ hội thoại tại chỗ trong lúc gửi lạc quan để có thể hoàn nguyên đầy đủ nếu POST thất bại.
+        const remainsVisible = isOptimisticMessage || matchesActiveFilters(effectiveSummary);
         const nextConversations = remainsVisible
             ? sortConversations([
                 nextConversation,
                 ...conversationsRef.current.filter(item => item.id !== incoming.conversation_id),
-            ])
+            ], mode === 'agent' ? inboxView : undefined)
             : conversationsRef.current.filter(item => item.id !== incoming.conversation_id);
 
         conversationsRef.current = nextConversations;
         setConversations(nextConversations);
         applyUnreadDelta(remainsVisible ? unreadDelta : -existing.unread_count);
 
-        if (isSelected && currentSelected) {
+        if (isSelected && !remainsVisible) clearSelection();
+        if (isSelected && currentSelected && remainsVisible) {
             commitSelected(applyMessageToConversation(currentSelected, incoming, {
                 ...fallbackSummary,
                 status: nextStatus,
                 assignee: nextAssignee,
             }));
         }
-    }, [applyUnreadDelta, commitSelected, currentUserId, matchesActiveFilters, scheduleConversationRefresh]);
+    }, [applyUnreadDelta, clearSelection, commitSelected, currentUserId, inboxView, matchesActiveFilters, mode, scheduleConversationRefresh]);
 
     const recoverMissingMessages = useCallback(async () => {
         const conversationId = selectedIdRef.current;
@@ -1366,18 +1618,25 @@ export default function ChatWorkspace({
     const handleInboxChange = useCallback((event: ChatInboxEvent) => {
         if (event.action === 'message') return;
         const existing = conversationsRef.current.find(item => item.id === event.conversation.id);
+        const remainsVisible = matchesActiveFilters(event.conversation);
         if (existing) {
             const patched = { ...existing, ...event.conversation } as ChatConversation;
-            const next = matchesActiveFilters(event.conversation)
-                ? sortConversations([patched, ...conversationsRef.current.filter(item => item.id !== patched.id)])
+            const next = remainsVisible
+                ? sortConversations(
+                    [patched, ...conversationsRef.current.filter(item => item.id !== patched.id)],
+                    mode === 'agent' ? inboxView : undefined,
+                )
                 : conversationsRef.current.filter(item => item.id !== patched.id);
             conversationsRef.current = next;
             setConversations(next);
-            if (!matchesActiveFilters(event.conversation)) applyUnreadDelta(-existing.unread_count);
+            if (!remainsVisible) applyUnreadDelta(-existing.unread_count);
         }
         scheduleConversationRefresh();
-        if (selectedIdRef.current === event.conversation.id) void openConversation(event.conversation.id);
-    }, [applyUnreadDelta, matchesActiveFilters, openConversation, scheduleConversationRefresh]);
+        if (selectedIdRef.current === event.conversation.id) {
+            if (remainsVisible) void openConversation(event.conversation.id);
+            else clearSelection();
+        }
+    }, [applyUnreadDelta, clearSelection, inboxView, matchesActiveFilters, mode, openConversation, scheduleConversationRefresh]);
 
     const createConversation = async (context?: ChatSubject) => {
         setActionLoading(true);
@@ -1532,7 +1791,7 @@ export default function ChatWorkspace({
                     const next = sortConversations([
                         restored,
                         ...conversationsRef.current.filter(item => item.id !== conversationId),
-                    ]);
+                    ], mode === 'agent' ? inboxView : undefined);
                     conversationsRef.current = next;
                     setConversations(next);
                     applyUnreadDelta(unreadDelta);
@@ -1593,6 +1852,9 @@ export default function ChatWorkspace({
     const updateConversationStatus = async (value: ChatConversation['status']) => {
         if (!selected) return;
         const conversationId = selected.id;
+        const previousStatus = selected.status;
+        const title = conversationTitle(selected, mode);
+        const requestFilterSignature = conversationFilterSignature;
         const requestMessageCheckpoint = latestKnownMessageIdsRef.current.get(conversationId) ?? 0;
         setActionLoading(true);
         try {
@@ -1600,21 +1862,163 @@ export default function ChatWorkspace({
                 `${baseUrl}/conversations/${conversationId}/status`,
                 { status: value },
             );
-            if (selectedIdRef.current === conversationId) {
-                commitSelected(mergeConversationSnapshot(
-                    conversationId,
-                    response.data.data,
-                    [],
-                    requestMessageCheckpoint,
-                ));
+            const patchedConversation = mergeConversationSnapshot(
+                conversationId,
+                response.data.data,
+                [],
+                requestMessageCheckpoint,
+            );
+            const remainsVisible = matchesActiveFilters({
+                ...patchedConversation,
+                assigned_to_id: patchedConversation.assignee?.id ?? null,
+            });
+            if (requestFilterSignature === conversationFilterSignatureRef.current) {
+                const existing = conversationsRef.current.find(item => item.id === conversationId);
+                const nextConversations = remainsVisible
+                    ? sortConversations(
+                        [patchedConversation, ...conversationsRef.current.filter(item => item.id !== conversationId)],
+                        mode === 'agent' ? inboxView : undefined,
+                    )
+                    : conversationsRef.current.filter(item => item.id !== conversationId);
+                conversationsRef.current = nextConversations;
+                setConversations(nextConversations);
+                if (!remainsVisible && existing) applyUnreadDelta(-existing.unread_count);
+
+                if (selectedIdRef.current === conversationId) {
+                    if (remainsVisible) commitSelected(patchedConversation);
+                    else clearSelection();
+                }
             }
-            await fetchConversations(true);
+            if ((previousStatus === 'waiting_agent' || previousStatus === 'waiting_customer')
+                && (value === 'resolved' || value === 'closed')) {
+                setCompletionUndo({
+                    conversationId,
+                    conversationTitle: title,
+                    previousStatus,
+                    completedStatus: value,
+                });
+            }
+            scheduleConversationRefresh();
         } catch (requestError) {
             setError(errorMessage(requestError));
         } finally {
             setActionLoading(false);
         }
     };
+
+    const undoCompletedConversation = async () => {
+        if (!completionUndo || actionLoading) return;
+        const pendingUndo = completionUndo;
+        const requestFilterSignature = conversationFilterSignature;
+        setCompletionUndo(null);
+        setActionLoading(true);
+        setError(null);
+        try {
+            const response = await window.axios.patch<{ data: ChatConversation }>(
+                `${baseUrl}/conversations/${pendingUndo.conversationId}/status`,
+                { status: pendingUndo.previousStatus },
+            );
+            const restoredConversation = response.data.data;
+            const remainsVisible = matchesActiveFilters({
+                ...restoredConversation,
+                assigned_to_id: restoredConversation.assignee?.id ?? null,
+            });
+            if (requestFilterSignature === conversationFilterSignatureRef.current) {
+                const nextConversations = remainsVisible
+                    ? sortConversations([
+                        restoredConversation,
+                        ...conversationsRef.current.filter(item => item.id !== restoredConversation.id),
+                    ], mode === 'agent' ? inboxView : undefined)
+                    : conversationsRef.current.filter(item => item.id !== restoredConversation.id);
+                conversationsRef.current = nextConversations;
+                setConversations(nextConversations);
+                if (selectedIdRef.current === restoredConversation.id) {
+                    if (remainsVisible) commitSelected(restoredConversation);
+                    else clearSelection();
+                }
+            }
+            scheduleConversationRefresh();
+        } catch (requestError) {
+            setCompletionUndo(pendingUndo);
+            setError(errorMessage(requestError));
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    const viewRelatedOrder = async () => {
+        if (!selected || !selected.subject_type) return;
+        const conversationId = selected.id;
+        setSubjectDetailLoading(true);
+        try {
+            const response = await window.axios.get<{ data: RelatedOrderDetail }>(
+                `${baseUrl}/conversations/${conversationId}/subject`,
+            );
+            if (selectedIdRef.current === conversationId) setRelatedOrderDetail(response.data.data);
+        } catch (requestError) {
+            setError(errorMessage(requestError));
+        } finally {
+            setSubjectDetailLoading(false);
+        }
+    };
+
+    const prepareForListFilterChange = () => {
+        clearSelection();
+        conversationsRef.current = [];
+        setConversations([]);
+        setConversationPage(1);
+        setConversationLastPage(1);
+        setLoadingList(true);
+    };
+
+    const changeInboxView = (nextView: ChatInboxView) => {
+        if (nextView === inboxView) return;
+        prepareForListFilterChange();
+        setStatus('');
+        setInboxView(nextView);
+    };
+
+    const countForView = (view: ChatInboxView): number | undefined => {
+        const directCount = conversationCounts[view];
+        if (typeof directCount === 'number') return directCount;
+
+        const statusKeys: ChatConversation['status'][] = view === 'active'
+            ? ['waiting_agent', 'waiting_customer']
+            : ['resolved', 'closed'];
+        const statusCounts = statusKeys.map(key => conversationCounts[key]);
+        if (statusCounts.every((count): count is number => typeof count === 'number')) {
+            return statusCounts.reduce((total, count) => total + count, 0);
+        }
+        if (view === inboxView && !status && !loadingList) return conversationTotal;
+        return undefined;
+    };
+
+    const conversationGroups = mode === 'agent' && inboxView === 'active' && !status
+        ? [
+            {
+                key: 'waiting_agent',
+                label: 'Cần trả lời',
+                items: conversations.filter(conversation => conversation.status === 'waiting_agent'),
+                labelClassName: 'text-amber-700 dark:text-amber-300',
+                countClassName: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300',
+            },
+            {
+                key: 'waiting_customer',
+                label: 'Đang chờ khách',
+                items: conversations.filter(conversation => conversation.status === 'waiting_customer'),
+                labelClassName: 'text-sky-700 dark:text-sky-300',
+                countClassName: 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300',
+            },
+        ]
+        : [{
+            key: 'all',
+            label: null,
+            items: conversations,
+            labelClassName: '',
+            countClassName: '',
+        }];
+    const activeConversationCount = countForView('active');
+    const completedConversationCount = countForView('completed');
 
     return (
         <section className={`relative isolate flex min-h-0 overflow-hidden bg-white dark:bg-slate-950 ${compact
@@ -1662,28 +2066,89 @@ export default function ChatWorkspace({
                     </div>
 
                     {mode === 'agent' && (
-                        <div className="mb-2 grid grid-cols-2 gap-2">
-                            <select
-                                value={assignment}
-                                onChange={event => setAssignment(event.target.value)}
-                                className="rounded-xl border-slate-200 bg-white py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
-                            >
-                                <option value="mine">Của tôi</option>
-                                {isAdminInbox && <option value="unassigned">Chưa phân công</option>}
-                                {isAdminInbox && <option value="">Tất cả</option>}
-                            </select>
-                            <select
-                                value={status}
-                                onChange={event => setStatus(event.target.value)}
-                                className="rounded-xl border-slate-200 bg-white py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
-                            >
-                                <option value="">Mọi trạng thái</option>
-                                <option value="waiting_agent">Chờ hỗ trợ</option>
-                                <option value="waiting_customer">Chờ khách</option>
-                                <option value="resolved">Đã giải quyết</option>
-                                <option value="closed">Đã đóng</option>
-                            </select>
-                        </div>
+                        <>
+                            <div role="tablist" aria-label="Nhóm hội thoại" className="mb-3 grid grid-cols-2 gap-1 rounded-xl bg-slate-200/70 p-1 dark:bg-slate-800">
+                                <button
+                                    type="button"
+                                    role="tab"
+                                    aria-selected={inboxView === 'active'}
+                                    onClick={() => changeInboxView('active')}
+                                    className={`flex min-w-0 items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-xs font-semibold transition ${inboxView === 'active'
+                                        ? 'bg-white text-indigo-700 shadow-sm dark:bg-slate-900 dark:text-indigo-300'
+                                        : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100'}`}
+                                >
+                                    <span className="truncate">Đang xử lý</span>
+                                    {activeConversationCount !== undefined && <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300">{activeConversationCount}</span>}
+                                </button>
+                                <button
+                                    type="button"
+                                    role="tab"
+                                    aria-selected={inboxView === 'completed'}
+                                    onClick={() => changeInboxView('completed')}
+                                    className={`flex min-w-0 items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-xs font-semibold transition ${inboxView === 'completed'
+                                        ? 'bg-white text-emerald-700 shadow-sm dark:bg-slate-900 dark:text-emerald-300'
+                                        : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100'}`}
+                                >
+                                    <span className="truncate">Đã hoàn tất</span>
+                                    {completedConversationCount !== undefined && <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">{completedConversationCount}</span>}
+                                </button>
+                            </div>
+
+                            <div className="mb-2 grid grid-cols-2 gap-2">
+                                <select
+                                    value={assignment}
+                                    onChange={event => {
+                                        prepareForListFilterChange();
+                                        setAssignment(event.target.value);
+                                    }}
+                                    aria-label="Lọc theo người phụ trách"
+                                    className="rounded-xl border-slate-200 bg-white py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+                                >
+                                    <option value="mine">Của tôi</option>
+                                    {isAdminInbox && <option value="unassigned">Chưa phân công</option>}
+                                    {isAdminInbox && <option value="">Tất cả</option>}
+                                </select>
+                                <select
+                                    value={status}
+                                    onChange={event => {
+                                        prepareForListFilterChange();
+                                        setStatus(event.target.value);
+                                    }}
+                                    aria-label="Lọc theo trạng thái"
+                                    className="rounded-xl border-slate-200 bg-white py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+                                >
+                                    <option value="">{inboxView === 'active' ? 'Tất cả đang xử lý' : 'Tất cả hoàn tất'}</option>
+                                    {inboxView === 'active' ? (
+                                        <>
+                                            <option value="waiting_agent">Chờ hỗ trợ</option>
+                                            <option value="waiting_customer">Chờ khách</option>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <option value="resolved">Đã giải quyết</option>
+                                            <option value="closed">Đã đóng</option>
+                                        </>
+                                    )}
+                                </select>
+                            </div>
+
+                            {inboxView === 'completed' && (
+                                <select
+                                    value={completedPeriod}
+                                    onChange={event => {
+                                        prepareForListFilterChange();
+                                        setCompletedPeriod(event.target.value as CompletedPeriod);
+                                    }}
+                                    aria-label="Lọc hội thoại hoàn tất theo thời gian"
+                                    className="mb-2 w-full rounded-xl border-slate-200 bg-white py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+                                >
+                                    <option value="7d">7 ngày gần đây</option>
+                                    <option value="30d">30 ngày gần đây</option>
+                                    <option value="90d">90 ngày gần đây</option>
+                                    <option value="all">Tất cả thời gian</option>
+                                </select>
+                            )}
+                        </>
                     )}
 
                     <label className="relative block">
@@ -1737,36 +2202,57 @@ export default function ChatWorkspace({
                         </div>
                     ) : (
                         <>
-                            {conversations.map(conversation => (
-                                <button
-                                    type="button"
-                                    key={conversation.id}
-                                    onClick={() => {
-                                        if (selectedIdRef.current === conversation.id) {
-                                            void openConversation(conversation.id);
-                                            return;
-                                        }
-                                        selectedIdRef.current = conversation.id;
-                                        openRequestRef.current += 1;
-                                        setSelectedId(conversation.id);
-                                    }}
-                                    className={`mb-1 flex w-full gap-3 rounded-xl p-3 text-left transition ${selectedId === conversation.id
-                                        ? 'bg-white shadow-sm ring-1 ring-indigo-100 dark:bg-slate-800 dark:ring-indigo-500/20'
-                                        : 'hover:bg-white/80 dark:hover:bg-slate-800/70'}`}
-                                >
-                                    <Avatar user={mode === 'agent' ? conversation.customer : conversation.assignee} />
-                                    <span className="min-w-0 flex-1">
-                                        <span className="flex items-start justify-between gap-2">
-                                            <strong className="truncate text-sm text-slate-900 dark:text-white">{conversationTitle(conversation, mode)}</strong>
-                                            <span className="shrink-0 text-[11px] text-slate-400">{formatTime(conversation.last_message_at ?? conversation.created_at)}</span>
-                                        </span>
-                                        {mode === 'agent' && conversation.subject && <span className="block truncate text-xs font-medium text-indigo-600 dark:text-indigo-300">{conversation.subject.label}</span>}
-                                        <span className="mt-1 flex items-center justify-between gap-2">
-                                            <span className="truncate text-xs text-slate-500">{conversation.last_message?.body ?? 'Chưa có tin nhắn'}</span>
-                                            {conversation.unread_count > 0 && <span className="grid min-w-5 place-items-center rounded-full bg-rose-500 px-1.5 py-0.5 text-[11px] font-bold text-white">{conversation.unread_count}</span>}
-                                        </span>
-                                    </span>
-                                </button>
+                            {conversationGroups.map(group => (
+                                <div key={group.key}>
+                                    {group.label && (
+                                        <div className={`mb-1 mt-2 flex items-center justify-between px-3 text-[11px] font-bold uppercase tracking-wide first:mt-0 ${group.labelClassName}`}>
+                                            <span>{group.label}</span>
+                                            <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${group.countClassName}`}>
+                                                {group.key === 'waiting_agent'
+                                                    ? conversationCounts.waiting_agent ?? group.items.length
+                                                    : conversationCounts.waiting_customer ?? group.items.length}
+                                            </span>
+                                        </div>
+                                    )}
+                                    {group.items.map(conversation => (
+                                        <button
+                                            type="button"
+                                            key={conversation.id}
+                                            onClick={() => {
+                                                if (selectedIdRef.current === conversation.id) {
+                                                    void openConversation(conversation.id);
+                                                    return;
+                                                }
+                                                selectedIdRef.current = conversation.id;
+                                                openRequestRef.current += 1;
+                                                setSelectedId(conversation.id);
+                                            }}
+                                            className={`mb-1 flex w-full gap-3 rounded-xl p-3 text-left transition ${selectedId === conversation.id
+                                                ? 'bg-white shadow-sm ring-1 ring-indigo-100 dark:bg-slate-800 dark:ring-indigo-500/20'
+                                                : 'hover:bg-white/80 dark:hover:bg-slate-800/70'}`}
+                                        >
+                                            <Avatar user={mode === 'agent' ? conversation.customer : conversation.assignee} />
+                                            <span className="min-w-0 flex-1">
+                                                <span className="flex items-start justify-between gap-2">
+                                                    <strong className="truncate text-sm text-slate-900 dark:text-white">{conversationTitle(conversation, mode)}</strong>
+                                                    <span className="shrink-0 text-[11px] text-slate-400">{formatTime(mode === 'agent' && inboxView === 'completed'
+                                                        ? conversation.resolved_at ?? conversation.updated_at
+                                                        : conversation.last_message_at ?? conversation.created_at)}</span>
+                                                </span>
+                                                {mode === 'agent' && conversation.subject && <span className="block truncate text-xs font-medium text-indigo-600 dark:text-indigo-300">{conversation.subject.label}</span>}
+                                                {mode === 'agent' && inboxView === 'completed' && (
+                                                    <span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${statusStyles[conversation.status]}`}>
+                                                        {statusLabels[conversation.status]}
+                                                    </span>
+                                                )}
+                                                <span className="mt-1 flex items-center justify-between gap-2">
+                                                    <span className="truncate text-xs text-slate-500">{conversation.last_message?.body ?? 'Chưa có tin nhắn'}</span>
+                                                    {conversation.unread_count > 0 && <span className="grid min-w-5 place-items-center rounded-full bg-rose-500 px-1.5 py-0.5 text-[11px] font-bold text-white">{conversation.unread_count}</span>}
+                                                </span>
+                                            </span>
+                                        </button>
+                                    ))}
+                                </div>
                             ))}
                             {conversationPage < conversationLastPage && (
                                 <button
@@ -1830,16 +2316,13 @@ export default function ChatWorkspace({
                                 <div>
                                     <label className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500"><UserRoundCheck className="h-3.5 w-3.5" /> Người phụ trách</label>
                                     {selected.permissions.assign ? (
-                                        <select
-                                            value={selected.assignee?.id ?? ''}
+                                        <AssigneePicker
+                                            agents={agents}
+                                            selected={selected.assignee}
                                             disabled={actionLoading}
-                                            onChange={event => void assignConversation(event.target.value)}
-                                            className="w-full rounded-xl border-slate-200 bg-white py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
-                                        >
-                                            <option value="">Chưa phân công</option>
-                                            {agents.map(agent => <option key={agent.id} value={agent.id}>{agent.username}</option>)}
-                                        </select>
-                                    ) : <p className="rounded-xl bg-white px-3 py-2 text-sm text-slate-700 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700">{selected.assignee?.username ?? 'Chưa phân công'}</p>}
+                                            onChange={value => void assignConversation(value)}
+                                        />
+                                    ) : <div className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm text-slate-700 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700"><Avatar user={selected.assignee} className="h-7 w-7 text-[10px]" /><span className="truncate">{selected.assignee?.username ?? 'Chưa phân công'}</span></div>}
                                 </div>
 
                                 <div>
@@ -1862,10 +2345,23 @@ export default function ChatWorkspace({
                         )}
 
                         {selected.subject && (
-                            <div className="mx-3 mt-3 flex items-center gap-3 rounded-xl border border-indigo-100 bg-indigo-50/70 px-3 py-2 dark:border-indigo-500/20 dark:bg-indigo-500/10 sm:mx-5">
+                            <div className={`mx-3 mt-3 items-center gap-3 rounded-xl border border-indigo-100 bg-indigo-50/70 px-3 py-2 dark:border-indigo-500/20 dark:bg-indigo-500/10 sm:mx-5 ${!compact && mode === 'agent' ? 'flex xl:hidden' : 'flex'}`}>
                                 <span className="grid h-8 w-8 place-items-center rounded-lg bg-indigo-600 text-white"><ShieldCheck className="h-4 w-4" /></span>
                                 <div className="min-w-0 flex-1"><strong className="block truncate text-xs text-indigo-950 dark:text-indigo-100">{selected.subject.label}</strong><span className="block truncate text-xs text-indigo-600/80 dark:text-indigo-300/80">{selected.subject.description}</span></div>
-                                <span className="rounded-full bg-white px-2 py-1 text-[11px] font-medium text-indigo-600 dark:bg-slate-900 dark:text-indigo-300">{selected.subject.status}</span>
+                                <div className="flex shrink-0 items-center gap-2">
+                                    <span className="rounded-full bg-white px-2 py-1 text-[11px] font-medium text-indigo-600 dark:bg-slate-900 dark:text-indigo-300">{selected.subject.status}</span>
+                                    {mode === 'agent' && (
+                                        <button
+                                            type="button"
+                                            disabled={subjectDetailLoading}
+                                            onClick={() => void viewRelatedOrder()}
+                                            className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1.5 text-[11px] font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-60"
+                                        >
+                                            {subjectDetailLoading ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />}
+                                            Xem đơn
+                                        </button>
+                                    )}
+                                </div>
                             </div>
                         )}
 
@@ -1902,14 +2398,17 @@ export default function ChatWorkspace({
                                     <div className="py-10 text-center text-sm text-slate-500">Hãy gửi tin nhắn đầu tiên để bắt đầu trao đổi.</div>
                                 )}
                                 {messages.map(message => {
-                                    const mine = isMessageMine(message, currentUserId);
+                                    const authoredByCurrentUser = isMessageMine(message, currentUserId);
+                                    const agentMessage = message.sender_kind === 'agent';
+                                    const alignRight = mode === 'agent' ? agentMessage : authoredByCurrentUser;
+                                    const showAgentIdentity = mode === 'agent' && agentMessage;
                                     return (
-                                        <article key={message.client_message_id ?? message.id} className={`flex ${mine ? 'justify-end' : 'justify-start'} ${message.delivery_state === 'failed' ? 'opacity-70' : ''}`}>
-                                            <div className={`max-w-[84%] sm:max-w-[72%] ${mine ? 'items-end' : 'items-start'} flex flex-col`}>
-                                                {!mine && <span className="mb-1 px-1 text-[11px] font-medium text-slate-500">{message.sender?.username ?? (message.sender_kind === 'system' ? 'Hệ thống' : 'Hỗ trợ')}</span>}
+                                        <article key={message.client_message_id ?? message.id} className={`flex items-end gap-2 ${alignRight ? 'justify-end' : 'justify-start'} ${message.delivery_state === 'failed' ? 'opacity-70' : ''}`}>
+                                            <div className={`max-w-[84%] sm:max-w-[72%] ${alignRight ? 'items-end' : 'items-start'} flex flex-col`}>
+                                                {(showAgentIdentity || !alignRight) && <span className="mb-1 px-1 text-[11px] font-medium text-slate-500">{message.sender?.username ?? (message.sender_kind === 'system' ? 'Hệ thống' : 'Hỗ trợ')}{showAgentIdentity && authoredByCurrentUser ? ' · Bạn' : ''}</span>}
                                                 <div className={`rounded-2xl px-3.5 py-2.5 text-sm leading-6 shadow-sm ${message.is_internal
                                                     ? 'border border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-100'
-                                                    : mine
+                                                    : alignRight
                                                         ? 'rounded-br-md bg-gradient-to-br from-indigo-600 to-blue-600 text-white'
                                                         : 'rounded-bl-md border border-slate-200 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100'}`}>
                                                     {message.is_internal && <span className="mb-1 flex items-center gap-1 text-[11px] font-bold uppercase tracking-wide text-amber-600 dark:text-amber-300"><ShieldCheck className="h-3 w-3" /> Ghi chú nội bộ</span>}
@@ -1919,7 +2418,7 @@ export default function ChatWorkspace({
                                                     {formatTime(message.created_at)}
                                                     {message.delivery_state === 'sending' && <><LoaderCircle className="h-3 w-3 animate-spin" /> Đang gửi…</>}
                                                     {message.delivery_state === 'failed' && <span className="font-medium text-rose-500">Gửi thất bại · bấm gửi để thử lại</span>}
-                                                    {!message.delivery_state && mine && message.sender_kind === 'agent' && <CheckCheck className="h-3 w-3" />}
+                                                    {!message.delivery_state && authoredByCurrentUser && message.sender_kind === 'agent' && <CheckCheck className="h-3 w-3" />}
                                                 </span>
                                                 {message.sender_kind === 'customer' && message.seen_by.length > 0 && (
                                                     <span className="mt-0.5 max-w-full truncate px-1 text-[10px] text-emerald-600 dark:text-emerald-400">
@@ -1927,6 +2426,7 @@ export default function ChatWorkspace({
                                                     </span>
                                                 )}
                                             </div>
+                                            {showAgentIdentity && <Avatar user={message.sender} className="mb-4 h-7 w-7 text-[10px]" />}
                                         </article>
                                     );
                                 })}
@@ -1979,16 +2479,13 @@ export default function ChatWorkspace({
                         <div>
                             <label className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500"><UserRoundCheck className="h-3.5 w-3.5" /> Người phụ trách</label>
                             {selected.permissions.assign ? (
-                                <select
-                                    value={selected.assignee?.id ?? ''}
+                                <AssigneePicker
+                                    agents={agents}
+                                    selected={selected.assignee}
                                     disabled={actionLoading}
-                                    onChange={event => void assignConversation(event.target.value)}
-                                    className="w-full rounded-xl border-slate-200 bg-white text-sm dark:border-slate-700 dark:bg-slate-900"
-                                >
-                                    <option value="">Chưa phân công</option>
-                                    {agents.map(agent => <option key={agent.id} value={agent.id}>{agent.username}</option>)}
-                                </select>
-                            ) : <p className="rounded-xl bg-white px-3 py-2 text-sm text-slate-700 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700">{selected.assignee?.username ?? 'Chưa phân công'}</p>}
+                                    onChange={value => void assignConversation(value)}
+                                />
+                            ) : <div className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm text-slate-700 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700"><Avatar user={selected.assignee} className="h-7 w-7 text-[10px]" /><span className="truncate">{selected.assignee?.username ?? 'Chưa phân công'}</span></div>}
                         </div>
 
                         <div>
@@ -2014,7 +2511,18 @@ export default function ChatWorkspace({
                                 <div className="rounded-xl bg-white p-3 ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700">
                                     <strong className="block text-sm text-slate-900 dark:text-white">{selected.subject.label}</strong>
                                     <span className="mt-1 block text-xs leading-5 text-slate-500">{selected.subject.description}</span>
-                                    <span className="mt-2 inline-flex rounded-full bg-indigo-50 px-2 py-1 text-[11px] font-medium text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300">{selected.subject.status}</span>
+                                    <div className="mt-2 flex items-center justify-between gap-2">
+                                        <span className="inline-flex rounded-full bg-indigo-50 px-2 py-1 text-[11px] font-medium text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300">{selected.subject.status}</span>
+                                        <button
+                                            type="button"
+                                            disabled={subjectDetailLoading}
+                                            onClick={() => void viewRelatedOrder()}
+                                            className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1.5 text-[11px] font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-60"
+                                        >
+                                            {subjectDetailLoading ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />}
+                                            Xem đơn
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         )}
@@ -2038,6 +2546,25 @@ export default function ChatWorkspace({
             {actionLoading && (
                 <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center bg-white/30 backdrop-blur-[1px] dark:bg-slate-950/30"><LoaderCircle className="h-6 w-6 animate-spin text-indigo-500" /></div>
             )}
+            {completionUndo && (
+                <div
+                    role="status"
+                    className="absolute bottom-4 left-4 right-4 z-30 flex items-center justify-between gap-3 rounded-xl bg-slate-900 px-4 py-3 text-sm text-white shadow-xl dark:bg-white dark:text-slate-900 md:left-1/2 md:right-auto md:min-w-80 md:-translate-x-1/2"
+                >
+                    <span className="min-w-0 truncate">
+                        {statusLabels[completionUndo.completedStatus]}: {completionUndo.conversationTitle}
+                    </span>
+                    <button
+                        type="button"
+                        disabled={actionLoading}
+                        onClick={() => void undoCompletedConversation()}
+                        className="shrink-0 rounded-lg bg-indigo-500 px-3 py-1.5 text-xs font-bold text-white transition hover:bg-indigo-400 disabled:opacity-60"
+                    >
+                        Hoàn tác
+                    </button>
+                </div>
+            )}
+            <RelatedOrderModal detail={relatedOrderDetail} onClose={() => setRelatedOrderDetail(null)} />
         </section>
     );
 }
