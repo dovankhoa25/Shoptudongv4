@@ -5,6 +5,8 @@ namespace App\Http\Resources\Chat;
 use App\Models\ChatParticipant;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use Illuminate\Support\Facades\URL;
+use Spatie\MediaLibrary\MediaCollections\Models\Media;
 
 class ChatMessageResource extends JsonResource
 {
@@ -28,15 +30,42 @@ class ChatMessageResource extends JsonResource
                 ->values();
         }
 
+        $urlExpiresAt = now()->addMinutes(max(1, (int) config('chat.attachments.signed_url_minutes', 60)));
+        $attachments = $this->getMedia($this->resource::MEDIA_COLLECTION_IMAGES)
+            ->map(function (Media $media) use ($urlExpiresAt): array {
+                $url = URL::temporarySignedRoute(
+                    'chat.media.show',
+                    $urlExpiresAt,
+                    ['media' => $media->uuid],
+                );
+
+                return [
+                    'id' => (int) $media->id,
+                    'uuid' => $media->uuid,
+                    'url' => $url,
+                    // A dedicated thumbnail conversion can be introduced later;
+                    // the signed original keeps the initial implementation robust
+                    // across local and object-storage disks.
+                    'thumbnail_url' => $url,
+                    'name' => $media->name,
+                    'mime_type' => $media->mime_type,
+                    'size' => (int) $media->size,
+                    'width' => $media->getCustomProperty('width'),
+                    'height' => $media->getCustomProperty('height'),
+                ];
+            })
+            ->values();
+        $metadata = $this->metadata ?? [];
+
         return [
             'id' => (int) $this->id,
             'conversation_id' => (int) $this->conversation_id,
             'sender_kind' => $this->sender_kind,
             'type' => $this->type,
-            'body' => $this->body,
+            'body' => $this->body ?? '',
             'reply_to_id' => $this->reply_to_id === null ? null : (int) $this->reply_to_id,
             'client_message_id' => $this->client_message_id,
-            'metadata' => $this->metadata,
+            'metadata' => $metadata,
             'is_internal' => (bool) $this->is_internal,
             'is_mine' => (int) $this->sender_id === (int) $request->user()?->getKey(),
             'sender' => $this->whenLoaded('sender', fn () => $this->sender ? [
@@ -45,6 +74,11 @@ class ChatMessageResource extends JsonResource
                 'avatar' => $this->sender->avatar_url,
             ] : null),
             'seen_by' => $seenBy,
+            'attachments' => $attachments,
+            'attachments_expired' => isset($metadata['attachments_purged_at']),
+            'reactions' => $this->resource->reactionSummary(
+                $request->user() ? (int) $request->user()->getKey() : null,
+            ),
             'edited_at' => $this->edited_at?->toIso8601String(),
             'created_at' => $this->created_at?->toIso8601String(),
         ];

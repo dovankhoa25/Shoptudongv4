@@ -38,6 +38,15 @@ return [
             'report' => false,
         ],
 
+        // Chat attachments may contain order/account details. Keep them outside
+        // the public storage symlink and serve them only through signed URLs.
+        'chat' => [
+            'driver' => 'local',
+            'root' => storage_path('app/private/chat'),
+            'throw' => true,
+            'report' => true,
+        ],
+
         'public' => [
             'driver' => 'local',
             'root' => storage_path('app/public'),

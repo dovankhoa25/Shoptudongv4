@@ -4,11 +4,16 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Spatie\MediaLibrary\HasMedia;
+use Spatie\MediaLibrary\InteractsWithMedia;
 
-class ChatMessage extends Model
+class ChatMessage extends Model implements HasMedia
 {
-    use SoftDeletes;
+    use InteractsWithMedia, SoftDeletes;
+
+    public const MEDIA_COLLECTION_IMAGES = 'chat_images';
 
     public const SENDER_CUSTOMER = 'customer';
 
@@ -17,6 +22,8 @@ class ChatMessage extends Model
     public const SENDER_SYSTEM = 'system';
 
     public const TYPE_TEXT = 'text';
+
+    public const TYPE_IMAGE = 'image';
 
     public const TYPE_SYSTEM = 'system';
 
@@ -57,5 +64,54 @@ class ChatMessage extends Model
     public function replyTo(): BelongsTo
     {
         return $this->belongsTo(self::class, 'reply_to_id')->withTrashed();
+    }
+
+    public function reactions(): HasMany
+    {
+        return $this->hasMany(ChatMessageReaction::class, 'message_id');
+    }
+
+    public function registerMediaCollections(): void
+    {
+        $this->addMediaCollection(self::MEDIA_COLLECTION_IMAGES)
+            ->useDisk((string) config('chat.attachments.disk', 'chat'))
+            ->acceptsMimeTypes(['image/jpeg', 'image/png', 'image/webp'])
+            ->onlyKeepLatest(max(1, (int) config('chat.attachments.max_files', 4)));
+    }
+
+    /**
+     * @return list<array{emoji: string, count: int, user_ids: list<int>, reacted_by_me?: bool}>
+     */
+    public function reactionSummary(?int $viewerId = null): array
+    {
+        $reactions = $this->relationLoaded('reactions')
+            ? $this->reactions
+            : $this->reactions()->get();
+        $allowedOrder = collect(config('chat.reactions.allowed', []))->flip();
+
+        return $reactions
+            ->groupBy('emoji')
+            ->map(function ($items, string $emoji) use ($viewerId): array {
+                $userIds = $items->pluck('user_id')
+                    ->map(fn ($id): int => (int) $id)
+                    ->unique()
+                    ->sort()
+                    ->values()
+                    ->all();
+                $summary = [
+                    'emoji' => $emoji,
+                    'count' => count($userIds),
+                    'user_ids' => $userIds,
+                ];
+
+                if ($viewerId !== null) {
+                    $summary['reacted_by_me'] = in_array($viewerId, $userIds, true);
+                }
+
+                return $summary;
+            })
+            ->sortBy(fn (array $reaction) => $allowedOrder->get($reaction['emoji'], PHP_INT_MAX))
+            ->values()
+            ->all();
     }
 }

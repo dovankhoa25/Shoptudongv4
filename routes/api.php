@@ -132,6 +132,9 @@ Route::prefix('chat')
         Route::post('/conversations/{conversation}/messages', [ChatController::class, 'send'])
             ->middleware(CheckToken::using(['chat:read', 'chat:write']))
             ->name('messages.store');
+        Route::post('/conversations/{conversation}/messages/{message}/reactions', [ChatController::class, 'toggleReaction'])
+            ->middleware(CheckToken::using(['chat:read', 'chat:write']))
+            ->name('messages.reactions.toggle');
         Route::patch('/conversations/{conversation}/read', [ChatController::class, 'read'])
             ->middleware(CheckToken::using(['chat:read', 'chat:write']))
             ->name('read');

@@ -250,8 +250,10 @@ class ChatManager
             $message = $locked->messages()->create([
                 'sender_id' => $sender->getKey(),
                 'sender_kind' => $isCustomer ? ChatMessage::SENDER_CUSTOMER : ChatMessage::SENDER_AGENT,
-                'type' => $internal ? ChatMessage::TYPE_INTERNAL_NOTE : ChatMessage::TYPE_TEXT,
-                'body' => trim((string) $attributes['body']),
+                'type' => $internal
+                    ? ChatMessage::TYPE_INTERNAL_NOTE
+                    : (! empty($attributes['images']) ? ChatMessage::TYPE_IMAGE : ChatMessage::TYPE_TEXT),
+                'body' => trim((string) ($attributes['body'] ?? '')) ?: null,
                 'reply_to_id' => $attributes['reply_to_id'] ?? null,
                 'client_message_id' => $attributes['client_message_id'] ?? null,
                 'is_internal' => $internal,

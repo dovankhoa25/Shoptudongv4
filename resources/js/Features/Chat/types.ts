@@ -18,11 +18,31 @@ export interface ChatSeenBy extends ChatUser {
     read_at?: string | null;
 }
 
+export interface ChatAttachment {
+    id: number | string;
+    uuid?: string | null;
+    url: string;
+    thumbnail_url?: string | null;
+    name?: string | null;
+    mime_type: string;
+    size: number;
+    width?: number | null;
+    height?: number | null;
+}
+
+export interface ChatReaction {
+    emoji: string;
+    count: number;
+    reacted_by_me: boolean;
+    user_ids?: number[];
+    users?: ChatUser[];
+}
+
 export interface ChatMessage {
     id: number;
     conversation_id: number;
     sender_kind: 'customer' | 'agent' | 'system';
-    type: 'text' | 'system' | 'internal_note';
+    type: 'text' | 'image' | 'system' | 'internal_note';
     body: string;
     reply_to_id?: number | null;
     client_message_id?: string | null;
@@ -31,10 +51,15 @@ export interface ChatMessage {
     is_mine?: boolean;
     sender?: ChatUser | null;
     seen_by: ChatSeenBy[];
+    attachments: ChatAttachment[];
+    attachments_expired?: boolean;
+    reactions: ChatReaction[];
     edited_at?: string | null;
     created_at: string;
     /** Trạng thái cục bộ, chỉ tồn tại trong lúc client đang gửi/tự thử lại. */
     delivery_state?: 'sending' | 'failed';
+    /** Tiến độ upload cục bộ (0-100), không được lưu trên server. */
+    delivery_progress?: number;
 }
 
 export interface ChatParticipant {

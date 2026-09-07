@@ -1,4 +1,4 @@
-import { FormEvent, KeyboardEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, FormEvent, KeyboardEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, usePage } from '@inertiajs/react';
 import { echo } from '@laravel/echo-react';
 import { Modal } from 'antd';
@@ -13,21 +13,27 @@ import {
     Eye,
     Headphones,
     Inbox,
+    ImagePlus,
     LoaderCircle,
     MessageCircle,
     MoreHorizontal,
     Plus,
+    RotateCcw,
     Search,
     SendHorizontal,
     ShieldCheck,
+    Smile,
     Sparkles,
     UserRoundCheck,
+    X,
 } from 'lucide-react';
 import type { PageProps } from '@/types';
 import UserAvatar from '@/Components/UserAvatar';
 import type {
+    ChatAttachment,
     ChatConversation,
     ChatMessage,
+    ChatReaction,
     ChatSeenBy,
     ChatSubject,
     ChatUser,
@@ -59,6 +65,11 @@ interface ChatReadEvent {
     reader: ChatUser & { kind: 'customer' | 'agent' };
     last_read_message_id: number;
     read_at: string;
+}
+
+interface ChatReactionEvent {
+    message_id: number;
+    reactions: Array<Omit<ChatReaction, 'reacted_by_me'> & { reacted_by_me?: boolean }>;
 }
 
 interface ChatInboxEvent {
@@ -102,6 +113,18 @@ interface CompletionUndo {
     completedStatus: Extract<ChatConversation['status'], 'resolved' | 'closed'>;
 }
 
+interface PendingChatImage {
+    id: string;
+    file: File;
+    previewUrl: string;
+}
+
+interface FailedChatSend {
+    body: string;
+    images: PendingChatImage[];
+    isInternal: boolean;
+}
+
 type ChatConversationListResponse = Omit<PaginatedChatConversations, 'meta'> & {
     counts?: ChatConversationCounts;
     unread_counts?: ChatConversationCounts;
@@ -122,6 +145,17 @@ interface RelatedOrderDetail {
 }
 
 type RealtimeConnectionStatus = 'connecting' | 'connected' | 'disconnected';
+
+const CHAT_IMAGE_MAX_COUNT = 4;
+const CHAT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const CHAT_IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const MESSAGE_REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏', '🎉'];
+const COMPOSER_EMOJIS = [
+    '😀', '😃', '😄', '😁', '😆', '😅', '😂', '🤣',
+    '😊', '😍', '🥰', '😘', '😎', '🤩', '🤔', '😮',
+    '😢', '😭', '😡', '🤯', '👍', '👎', '👏', '🙏',
+    '❤️', '💜', '💙', '💚', '🔥', '✨', '🎉', '💯',
+];
 
 const statusLabels: Record<ChatConversation['status'], string> = {
     waiting_agent: 'Chờ hỗ trợ',
@@ -156,6 +190,108 @@ function errorMessage(error: unknown): string {
     if (errors) return Object.values(errors).flat()[0] ?? 'Không thể thực hiện thao tác.';
 
     return candidate.response?.data?.message ?? 'Kết nối bị gián đoạn. Vui lòng thử lại.';
+}
+
+function formatFileSize(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${Math.ceil(bytes / 1024)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function messageAttachments(message?: ChatMessage | null): ChatAttachment[] {
+    return Array.isArray(message?.attachments) ? message.attachments : [];
+}
+
+function messageReactions(message?: ChatMessage | null): ChatReaction[] {
+    return Array.isArray(message?.reactions) ? message.reactions : [];
+}
+
+function normalizedReactions(
+    reactions: Array<Omit<ChatReaction, 'reacted_by_me'> & { reacted_by_me?: boolean }>,
+    currentUserId: number,
+): ChatReaction[] {
+    return reactions
+        .filter(reaction => reaction.count > 0)
+        .map(reaction => ({
+            ...reaction,
+            reacted_by_me: Array.isArray(reaction.user_ids)
+                ? reaction.user_ids.includes(currentUserId)
+                : reaction.reacted_by_me === true,
+        }));
+}
+
+function attachmentsWerePurged(message?: ChatMessage | null): boolean {
+    return message?.attachments_expired === true || Boolean(message?.metadata?.attachments_purged_at);
+}
+
+function conversationMessagePreview(message?: ChatMessage | null): string {
+    if (!message) return 'Chưa có tin nhắn';
+    const body = message.body?.trim();
+    if (body) return body;
+
+    const attachmentCount = messageAttachments(message).length;
+    if (attachmentCount > 0) return attachmentCount === 1 ? '📷 Ảnh' : `📷 ${attachmentCount} ảnh`;
+    if (attachmentsWerePurged(message)) return '📷 Ảnh đã hết hạn';
+    return 'Tin nhắn';
+}
+
+function MessageAttachments({
+    attachments,
+    compact,
+    onOpen,
+    onLoadError,
+}: {
+    attachments: ChatAttachment[];
+    compact: boolean;
+    onOpen: (attachment: ChatAttachment) => void;
+    onLoadError?: (attachment: ChatAttachment) => void;
+}) {
+    if (attachments.length === 0) return null;
+
+    return (
+        <div className={`grid gap-1.5 overflow-hidden ${attachments.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
+            {attachments.map((attachment, index) => (
+                <button
+                    key={attachment.uuid ?? attachment.id}
+                    type="button"
+                    onClick={() => onOpen(attachment)}
+                    className={`group relative overflow-hidden rounded-xl bg-slate-200 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 dark:bg-slate-700 ${attachments.length === 3 && index === 0 ? 'col-span-2' : ''}`}
+                    aria-label={`Mở ảnh ${attachment.name || index + 1}`}
+                >
+                    <img
+                        src={attachment.thumbnail_url || attachment.url}
+                        alt={attachment.name || 'Ảnh đính kèm'}
+                        loading="lazy"
+                        onError={() => onLoadError?.(attachment)}
+                        className={`${compact ? 'max-h-40 min-h-20' : 'max-h-72 min-h-24'} w-full object-cover transition duration-200 group-hover:scale-[1.02]`}
+                    />
+                    {attachment.size > 0 && (
+                        <span className="absolute bottom-1.5 right-1.5 rounded-md bg-black/60 px-1.5 py-0.5 text-[9px] font-medium text-white backdrop-blur-sm">
+                            {formatFileSize(attachment.size)}
+                        </span>
+                    )}
+                </button>
+            ))}
+        </div>
+    );
+}
+
+function EmojiPicker({ onSelect }: { onSelect: (emoji: string) => void }) {
+    return (
+        <div className="grid w-64 grid-cols-8 gap-0.5 rounded-xl border border-slate-200 bg-white p-2 shadow-2xl dark:border-slate-700 dark:bg-slate-900">
+            {COMPOSER_EMOJIS.map(emoji => (
+                <button
+                    key={emoji}
+                    type="button"
+                    onClick={() => onSelect(emoji)}
+                    className="grid h-8 w-8 place-items-center rounded-lg text-lg transition hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 dark:hover:bg-slate-800"
+                    aria-label={`Chèn ${emoji}`}
+                >
+                    {emoji}
+                </button>
+            ))}
+        </div>
+    );
 }
 
 function isCanceledRequest(error: unknown): boolean {
@@ -221,7 +357,10 @@ function mergeMessages(current: ChatMessage[], incoming: ChatMessage | ChatMessa
 
         if (matchingIndex >= 0) {
             const merged = { ...next[matchingIndex], ...candidate };
-            if (candidate.id > 0 && candidate.delivery_state === undefined) delete merged.delivery_state;
+            if (candidate.id > 0 && candidate.delivery_state === undefined) {
+                delete merged.delivery_state;
+                delete merged.delivery_progress;
+            }
             next[matchingIndex] = merged;
         } else {
             next.push(candidate);
@@ -419,6 +558,7 @@ const PersonalChatSubscription = memo(function PersonalChatSubscription({
     channel,
     onInboxChange,
     onMessage,
+    onReaction,
     onRead,
     onSubscribed,
     onSubscriptionError,
@@ -426,12 +566,13 @@ const PersonalChatSubscription = memo(function PersonalChatSubscription({
     channel: string;
     onInboxChange: (event: ChatInboxEvent) => void;
     onMessage: (event: ChatMessageEvent) => void;
+    onReaction: (event: ChatReactionEvent) => void;
     onRead: (event: ChatReadEvent) => void;
     onSubscribed: () => void;
     onSubscriptionError: () => void;
 }) {
-    const handlersRef = useRef({ onInboxChange, onMessage, onRead, onSubscribed, onSubscriptionError });
-    handlersRef.current = { onInboxChange, onMessage, onRead, onSubscribed, onSubscriptionError };
+    const handlersRef = useRef({ onInboxChange, onMessage, onReaction, onRead, onSubscribed, onSubscriptionError });
+    handlersRef.current = { onInboxChange, onMessage, onReaction, onRead, onSubscribed, onSubscriptionError };
 
     useEffect(() => {
         let active = true;
@@ -441,6 +582,9 @@ const PersonalChatSubscription = memo(function PersonalChatSubscription({
         };
         const handleMessage = (event: ChatMessageEvent) => {
             if (active) handlersRef.current.onMessage(event);
+        };
+        const handleReaction = (event: ChatReactionEvent) => {
+            if (active) handlersRef.current.onReaction(event);
         };
         const handleRead = (event: ChatReadEvent) => {
             if (active) handlersRef.current.onRead(event);
@@ -453,6 +597,7 @@ const PersonalChatSubscription = memo(function PersonalChatSubscription({
         };
         subscription.listen('.ChatInboxUpdated', handleInbox);
         subscription.listen('.ChatMessageSent', handleMessage);
+        subscription.listen('.ChatMessageReactionUpdated', handleReaction);
         subscription.listen('.ChatReadUpdated', handleRead);
         subscription.on('pusher:subscription_succeeded', handleSubscribed);
         subscription.on('pusher:subscription_error', handleSubscriptionError);
@@ -466,6 +611,7 @@ const PersonalChatSubscription = memo(function PersonalChatSubscription({
             active = false;
             subscription.stopListening('.ChatInboxUpdated', handleInbox);
             subscription.stopListening('.ChatMessageSent', handleMessage);
+            subscription.stopListening('.ChatMessageReactionUpdated', handleReaction);
             subscription.stopListening('.ChatReadUpdated', handleRead);
             subscription.stopListening('.pusher:subscription_succeeded', handleSubscribed);
             subscription.stopListening('.pusher:subscription_error', handleSubscriptionError);
@@ -524,6 +670,10 @@ export default function ChatWorkspace({
     const [relatedOrderDetail, setRelatedOrderDetail] = useState<RelatedOrderDetail | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [draft, setDraft] = useState('');
+    const [pendingImages, setPendingImages] = useState<PendingChatImage[]>([]);
+    const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
+    const [reactionPickerMessageId, setReactionPickerMessageId] = useState<number | null>(null);
+    const [lightboxAttachment, setLightboxAttachment] = useState<ChatAttachment | null>(null);
     const [internalNote, setInternalNote] = useState(false);
     const [realtimeStatus, setRealtimeStatus] = useState<RealtimeConnectionStatus>('connecting');
     const conversationPerPage = compact ? 15 : 30;
@@ -538,10 +688,15 @@ export default function ChatWorkspace({
     }), [assignment, baseUrl, completedPeriod, conversationPerPage, inboxView, mode, search, status]);
     const messagesEndRef = useRef<HTMLDivElement | null>(null);
     const messageScrollRef = useRef<HTMLDivElement | null>(null);
+    const composerRef = useRef<HTMLTextAreaElement | null>(null);
+    const imageInputRef = useRef<HTMLInputElement | null>(null);
+    const composerToolsRef = useRef<HTMLDivElement | null>(null);
     const preservingHistoryScrollRef = useRef(false);
     const messageNearBottomRef = useRef(true);
     const previousLastMessageKeyRef = useRef<string | null>(null);
     const pendingSendRef = useRef<{ signature: string; clientMessageId: string } | null>(null);
+    const failedSendsRef = useRef<Map<string, FailedChatSend>>(new Map());
+    const localImageUrlsRef = useRef<Set<string>>(new Set());
     const openRequestRef = useRef(0);
     const selectedIdRef = useRef<number | null>(selectedId);
     const conversationFilterSignatureRef = useRef(conversationFilterSignature);
@@ -571,6 +726,8 @@ export default function ChatWorkspace({
     const seenRealtimeMessageIdsRef = useRef<Set<number>>(new Set());
     const deliveredClientMessageIdsRef = useRef<Set<string>>(new Set());
     const latestKnownMessageIdsRef = useRef<Map<number, number>>(new Map());
+    const reactionRequestsRef = useRef<Set<string>>(new Set());
+    const attachmentRefreshAtRef = useRef<Map<string, number>>(new Map());
     const listSnapshotHighWatermarksRef = useRef<Map<number, number>>(new Map());
     const listSnapshotVersionsRef = useRef<Map<number, number>>(new Map());
     const listSnapshotVersionRef = useRef(0);
@@ -682,7 +839,32 @@ export default function ChatWorkspace({
         readTimersRef.current.forEach(timer => window.clearTimeout(timer));
         readTimersRef.current.clear();
         if (realtimeRefreshTimerRef.current !== null) window.clearTimeout(realtimeRefreshTimerRef.current);
+        localImageUrlsRef.current.forEach(url => URL.revokeObjectURL(url));
+        localImageUrlsRef.current.clear();
+        failedSendsRef.current.clear();
+        attachmentRefreshAtRef.current.clear();
     }, []);
+
+    useEffect(() => {
+        if (!emojiPickerOpen && reactionPickerMessageId === null) return;
+
+        const closePicker = (event: MouseEvent) => {
+            if (!composerToolsRef.current?.contains(event.target as Node)) setEmojiPickerOpen(false);
+            if (!(event.target as Element).closest?.('[data-reaction-picker]')) setReactionPickerMessageId(null);
+        };
+        const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                setEmojiPickerOpen(false);
+                setReactionPickerMessageId(null);
+            }
+        };
+        document.addEventListener('mousedown', closePicker);
+        document.addEventListener('keydown', closeOnEscape);
+        return () => {
+            document.removeEventListener('mousedown', closePicker);
+            document.removeEventListener('keydown', closeOnEscape);
+        };
+    }, [emojiPickerOpen, reactionPickerMessageId]);
 
     useEffect(() => {
         selectedIdRef.current = selectedId;
@@ -700,8 +882,16 @@ export default function ChatWorkspace({
         messagesRef.current = [];
         setMessages([]);
         setDraft('');
+        setPendingImages([]);
+        setEmojiPickerOpen(false);
+        setReactionPickerMessageId(null);
+        setLightboxAttachment(null);
         setInternalNote(false);
         pendingSendRef.current = null;
+        failedSendsRef.current.clear();
+        attachmentRefreshAtRef.current.clear();
+        localImageUrlsRef.current.forEach(url => URL.revokeObjectURL(url));
+        localImageUrlsRef.current.clear();
     }, [commitSelected, selectedId]);
 
     const fetchConversations = useCallback(async (quiet = false) => {
@@ -1009,9 +1199,11 @@ export default function ChatWorkspace({
             }>(`${baseUrl}/conversations/${conversationId}`);
             if (requestId !== openRequestRef.current || selectedIdRef.current !== conversationId) return;
 
+            // Keep local optimistic messages, but let the fresh server snapshot
+            // replace persisted fields such as expiring signed attachment URLs.
             const normalizedMessages = mergeMessages(
-                response.data.messages,
                 messagesRef.current.filter(message => message.conversation_id === conversationId),
+                response.data.messages,
             );
             const responseLastMessageId = response.data.messages.reduce(
                 (latest, message) => message.id > latest ? message.id : latest,
@@ -1056,6 +1248,18 @@ export default function ChatWorkspace({
             if (requestId === openRequestRef.current) setLoadingThread(false);
         }
     }, [baseUrl, commitSelected, mergeConversationSnapshot, scheduleMarkRead]);
+
+    const refreshExpiredAttachment = useCallback((attachment: ChatAttachment) => {
+        const conversationId = selectedIdRef.current;
+        if (!conversationId || !attachment.uuid) return;
+
+        const now = Date.now();
+        const lastRefreshAt = attachmentRefreshAtRef.current.get(attachment.uuid) ?? 0;
+        if (now - lastRefreshAt < 60_000) return;
+
+        attachmentRefreshAtRef.current.set(attachment.uuid, now);
+        void openConversation(conversationId);
+    }, [openConversation]);
 
     useEffect(() => {
         if (selectedId) void openConversation(selectedId);
@@ -1620,6 +1824,16 @@ export default function ChatWorkspace({
         });
     }, [clearUnreadLocally, currentUserId, scheduleConversationRefresh]);
 
+    const handleRealtimeReaction = useCallback((event: ChatReactionEvent) => {
+        setMessages(previous => {
+            const next = previous.map(message => message.id === event.message_id
+                ? { ...message, reactions: normalizedReactions(event.reactions, currentUserId) }
+                : message);
+            messagesRef.current = next;
+            return next;
+        });
+    }, [currentUserId]);
+
     const handleInboxChange = useCallback((event: ChatInboxEvent) => {
         if (event.action === 'message') return;
         const existing = conversationsRef.current.find(item => item.id === event.conversation.id);
@@ -1674,25 +1888,89 @@ export default function ChatWorkspace({
         }
     };
 
-    const sendMessage = async (event?: FormEvent) => {
+    const addImages = (event: ChangeEvent<HTMLInputElement>) => {
+        const files = Array.from(event.target.files ?? []);
+        event.target.value = '';
+        if (files.length === 0) return;
+
+        const remainingSlots = CHAT_IMAGE_MAX_COUNT - pendingImages.length;
+        if (remainingSlots <= 0) {
+            setError(`Mỗi tin nhắn chỉ được tối đa ${CHAT_IMAGE_MAX_COUNT} ảnh.`);
+            return;
+        }
+
+        const invalidType = files.find(file => !CHAT_IMAGE_MIME_TYPES.has(file.type));
+        if (invalidType) {
+            setError('Chỉ hỗ trợ ảnh JPEG, PNG hoặc WebP.');
+            return;
+        }
+        const oversized = files.find(file => file.size > CHAT_IMAGE_MAX_BYTES);
+        if (oversized) {
+            setError(`Ảnh “${oversized.name}” vượt quá 5 MB.`);
+            return;
+        }
+
+        const accepted = files.slice(0, remainingSlots).map(file => {
+            const previewUrl = URL.createObjectURL(file);
+            localImageUrlsRef.current.add(previewUrl);
+            return { id: crypto.randomUUID(), file, previewUrl };
+        });
+        setPendingImages(previous => [...previous, ...accepted]);
+        setError(files.length > remainingSlots
+            ? `Chỉ đã chọn ${remainingSlots} ảnh còn lại (tối đa ${CHAT_IMAGE_MAX_COUNT} ảnh).`
+            : null);
+    };
+
+    const removePendingImage = (imageId: string) => {
+        const removed = pendingImages.find(image => image.id === imageId);
+        setPendingImages(previous => previous.filter(image => image.id !== imageId));
+        const retainedByFailedMessage = removed && [...failedSendsRef.current.values()]
+            .some(send => send.images.some(image => image.id === imageId));
+        if (removed && !retainedByFailedMessage) {
+            URL.revokeObjectURL(removed.previewUrl);
+            localImageUrlsRef.current.delete(removed.previewUrl);
+        }
+    };
+
+    const insertEmoji = (emoji: string) => {
+        const textarea = composerRef.current;
+        const start = textarea?.selectionStart ?? draft.length;
+        const end = textarea?.selectionEnd ?? draft.length;
+        const nextDraft = `${draft.slice(0, start)}${emoji}${draft.slice(end)}`;
+        setDraft(nextDraft);
+        setEmojiPickerOpen(false);
+        queueMicrotask(() => {
+            composerRef.current?.focus();
+            composerRef.current?.setSelectionRange(start + emoji.length, start + emoji.length);
+        });
+    };
+
+    const sendMessage = async (
+        event?: FormEvent,
+        retryPayload?: FailedChatSend & { clientMessageId: string },
+    ) => {
         event?.preventDefault();
-        const body = draft.trim();
-        if (!selected || !body || sending) return;
+        const body = (retryPayload?.body ?? draft).trim();
+        const images = retryPayload?.images ?? pendingImages;
+        if (!selected || (!body && images.length === 0) || sending) return;
         const conversationId = selected.id;
-        const isInternal = internalNote;
+        const isInternal = retryPayload?.isInternal ?? internalNote;
         const conversationBeforeSend = conversationsRef.current.find(item => item.id === conversationId);
         setSending(true);
         setError(null);
-        const signature = `${conversationId}:${isInternal ? 'internal' : 'public'}:${body}`;
-        const pendingSend = pendingSendRef.current?.signature === signature
-            ? pendingSendRef.current
-            : { signature, clientMessageId: crypto.randomUUID() };
+        const imageSignature = images.map(image => `${image.file.name}:${image.file.size}:${image.file.lastModified}`).join('|');
+        const signature = `${conversationId}:${isInternal ? 'internal' : 'public'}:${body}:${imageSignature}`;
+        const pendingSend = retryPayload
+            ? { signature, clientMessageId: retryPayload.clientMessageId }
+            : pendingSendRef.current?.signature === signature
+                ? pendingSendRef.current
+                : { signature, clientMessageId: crypto.randomUUID() };
         pendingSendRef.current = pendingSend;
         const optimisticMessage: ChatMessage = {
             id: optimisticMessageIdRef.current--,
             conversation_id: conversationId,
             sender_kind: mode === 'customer' ? 'customer' : 'agent',
-            type: isInternal ? 'internal_note' : 'text',
+            type: isInternal ? 'internal_note' : images.length > 0 ? 'image' : 'text',
             body,
             client_message_id: pendingSend.clientMessageId,
             is_internal: isInternal,
@@ -1703,8 +1981,18 @@ export default function ChatWorkspace({
                 avatar: props.auth.user?.avatar ?? null,
             },
             seen_by: [],
+            attachments: images.map(image => ({
+                id: image.id,
+                url: image.previewUrl,
+                thumbnail_url: image.previewUrl,
+                name: image.file.name,
+                mime_type: image.file.type,
+                size: image.file.size,
+            })),
+            reactions: [],
             created_at: new Date().toISOString(),
             delivery_state: 'sending',
+            delivery_progress: images.length > 0 ? 0 : undefined,
         };
         setMessages(previous => {
             const next = mergeMessages(previous, optimisticMessage);
@@ -1716,14 +2004,38 @@ export default function ChatWorkspace({
             status: isInternal ? selected.status : mode === 'customer' ? 'waiting_agent' : 'waiting_customer',
             last_message_at: optimisticMessage.created_at,
         });
-        setDraft('');
+        setDraft(current => retryPayload && current !== body ? current : '');
+        setPendingImages(previous => previous.filter(image => !images.some(sentImage => sentImage.id === image.id)));
         setInternalNote(false);
+        setEmojiPickerOpen(false);
         try {
+            const formData = new FormData();
+            formData.append('body', body);
+            formData.append('client_message_id', pendingSend.clientMessageId);
+            formData.append('is_internal', isInternal ? '1' : '0');
+            images.forEach(image => formData.append('images[]', image.file, image.file.name));
             const response = await window.axios.post<{ data: ChatMessage; conversation?: ChatConversation }>(
                 `${baseUrl}/conversations/${conversationId}/messages`,
-                { body, client_message_id: pendingSend.clientMessageId, is_internal: isInternal },
+                formData,
+                {
+                    onUploadProgress: progressEvent => {
+                        if (images.length === 0 || !progressEvent.total || selectedIdRef.current !== conversationId) return;
+                        const deliveryProgress = Math.min(99, Math.round((progressEvent.loaded / progressEvent.total) * 100));
+                        setMessages(previous => {
+                            const next = previous.map(message => message.client_message_id === pendingSend.clientMessageId
+                                ? { ...message, delivery_progress: deliveryProgress }
+                                : message);
+                            messagesRef.current = next;
+                            return next;
+                        });
+                    },
+                },
             );
-            const sent = response.data.data;
+            const sent = {
+                ...response.data.data,
+                attachments: messageAttachments(response.data.data),
+                reactions: messageReactions(response.data.data),
+            };
             if (selectedIdRef.current === conversationId) {
                 setMessages(previous => {
                     const next = mergeMessages(previous, sent);
@@ -1757,6 +2069,11 @@ export default function ChatWorkspace({
             if (responseConversation && selectedIdRef.current === conversationId) {
                 commitSelected(mergeConversationSnapshot(conversationId, responseConversation, [sent]));
             }
+            images.forEach(image => {
+                URL.revokeObjectURL(image.previewUrl);
+                localImageUrlsRef.current.delete(image.previewUrl);
+            });
+            failedSendsRef.current.delete(pendingSend.clientMessageId);
             pendingSendRef.current = null;
         } catch (requestError) {
             const deliveredMessage = deliveredClientMessageIdsRef.current.has(pendingSend.clientMessageId)
@@ -1764,14 +2081,20 @@ export default function ChatWorkspace({
                 message.id > 0 && message.client_message_id === pendingSend.clientMessageId
             ));
             if (deliveredMessage) {
+                images.forEach(image => {
+                    URL.revokeObjectURL(image.previewUrl);
+                    localImageUrlsRef.current.delete(image.previewUrl);
+                });
+                failedSendsRef.current.delete(pendingSend.clientMessageId);
                 pendingSendRef.current = null;
                 return;
             }
-            const failedMessage: ChatMessage = { ...optimisticMessage, delivery_state: 'failed' };
+            const failedMessage: ChatMessage = { ...optimisticMessage, delivery_state: 'failed', delivery_progress: undefined };
+            failedSendsRef.current.set(pendingSend.clientMessageId, { body, images, isInternal });
             if (selectedIdRef.current === conversationId) {
                 setMessages(previous => {
                     const next = previous.map(message => (
-                        message.id < 0 && message.client_message_id === pendingSend.clientMessageId
+                        message.client_message_id === pendingSend.clientMessageId
                             ? failedMessage
                             : message
                     ));
@@ -1779,6 +2102,10 @@ export default function ChatWorkspace({
                     return next;
                 });
                 setDraft(current => current || body);
+                setPendingImages(current => [
+                    ...current,
+                    ...images.filter(image => !current.some(candidate => candidate.id === image.id)),
+                ].slice(0, CHAT_IMAGE_MAX_COUNT));
                 setInternalNote(current => current || isInternal);
             }
             if (conversationBeforeSend) {
@@ -1818,6 +2145,66 @@ export default function ChatWorkspace({
             setError(errorMessage(requestError));
         } finally {
             setSending(false);
+        }
+    };
+
+    const retryFailedMessage = (message: ChatMessage) => {
+        if (!message.client_message_id || sending) return;
+        const failedSend = failedSendsRef.current.get(message.client_message_id);
+        if (!failedSend) {
+            setError('Không còn dữ liệu ảnh tạm để thử lại. Vui lòng chọn ảnh lại.');
+            return;
+        }
+        void sendMessage(undefined, { ...failedSend, clientMessageId: message.client_message_id });
+    };
+
+    const toggleReaction = async (message: ChatMessage, emoji: string) => {
+        if (!selected || message.id <= 0 || message.is_internal) return;
+        const requestKey = `${message.id}:${emoji}`;
+        if (reactionRequestsRef.current.has(requestKey)) return;
+        reactionRequestsRef.current.add(requestKey);
+        setReactionPickerMessageId(null);
+        setError(null);
+
+        const previousReactions = messageReactions(message);
+        const existing = previousReactions.find(reaction => reaction.emoji === emoji);
+        const desiredActive = existing?.reacted_by_me !== true;
+        const optimisticReactions = existing
+            ? !desiredActive
+                ? previousReactions
+                    .map(reaction => reaction.emoji === emoji
+                        ? { ...reaction, count: Math.max(0, reaction.count - 1), reacted_by_me: false }
+                        : reaction)
+                    .filter(reaction => reaction.count > 0)
+                : previousReactions.map(reaction => reaction.emoji === emoji
+                    ? { ...reaction, count: reaction.count + 1, reacted_by_me: true }
+                    : reaction)
+            : [...previousReactions, { emoji, count: 1, reacted_by_me: true }];
+
+        const patchReactions = (reactions: ChatReaction[]) => {
+            setMessages(current => {
+                const next = current.map(item => item.id === message.id ? { ...item, reactions } : item);
+                messagesRef.current = next;
+                return next;
+            });
+        };
+        patchReactions(optimisticReactions);
+
+        try {
+            const response = await window.axios.post<{
+                data: ChatReaction[] | { message_id: number; reactions: ChatReaction[] };
+            }>(`${baseUrl}/conversations/${selected.id}/messages/${message.id}/reactions`, {
+                emoji,
+                active: desiredActive,
+            });
+            const responseData = response.data.data;
+            const reactions = Array.isArray(responseData) ? responseData : responseData.reactions;
+            patchReactions(normalizedReactions(reactions, currentUserId));
+        } catch (requestError) {
+            patchReactions(previousReactions);
+            setError(errorMessage(requestError));
+        } finally {
+            reactionRequestsRef.current.delete(requestKey);
         }
     };
 
@@ -2034,6 +2421,7 @@ export default function ChatWorkspace({
                     channel={realtimeChannel}
                     onInboxChange={handleInboxChange}
                     onMessage={handleRealtimeMessage}
+                    onReaction={handleRealtimeReaction}
                     onRead={handleRealtimeRead}
                     onSubscribed={handleRealtimeSubscribed}
                     onSubscriptionError={handleRealtimeSubscriptionError}
@@ -2251,7 +2639,7 @@ export default function ChatWorkspace({
                                                     </span>
                                                 )}
                                                 <span className="mt-1 flex items-center justify-between gap-2">
-                                                    <span className="truncate text-xs text-slate-500">{conversation.last_message?.body ?? 'Chưa có tin nhắn'}</span>
+                                                    <span className="truncate text-xs text-slate-500">{conversationMessagePreview(conversation.last_message)}</span>
                                                     {conversation.unread_count > 0 && <span className="grid min-w-5 place-items-center rounded-full bg-rose-500 px-1.5 py-0.5 text-[11px] font-bold text-white">{conversation.unread_count}</span>}
                                                 </span>
                                             </span>
@@ -2407,27 +2795,91 @@ export default function ChatWorkspace({
                                     const agentMessage = message.sender_kind === 'agent';
                                     const alignRight = mode === 'agent' ? agentMessage : authoredByCurrentUser;
                                     const showAgentIdentity = mode === 'agent' && agentMessage;
+                                    const attachments = messageAttachments(message);
+                                    const reactions = messageReactions(message);
+                                    const canReact = message.id > 0
+                                        && !message.is_internal
+                                        && selected.permissions.reply
+                                        && selected.status !== 'closed';
                                     return (
                                         <article key={message.client_message_id ?? message.id} className={`flex items-end gap-2 ${alignRight ? 'justify-end' : 'justify-start'} ${message.delivery_state === 'failed' ? 'opacity-70' : ''}`}>
-                                            <div className={`max-w-[84%] sm:max-w-[72%] ${alignRight ? 'items-end' : 'items-start'} flex flex-col`}>
+                                            <div className={`${compact ? 'max-w-[88%]' : 'max-w-[84%] sm:max-w-[72%]'} ${alignRight ? 'items-end' : 'items-start'} flex min-w-0 flex-col`}>
                                                 {(showAgentIdentity || !alignRight) && <span className="mb-1 px-1 text-[11px] font-medium text-slate-500">{message.sender?.username ?? (message.sender_kind === 'system' ? 'Hệ thống' : 'Hỗ trợ')}{showAgentIdentity && authoredByCurrentUser ? ' · Bạn' : ''}</span>}
-                                                <div className={`rounded-2xl px-3.5 py-2.5 text-sm leading-6 shadow-sm ${message.is_internal
+                                                <div className={`w-full overflow-hidden rounded-2xl text-sm leading-6 shadow-sm ${attachments.length > 0 ? 'p-1.5' : 'px-3.5 py-2.5'} ${message.is_internal
                                                     ? 'border border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-100'
                                                     : alignRight
                                                         ? 'rounded-br-md bg-gradient-to-br from-indigo-600 to-blue-600 text-white'
                                                         : 'rounded-bl-md border border-slate-200 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100'}`}>
-                                                    {message.is_internal && <span className="mb-1 flex items-center gap-1 text-[11px] font-bold uppercase tracking-wide text-amber-600 dark:text-amber-300"><ShieldCheck className="h-3 w-3" /> Ghi chú nội bộ</span>}
-                                                    <p className="whitespace-pre-wrap break-words">{message.body}</p>
+                                                    <MessageAttachments
+                                                        attachments={attachments}
+                                                        compact={compact}
+                                                        onOpen={setLightboxAttachment}
+                                                        onLoadError={refreshExpiredAttachment}
+                                                    />
+                                                    <div className={attachments.length > 0 && (message.body || message.is_internal || attachmentsWerePurged(message)) ? 'px-2 pb-1 pt-2' : ''}>
+                                                        {message.is_internal && <span className="mb-1 flex items-center gap-1 text-[11px] font-bold uppercase tracking-wide text-amber-600 dark:text-amber-300"><ShieldCheck className="h-3 w-3" /> Ghi chú nội bộ</span>}
+                                                        {message.body && <p className="whitespace-pre-wrap break-words">{message.body}</p>}
+                                                        {attachmentsWerePurged(message) && attachments.length === 0 && (
+                                                            <p className="flex items-center gap-1.5 text-xs italic opacity-75"><ImagePlus className="h-3.5 w-3.5" /> Ảnh đã hết hạn và được dọn tự động.</p>
+                                                        )}
+                                                    </div>
                                                 </div>
+                                                {(reactions.length > 0 || canReact) && (
+                                                    <div data-reaction-picker className={`relative mt-1 flex max-w-full flex-wrap items-center gap-1 px-1 ${alignRight ? 'justify-end' : 'justify-start'}`}>
+                                                        {reactions.map(reaction => (
+                                                            <button
+                                                                key={reaction.emoji}
+                                                                type="button"
+                                                                disabled={!canReact}
+                                                                onClick={() => void toggleReaction(message, reaction.emoji)}
+                                                                className={`inline-flex h-7 items-center gap-1 rounded-full border px-2 text-xs transition disabled:cursor-default ${reaction.reacted_by_me
+                                                                    ? 'border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-500/50 dark:bg-indigo-500/15 dark:text-indigo-200'
+                                                                    : 'border-slate-200 bg-white text-slate-600 hover:border-indigo-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300'}`}
+                                                                aria-label={`${reaction.reacted_by_me ? 'Bỏ' : 'Thêm'} cảm xúc ${reaction.emoji}`}
+                                                            >
+                                                                <span>{reaction.emoji}</span><span className="font-semibold">{reaction.count}</span>
+                                                            </button>
+                                                        ))}
+                                                        {canReact && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setReactionPickerMessageId(current => current === message.id ? null : message.id)}
+                                                                className="grid h-7 w-7 place-items-center rounded-full border border-transparent text-slate-400 transition hover:border-slate-200 hover:bg-white hover:text-indigo-500 dark:hover:border-slate-700 dark:hover:bg-slate-900"
+                                                                aria-label="Thêm cảm xúc"
+                                                            >
+                                                                <Smile className="h-3.5 w-3.5" />
+                                                            </button>
+                                                        )}
+                                                        {reactionPickerMessageId === message.id && (
+                                                            <div className={`absolute bottom-9 z-40 flex gap-0.5 rounded-full border border-slate-200 bg-white p-1.5 shadow-xl dark:border-slate-700 dark:bg-slate-900 ${alignRight ? 'right-0' : 'left-0'}`}>
+                                                                {MESSAGE_REACTION_EMOJIS.map(emoji => (
+                                                                    <button
+                                                                        key={emoji}
+                                                                        type="button"
+                                                                        onClick={() => void toggleReaction(message, emoji)}
+                                                                        className="grid h-8 w-8 place-items-center rounded-full text-lg transition hover:scale-110 hover:bg-slate-100 dark:hover:bg-slate-800"
+                                                                        aria-label={`Cảm xúc ${emoji}`}
+                                                                    >
+                                                                        {emoji}
+                                                                    </button>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
                                                 <span className="mt-1 flex items-center gap-1 px-1 text-[10px] text-slate-400">
                                                     {formatTime(message.created_at)}
-                                                    {message.delivery_state === 'sending' && <><LoaderCircle className="h-3 w-3 animate-spin" /> Đang gửi…</>}
-                                                    {message.delivery_state === 'failed' && <span className="font-medium text-rose-500">Gửi thất bại · bấm gửi để thử lại</span>}
+                                                    {message.delivery_state === 'sending' && <><LoaderCircle className="h-3 w-3 animate-spin" /> {typeof message.delivery_progress === 'number' ? `Đang tải ${message.delivery_progress}%` : 'Đang gửi…'}</>}
+                                                    {message.delivery_state === 'failed' && (
+                                                        <button type="button" onClick={() => retryFailedMessage(message)} className="inline-flex items-center gap-1 font-semibold text-rose-500 hover:text-rose-600">
+                                                            <RotateCcw className="h-3 w-3" /> Gửi lại
+                                                        </button>
+                                                    )}
                                                     {!message.delivery_state && authoredByCurrentUser && message.sender_kind === 'agent' && <CheckCheck className="h-3 w-3" />}
                                                 </span>
-                                                {message.sender_kind === 'customer' && message.seen_by.length > 0 && (
+                                                {message.sender_kind === 'customer' && (message.seen_by ?? []).length > 0 && (
                                                     <span className="mt-0.5 max-w-full truncate px-1 text-[10px] text-emerald-600 dark:text-emerald-400">
-                                                        Đã xem bởi {message.seen_by.map(agent => agent.username).filter(Boolean).join(', ')}
+                                                        Đã xem bởi {(message.seen_by ?? []).map(agent => agent.username).filter(Boolean).join(', ')}
                                                     </span>
                                                 )}
                                             </div>
@@ -2448,8 +2900,63 @@ export default function ChatWorkspace({
                                     Ghi chú nội bộ, khách hàng không nhìn thấy
                                 </label>
                             )}
+                            {pendingImages.length > 0 && (
+                                <div className="mb-2 flex gap-2 overflow-x-auto pb-1" aria-label="Ảnh chờ gửi">
+                                    {pendingImages.map(image => (
+                                        <div key={image.id} className="group relative h-16 w-16 shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-slate-100 dark:border-slate-700 dark:bg-slate-800">
+                                            <img src={image.previewUrl} alt={image.file.name} className="h-full w-full object-cover" />
+                                            <button
+                                                type="button"
+                                                onClick={() => removePendingImage(image.id)}
+                                                className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-black/65 text-white transition hover:bg-rose-500"
+                                                aria-label={`Bỏ ảnh ${image.file.name}`}
+                                            >
+                                                <X className="h-3 w-3" />
+                                            </button>
+                                            <span className="absolute inset-x-0 bottom-0 truncate bg-black/55 px-1 py-0.5 text-[8px] text-white">{formatFileSize(image.file.size)}</span>
+                                        </div>
+                                    ))}
+                                    <span className="self-end pb-1 text-[10px] text-slate-400">{pendingImages.length}/{CHAT_IMAGE_MAX_COUNT}</span>
+                                </div>
+                            )}
                             <div className={`flex items-end gap-2 rounded-2xl border bg-slate-50 p-2 transition focus-within:ring-2 ${internalNote ? 'border-amber-300 focus-within:ring-amber-200 dark:border-amber-500/40' : 'border-slate-200 focus-within:border-indigo-400 focus-within:ring-indigo-100 dark:border-slate-700 dark:focus-within:ring-indigo-500/20'} dark:bg-slate-900`}>
+                                <input
+                                    ref={imageInputRef}
+                                    type="file"
+                                    accept="image/jpeg,image/png,image/webp"
+                                    multiple
+                                    className="hidden"
+                                    onChange={addImages}
+                                />
+                                <div ref={composerToolsRef} className="relative flex shrink-0 items-center gap-0.5 pb-1">
+                                    <button
+                                        type="button"
+                                        disabled={!selected.permissions.reply || selected.status === 'closed' || pendingImages.length >= CHAT_IMAGE_MAX_COUNT}
+                                        onClick={() => imageInputRef.current?.click()}
+                                        className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 transition hover:bg-slate-200 hover:text-indigo-600 disabled:cursor-not-allowed disabled:opacity-35 dark:hover:bg-slate-800 dark:hover:text-indigo-300"
+                                        aria-label="Chọn ảnh"
+                                        title="Chọn tối đa 4 ảnh, mỗi ảnh 5 MB"
+                                    >
+                                        <ImagePlus className="h-4 w-4" />
+                                    </button>
+                                    <button
+                                        type="button"
+                                        disabled={!selected.permissions.reply || selected.status === 'closed'}
+                                        onClick={() => setEmojiPickerOpen(value => !value)}
+                                        className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 transition hover:bg-slate-200 hover:text-indigo-600 disabled:cursor-not-allowed disabled:opacity-35 dark:hover:bg-slate-800 dark:hover:text-indigo-300"
+                                        aria-label="Chọn emoji"
+                                        aria-expanded={emojiPickerOpen}
+                                    >
+                                        <Smile className="h-4 w-4" />
+                                    </button>
+                                    {emojiPickerOpen && (
+                                        <div className="absolute bottom-11 left-0 z-50">
+                                            <EmojiPicker onSelect={insertEmoji} />
+                                        </div>
+                                    )}
+                                </div>
                                 <textarea
+                                    ref={composerRef}
                                     value={draft}
                                     onChange={event => setDraft(event.target.value)}
                                     onKeyDown={handleComposerKeyDown}
@@ -2461,7 +2968,7 @@ export default function ChatWorkspace({
                                 />
                                 <button
                                     type="submit"
-                                    disabled={!draft.trim() || sending || !selected.permissions.reply || selected.status === 'closed'}
+                                    disabled={(!draft.trim() && pendingImages.length === 0) || sending || !selected.permissions.reply || selected.status === 'closed'}
                                     className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl text-white shadow-sm transition disabled:cursor-not-allowed disabled:opacity-40 ${internalNote ? 'bg-amber-500 hover:bg-amber-400' : 'bg-indigo-600 hover:bg-indigo-500'}`}
                                     aria-label="Gửi tin nhắn"
                                 >
@@ -2569,6 +3076,37 @@ export default function ChatWorkspace({
                     </button>
                 </div>
             )}
+            <Modal
+                open={lightboxAttachment !== null}
+                onCancel={() => setLightboxAttachment(null)}
+                footer={null}
+                centered
+                width={960}
+                title={lightboxAttachment?.name || 'Ảnh đính kèm'}
+                destroyOnHidden
+            >
+                {lightboxAttachment && (
+                    <div className="space-y-3 pt-2">
+                        <div className="grid max-h-[75vh] place-items-center overflow-auto rounded-xl bg-slate-950 p-2">
+                            <img
+                                src={lightboxAttachment.url}
+                                alt={lightboxAttachment.name || 'Ảnh đính kèm'}
+                                onError={() => {
+                                    refreshExpiredAttachment(lightboxAttachment);
+                                    setLightboxAttachment(null);
+                                }}
+                                className="max-h-[72vh] max-w-full object-contain"
+                            />
+                        </div>
+                        <div className="flex items-center justify-between gap-3 text-xs text-slate-500">
+                            <span>{formatFileSize(lightboxAttachment.size)}</span>
+                            <a href={lightboxAttachment.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold text-indigo-600 hover:text-indigo-500 dark:text-indigo-300">
+                                Mở ảnh gốc <ExternalLink className="h-3.5 w-3.5" />
+                            </a>
+                        </div>
+                    </div>
+                )}
+            </Modal>
             <RelatedOrderModal detail={relatedOrderDetail} onClose={() => setRelatedOrderDetail(null)} />
         </section>
     );

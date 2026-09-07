@@ -4,9 +4,11 @@ namespace App\Services\Chat;
 
 use App\Enums\Permission;
 use App\Events\ChatInboxUpdated;
+use App\Events\ChatMessageReactionUpdated;
 use App\Events\ChatMessageSent;
 use App\Events\ChatReadUpdated;
 use App\Models\ChatConversation;
+use App\Models\ChatMessage;
 use App\Models\ChatParticipant;
 use App\Models\User;
 use Illuminate\Support\Facades\Log;
@@ -45,6 +47,24 @@ class ChatRealtimeNotifier
             $lastReadMessageId,
             $readAt,
             $this->recipientIds($conversation),
+        ));
+    }
+
+    /** @param list<array{emoji: string, count: int, user_ids: list<int>}> $reactions */
+    public function reaction(
+        ChatConversation $conversation,
+        ChatMessage $message,
+        array $reactions,
+        int $actorId,
+        bool $active,
+    ): void {
+        $this->send(new ChatMessageReactionUpdated(
+            (int) $conversation->getKey(),
+            (int) $message->getKey(),
+            $reactions,
+            $actorId,
+            $active,
+            $this->recipientIds($conversation, (bool) $message->is_internal),
         ));
     }
 

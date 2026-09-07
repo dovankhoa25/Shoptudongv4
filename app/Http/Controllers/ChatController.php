@@ -18,9 +18,14 @@ use App\Services\Chat\ChatSubjectResolver;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
+use Throwable;
 
 class ChatController extends Controller
 {
@@ -163,7 +168,7 @@ class ChatController extends Controller
         $this->prepareConversation($conversation, $request->user());
 
         $messages = $conversation->messages()
-            ->with('sender:id,username,avatar')
+            ->with(['sender:id,username,avatar', 'media', 'reactions'])
             ->when(
                 (int) $conversation->customer_id === (int) $request->user()->getKey(),
                 fn (Builder $query) => $query->where('is_internal', false),
@@ -204,7 +209,7 @@ class ChatController extends Controller
         $this->prepareConversation($conversation, $request->user());
 
         $query = $conversation->messages()
-            ->with('sender:id,username,avatar')
+            ->with(['sender:id,username,avatar', 'media', 'reactions'])
             ->when($validated['before'] ?? null, fn (Builder $query, int $before) => $query->where('id', '<', $before))
             ->when($validated['after_id'] ?? null, fn (Builder $query, int $afterId) => $query->where('id', '>', $afterId))
             ->when(
@@ -235,11 +240,28 @@ class ChatController extends Controller
     {
         Gate::authorize('send', $conversation);
         $validated = $request->validate([
-            'body' => ['required', 'string', 'max:5000'],
+            'body' => ['nullable', 'string', 'max:5000'],
             'reply_to_id' => ['nullable', 'integer', 'min:1'],
             'client_message_id' => ['nullable', 'uuid'],
             'is_internal' => ['nullable', 'boolean'],
+            'images' => ['nullable', 'array', 'max:'.max(1, (int) config('chat.attachments.max_files', 4))],
+            'images.*' => [
+                'required',
+                'file',
+                'image',
+                'mimes:jpg,jpeg,png,webp',
+                'mimetypes:image/jpeg,image/png,image/webp',
+                'max:'.max(1, (int) config('chat.attachments.max_kilobytes', 5120)),
+                'dimensions:max_width=8000,max_height=8000',
+            ],
         ]);
+
+        $images = array_values(array_filter($request->file('images', [])));
+        if (trim((string) ($validated['body'] ?? '')) === '' && $images === []) {
+            throw ValidationException::withMessages([
+                'body' => 'Tin nhắn phải có nội dung hoặc ít nhất một ảnh.',
+            ]);
+        }
 
         $isCustomer = (int) $conversation->customer_id === (int) $request->user()->getKey();
         if ($isCustomer && ($validated['is_internal'] ?? false)) {
@@ -249,9 +271,48 @@ class ChatController extends Controller
             abort(403, 'Bạn không có quyền gửi ghi chú nội bộ.');
         }
 
-        [$message, $conversation, $created] = $this->manager->send($conversation, $request->user(), $validated);
+        $storedFiles = [];
+        try {
+            [$message, $conversation, $created] = DB::transaction(function () use (
+                $conversation,
+                $request,
+                $validated,
+                $images,
+                &$storedFiles,
+            ): array {
+                [$message, $conversation, $created] = $this->manager->send(
+                    $conversation,
+                    $request->user(),
+                    $validated,
+                );
+
+                if ($created && $images !== []) {
+                    foreach ($images as $image) {
+                        $media = $this->attachImage($message, $image);
+                        $storedFiles[] = [$media->disk, $media->getPathRelativeToRoot()];
+                    }
+
+                    $metadata = $message->metadata ?? [];
+                    $metadata['attachments_count'] = count($images);
+                    unset($metadata['attachments_purged_at']);
+                    $message->forceFill(['metadata' => $metadata])->save();
+                }
+
+                return [$message, $conversation, $created];
+            });
+        } catch (Throwable $exception) {
+            // Media files are not transactional. Remove files copied before a
+            // later attachment failed; the surrounding DB transaction removes
+            // their media/message rows.
+            foreach ($storedFiles as [$disk, $path]) {
+                Storage::disk($disk)->delete($path);
+            }
+
+            throw $exception;
+        }
+
         $this->prepareConversation($conversation, $request->user());
-        $message->loadMissing('sender:id,username,avatar');
+        $message->loadMissing(['sender:id,username,avatar', 'media', 'reactions']);
         $message->setRelation('conversation', $conversation);
         $messagePayload = (new ChatMessageResource($message))->resolve($request);
 
@@ -287,6 +348,87 @@ class ChatController extends Controller
             'data' => $messagePayload,
             'conversation' => (new ChatConversationResource($conversation))->resolve($request),
         ], $created ? 201 : 200);
+    }
+
+    public function toggleReaction(
+        Request $request,
+        ChatConversation $conversation,
+        ChatMessage $message,
+    ): JsonResponse {
+        Gate::authorize('send', $conversation);
+        abort_unless((int) $message->conversation_id === (int) $conversation->getKey(), 404);
+
+        if ($message->is_internal) {
+            abort(404);
+        }
+        $validated = $request->validate([
+            'emoji' => ['required', 'string', Rule::in(config('chat.reactions.allowed', []))],
+            // New clients send the desired state so a network retry cannot
+            // accidentally undo the first request. Keeping this nullable lets
+            // an older deployed frontend continue to use toggle semantics
+            // during a rolling deployment.
+            'active' => ['nullable', 'boolean'],
+        ]);
+
+        [$active, $changed, $conversation] = DB::transaction(function () use (
+            $conversation,
+            $message,
+            $request,
+            $validated,
+        ): array {
+            $lockedConversation = ChatConversation::query()
+                ->lockForUpdate()
+                ->findOrFail($conversation->getKey());
+            Gate::forUser($request->user())->authorize('send', $lockedConversation);
+
+            $lockedMessage = ChatMessage::query()
+                ->whereKey($message->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+            abort_unless((int) $lockedMessage->conversation_id === (int) $lockedConversation->getKey(), 404);
+            abort_if($lockedMessage->is_internal, 404);
+
+            $reaction = $lockedMessage->reactions()
+                ->where('user_id', $request->user()->getKey())
+                ->where('emoji', $validated['emoji'])
+                ->first();
+            $desiredActive = array_key_exists('active', $validated)
+                ? (bool) $validated['active']
+                : $reaction === null;
+
+            if (! $desiredActive && $reaction) {
+                $reaction->delete();
+
+                return [false, true, $lockedConversation];
+            }
+
+            if ($desiredActive && ! $reaction) {
+                $lockedMessage->reactions()->create([
+                    'user_id' => $request->user()->getKey(),
+                    'emoji' => $validated['emoji'],
+                ]);
+
+                return [true, true, $lockedConversation];
+            }
+
+            return [$desiredActive, false, $lockedConversation];
+        });
+
+        $message->load('reactions');
+        $neutralReactions = $message->reactionSummary();
+        if ($changed) {
+            $this->realtime->reaction(
+                $conversation,
+                $message,
+                $neutralReactions,
+                (int) $request->user()->getKey(),
+                $active,
+            );
+        }
+
+        return response()->json([
+            'data' => $message->reactionSummary((int) $request->user()->getKey()),
+        ]);
     }
 
     public function read(Request $request, ChatConversation $conversation): JsonResponse
@@ -449,8 +591,36 @@ class ChatController extends Controller
             'assignee:id,username,avatar',
             'participants.user:id,username,avatar',
             'lastMessage.sender:id,username,avatar',
+            'lastMessage.media',
+            'lastMessage.reactions',
             'subject',
         ];
+    }
+
+    private function attachImage(ChatMessage $message, UploadedFile $image): \Spatie\MediaLibrary\MediaCollections\Models\Media
+    {
+        $dimensions = @getimagesize($image->getRealPath());
+        $extension = match ($image->getMimeType()) {
+            'image/jpeg' => 'jpg',
+            'image/png' => 'png',
+            'image/webp' => 'webp',
+            default => throw ValidationException::withMessages([
+                'images' => 'Định dạng ảnh không được hỗ trợ.',
+            ]),
+        };
+
+        return $message
+            ->addMedia($image)
+            ->usingName(pathinfo($image->getClientOriginalName(), PATHINFO_FILENAME) ?: 'chat-image')
+            ->usingFileName(Str::uuid().'.'.$extension)
+            ->withCustomProperties([
+                'width' => is_array($dimensions) ? (int) $dimensions[0] : null,
+                'height' => is_array($dimensions) ? (int) $dimensions[1] : null,
+            ])
+            ->toMediaCollection(
+                ChatMessage::MEDIA_COLLECTION_IMAGES,
+                (string) config('chat.attachments.disk', 'chat'),
+            );
     }
 
     private function prepareConversation(ChatConversation $conversation, User $viewer): void

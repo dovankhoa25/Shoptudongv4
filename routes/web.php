@@ -43,6 +43,7 @@ use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Admin\WithdrawalRequestController;
 use App\Http\Controllers\Auth\SocialAuthController;
 use App\Http\Controllers\ChatController;
+use App\Http\Controllers\ChatMediaController;
 use App\Http\Controllers\ChatPageController;
 use App\Http\Controllers\ChatRealtimeChannelController;
 use App\Http\Controllers\ProfileController;
@@ -64,6 +65,10 @@ Route::get('/dashboard', function () {
     return Inertia::render('Dashboard');
 })->middleware(['auth', 'verified'])->name('dashboard');
 
+Route::get('/chat/media/{media:uuid}', ChatMediaController::class)
+    ->middleware(['signed', 'throttle:600,1'])
+    ->name('chat.media.show');
+
 Route::middleware('auth')->group(function () {
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
@@ -81,6 +86,8 @@ Route::middleware('auth')->group(function () {
         Route::get('/conversations/{conversation}', [ChatController::class, 'show'])->name('conversations.show');
         Route::get('/conversations/{conversation}/messages', [ChatController::class, 'messages'])->name('messages.index');
         Route::post('/conversations/{conversation}/messages', [ChatController::class, 'send'])->name('messages.store');
+        Route::post('/conversations/{conversation}/messages/{message}/reactions', [ChatController::class, 'toggleReaction'])
+            ->name('messages.reactions.toggle');
         Route::patch('/conversations/{conversation}/read', [ChatController::class, 'read'])->name('read');
     });
 });
@@ -836,6 +843,9 @@ Route::prefix('admin/chat')
         Route::post('/conversations/{conversation}/messages', [ChatController::class, 'send'])
             ->middleware(Permission::middleware(Permission::ChatsReply))
             ->name('messages.store');
+        Route::post('/conversations/{conversation}/messages/{message}/reactions', [ChatController::class, 'toggleReaction'])
+            ->middleware(Permission::middleware(Permission::ChatsReply))
+            ->name('messages.reactions.toggle');
         Route::patch('/conversations/{conversation}/read', [ChatController::class, 'read'])
             ->middleware(Permission::middleware(Permission::ChatsView))
             ->name('read');
