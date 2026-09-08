@@ -1,3 +1,4 @@
+import { permissionLabel } from '@/Components/Nro/permissionLabels';
 import { IPermissions } from '@/InterFaces/permission';
 import { IRole } from '@/InterFaces/role';
 import { useTheme } from '@/Providers/ThemeProvider';
@@ -71,7 +72,7 @@ const RoleHasPermissionModal = ({ role, onClose, onSaved = () => undefined }: Pr
         const keyword = search.trim().toLocaleLowerCase('vi');
 
         return allPermissions
-            .filter(permission => !keyword || (permission.name ?? '').toLocaleLowerCase('vi').includes(keyword))
+            .filter(permission => !keyword || ((permission.name ?? '') + ' ' + permissionLabel(permission.name)).toLocaleLowerCase('vi').includes(keyword))
             .reduce<Record<string, IPermissions[]>>((groups, permission) => {
                 const group = permission.name?.split('.')[0] || 'other';
                 (groups[group] ??= []).push(permission);
@@ -178,7 +179,7 @@ const RoleHasPermissionModal = ({ role, onClose, onSaved = () => undefined }: Pr
                                             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                                                 {permissions.map(permission => (
                                                     <label key={permission.id} className="rounded-lg border border-slate-200 p-3 transition hover:border-blue-400 dark:border-slate-700">
-                                                        <Checkbox value={permission.id}>{permission.name}</Checkbox>
+                                                        <Checkbox value={permission.id}>{permissionLabel(permission.name)}</Checkbox>
                                                     </label>
                                                 ))}
                                             </div>

@@ -27,12 +27,12 @@ class CancelStaleGoldTransactions extends Command
     {
         $goldCancelled = $this->closeExpiredPendingOrders(
             modelClass: GoldTransaction::class,
-            pendingTimeout: $this->positiveConfig('trading.gold_order_pending_timeout_minutes', 10),
+            pendingTimeout: $this->positiveConfig('trading.gold_order_pending_timeout_minutes', 15),
             orderType: 'gold',
         );
         $goldRefunded = $this->refundElapsedCancellations(
             modelClass: GoldTransaction::class,
-            refundGrace: $this->positiveConfig('trading.gold_order_refund_grace_minutes', 5),
+            refundGrace: $this->positiveConfig('trading.gold_order_refund_grace_minutes', 2),
             orderType: 'gold',
             transactionType: Transaction::TYPE_GOLD_ORDER_REFUND,
             idempotencyPrefix: 'gold-order-timeout-refund',
@@ -41,12 +41,12 @@ class CancelStaleGoldTransactions extends Command
 
         $gemCancelled = $this->closeExpiredPendingOrders(
             modelClass: GemTransaction::class,
-            pendingTimeout: $this->positiveConfig('trading.gem_order_pending_timeout_minutes', 10),
+            pendingTimeout: $this->positiveConfig('trading.gem_order_pending_timeout_minutes', 15),
             orderType: 'gem',
         );
         $gemRefunded = $this->refundElapsedCancellations(
             modelClass: GemTransaction::class,
-            refundGrace: $this->positiveConfig('trading.gem_order_refund_grace_minutes', 5),
+            refundGrace: $this->positiveConfig('trading.gem_order_refund_grace_minutes', 2),
             orderType: 'gem',
             transactionType: Transaction::TYPE_GEM_ORDER_REFUND,
             idempotencyPrefix: 'gem-order-timeout-refund',

@@ -33,6 +33,16 @@ enum Permission: string
     case AttributesView = 'attributes.view';
     case AttributesManage = 'attributes.manage';
     case NicksView = 'nicks.view';
+    case NicksCreate = 'nicks.create';
+    case NroAccountsView = 'nro-accounts.view';
+    case NroAccountsManage = 'nro-accounts.manage';
+    case ItemListingsView = 'item-listings.view';
+    case ItemListingsManage = 'item-listings.manage';
+    case ItemOrdersView = 'item-orders.view';
+    case ItemOrdersReconcile = 'item-orders.reconcile';
+    case NroWorkersManage = 'nro-workers.manage';
+    case NroSettingsManage = 'nro-settings.manage';
+    case NroSalePolicyManage = 'nro-sale-policy.manage';
     case NicksManage = 'nicks.manage';
     case NicksRefund = 'nicks.refund';
 

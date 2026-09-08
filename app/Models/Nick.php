@@ -9,6 +9,7 @@ use Spatie\MediaLibrary\InteractsWithMedia;
 
 class Nick extends Model implements HasMedia
 {
+    public function snapshot() { return $this->belongsTo(NroAccountSnapshot::class, 'snapshot_id'); }
 
     use HasUserOwnedScope, InteractsWithMedia;
 

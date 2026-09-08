@@ -1,3 +1,4 @@
+import { permissionLabel } from '@/Components/Nro/permissionLabels';
 import { useEffect, useMemo, useState } from 'react';
 import { Checkbox, ConfigProvider, Empty, Modal, Skeleton, Tag, message, theme } from 'antd';
 import axios from 'axios';
@@ -79,7 +80,7 @@ export default function UserPermissionModal({ user, onClose, onSaved = () => und
                                     <div key={group} className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
                                         <div className="mb-3 text-sm font-semibold uppercase text-slate-500">{group}</div>
                                         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                                            {items.map(permission => <Checkbox key={permission.id} value={permission.id}>{permission.name}</Checkbox>)}
+                                            {items.map(permission => <Checkbox key={permission.id} value={permission.id}>{permissionLabel(permission.name)}</Checkbox>)}
                                         </div>
                                     </div>
                                 ))}

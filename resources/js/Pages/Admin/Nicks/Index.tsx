@@ -60,6 +60,9 @@ export default function NickPage() {
     } = usePage<NickPageProps>().props;
 
     const toast = useToast();
+    const { auth } = usePage<NickPageProps>().props;
+    const canManage = auth.is_super_admin || auth.permissions?.includes('nicks.manage');
+    const canCreate = canManage || auth.permissions?.includes('nicks.create');
     const [showEditModal, setShowEditModal] = useState(false);
     const [selectedNick, setSelectedNick] = useState<number | null | undefined>(null);
     const [showBulkUpdateModal, setShowBulkUpdateModal] = useState(false);
@@ -439,6 +442,7 @@ export default function NickPage() {
             fixed: 'right',
             align: 'center',
             render: (_, record: INick) => {
+                if (!canManage) return <Button onClick={() => handleView(record)}>Xem chi tiết</Button>;
                 const menu = (
                     <Menu>
                         <Menu.Item key="view" icon={<Eye />} onClick={() => handleView(record)}>
@@ -638,6 +642,7 @@ export default function NickPage() {
                     type="primary"
                     icon={<Filter className="w-4 h-4" />}
                     onClick={() => setShowBulkUpdateModal(true)}
+                    hidden={!canManage}
                 >
                     Cập nhật hàng loạt
                 </Button>
@@ -661,7 +666,7 @@ export default function NickPage() {
                 }}
                 onFiltersChange={setColumnFilters}
                 onSearch={handleSearch}
-                onAdd={handleAdd}
+                onAdd={canCreate ? handleAdd : undefined}
                 onReset={handleResetFilters}
                 filters={filterOptions}
                 searchPlaceholder="Tìm theo tên nick, người đăng..."

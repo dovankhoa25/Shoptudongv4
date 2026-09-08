@@ -295,6 +295,7 @@ Route::prefix('admin')
                     ->middleware(Permission::middleware(
                         Permission::AttributesView,
                         Permission::AttributesManage,
+                        Permission::NicksCreate,
                         Permission::NicksManage,
                     ))
                     ->name('attributes');
@@ -349,10 +350,10 @@ Route::prefix('admin')
                     ->middleware(Permission::middleware(Permission::NicksView, Permission::NicksManage))
                     ->name('index');
                 Route::get('/create', [NickController::class, 'create'])
-                    ->middleware(Permission::middleware(Permission::NicksManage))
+                    ->middleware(Permission::middleware(Permission::NicksCreate, Permission::NicksManage))
                     ->name('create');
                 Route::post('/', [NickController::class, 'store'])
-                    ->middleware(Permission::middleware(Permission::NicksManage))
+                    ->middleware(Permission::middleware(Permission::NicksCreate, Permission::NicksManage))
                     ->name('store');
                 Route::get('/detail/{id}', [NickController::class, 'show'])
                     ->middleware(Permission::middleware(Permission::NicksView, Permission::NicksManage))

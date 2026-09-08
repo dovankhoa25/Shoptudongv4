@@ -322,6 +322,9 @@ class NickController extends Controller
     public function update(UpdateNickRequest $request, Nick $nick)
     {
         $this->authorize('update', $nick);
+        if ($nick->game_account_id && ($request->input('account_name') !== $nick->account_name || $request->input('account_password') !== $nick->account_password)) {
+            return redirect()->back()->with('error', 'Nick gắn snapshot: cập nhật mật khẩu tại Kho NRO để đồng bộ với tool. Tài khoản phải giữ đúng acc nguồn.');
+        }
 
         if ($nick->status !== 'not_sold') {
             return redirect()->back()->with('error', 'Không được phép chỉnh sửa Nick đã bán.');

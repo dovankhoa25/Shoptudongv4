@@ -10,8 +10,10 @@ use App\Http\Controllers\AppAuto\VersionTwo\AppGemTransactionVersionTwoControlle
 use App\Http\Controllers\AppAuto\VersionTwo\AppGoldTransactionVersionTwoController;
 use App\Http\Controllers\AppAuto\VersionTwo\AppServerVersionTwoController;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\NroWorkerController;
+use App\Http\Middleware\NroWorkerKey;
 
-Route::prefix('v1')->group(function () {
+Route::prefix('v1')->middleware('app')->group(function () {
     Route::get('/bots', [AppBotController::class, 'index']);
     Route::put('/bots/{id}', [AppBotController::class, 'update']);
 
@@ -33,7 +35,7 @@ Route::prefix('v1')->group(function () {
 });
 
 
-Route::prefix('v2')->group(function () {
+Route::prefix('v2')->middleware('app')->group(function () {
 
     Route::get('/servers', [AppServerVersionTwoController::class, 'index']);
     Route::get('/servers/login', [AppServerVersionTwoController::class, 'login']);
@@ -66,4 +68,15 @@ Route::prefix('v2')->group(function () {
 
     // Route::post('/gem/bots', [AppGemBotVersionTwoController::class, 'store']);
     // Route::post('/gem-transactions', [AppGemTransactionVersionTwoController::class, 'store']);
+});
+
+// Each NRO machine has its own revocable Bearer key.
+Route::prefix('nro-worker')->middleware([NroWorkerKey::class, 'throttle:120,1'])->group(function () {
+    Route::get('accounts', [NroWorkerController::class, 'accounts']);
+    Route::post('claim', [NroWorkerController::class, 'claim']);
+    Route::post('jobs/{id}/heartbeat', [NroWorkerController::class, 'heartbeat'])->whereNumber('id');
+    Route::post('jobs/{id}/complete', [NroWorkerController::class, 'complete'])->whereNumber('id');
+    Route::post('jobs/{id}/progress', [NroWorkerController::class, 'progress'])->whereNumber('id');
+    Route::post('jobs/{id}/ready', [NroWorkerController::class, 'ready'])->whereNumber('id');
+    Route::post('jobs/{id}/begin-round', [NroWorkerController::class, 'beginRound'])->whereNumber('id');
 });

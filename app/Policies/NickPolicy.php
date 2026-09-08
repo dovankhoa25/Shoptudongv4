@@ -31,7 +31,7 @@ class NickPolicy
      */
     public function create(User $user): bool
     {
-        return $user->canViewAllAdminData()
+        return $user->can('nicks.create') || $user->canViewAllAdminData()
             || $user->can(Permission::NicksManage->value);
     }
 

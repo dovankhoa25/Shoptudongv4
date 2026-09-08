@@ -45,6 +45,7 @@ interface MenuItem {
 const SIDEBAR_SCROLL_STORAGE_KEY = 'admin-sidebar-scroll-top';
 
 const menuItems: MenuItem[] = [
+    { key: 'nro-shop', label: 'Kho NRO & snapshot nick', href: '/admin/nro-shop', icon: Package, permission: ["nicks.create","nro-accounts.view","nro-accounts.manage","item-listings.view","item-listings.manage","item-orders.view","item-orders.reconcile","nro-workers.manage","nro-settings.manage","nro-sale-policy.manage","nicks.manage"] },
     {
         key: 'dashboard',
         label: 'Dashboard',
@@ -164,6 +165,7 @@ const menuItems: MenuItem[] = [
             'categories.manage',
             'attributes.view',
             'attributes.manage',
+            'nicks.create',
             'nicks.view',
             'nicks.manage',
             'carot-recharges.view',
@@ -174,6 +176,7 @@ const menuItems: MenuItem[] = [
             { key: 'categories', label: 'Danh mục', href: '/admin/games/categories', icon: FileText, permission: ['categories.view', 'categories.manage'] },
             { key: 'attributes', label: 'Thuộc tính nick', href: '/admin/games/attributes', icon: Shield, permission: ['attributes.view', 'attributes.manage'] },
             { key: 'category-attributes', label: 'Thuộc tính danh mục', href: '/admin/games/category-attributes', icon: Settings, permission: ['attributes.view', 'attributes.manage'] },
+            { key: 'post-nick', label: 'Đăng nick', href: '/admin/games/accounts/create', icon: Users, permission: ['nicks.create', 'nicks.manage'] },
             { key: 'nicks', label: 'Kho nick', href: '/admin/games/accounts', icon: Users, permission: ['nicks.view', 'nicks.manage'] },
             { key: 'nick-orders', label: 'Đơn mua nick', href: '/admin/games/accounts/history', icon: Clock, permission: ['nicks.view', 'nicks.manage'] },
             { key: 'carot-recharges', label: 'Nạp Carot', href: '/admin/carot-recharges', icon: CreditCard, permission: 'carot-recharges.view' },

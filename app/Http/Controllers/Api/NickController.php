@@ -69,7 +69,9 @@ class NickController extends Controller
         $orderBys = $this->parseSort($request);
 
         $query = Nick::query()
+            ->with('snapshot:id,summary_json')
             ->select([
+                'snapshot_id',
                 'id',
                 'price',
                 'description',
@@ -542,6 +544,7 @@ class NickController extends Controller
     public function show($id)
     {
         $nick = Nick::select([
+            'snapshot_id',
             'id',
             'price',
             'description',
@@ -550,6 +553,7 @@ class NickController extends Controller
             'attribute_cache_json',
             'category_id',
         ])
+            ->with(['snapshot', 'category:id,name,slug'])
             ->find($id);
 
         if (! $nick) {
@@ -559,14 +563,16 @@ class NickController extends Controller
         }
 
         // Lấy toàn bộ media của nick
-        $images = $nick->getMedia('images')->map(function ($media) {
+        $images = $nick->getMedia('images')->toBase()->map(function ($media) {
             return [
                 'url' => $media->getUrl(),
                 // 'name' => $media->name,
                 // 'id' => $media->id
             ];
         });
+        if ($nick->image && !$images->contains('url', $nick->image)) $images->prepend(['url' => $nick->image]);
         $relatedNicks = Nick::select([
+            'snapshot_id',
             'id',
             'price',
             'description',
@@ -574,6 +580,8 @@ class NickController extends Controller
             'listing_type',
             'attribute_cache_json',
         ])
+            ->with('snapshot:id,summary_json')
+            ->where('id', '!=', $nick->id)
             ->where('category_id', $nick->category_id)
             ->where('status', 'not_sold')
             ->whereBetween('price', [
@@ -590,8 +598,11 @@ class NickController extends Controller
                 'description' => $nick->description,
                 'image' => $nick->image,
                 'listing_type' => $nick->listing_type,
-                'attribute_cache_json' => $nick->attribute_cache_json,
+                'attribute_cache_json' => $nick->attribute_cache_json ?? '{}',
                 'images' => $images,
+                'category' => $nick->category ? ['name' => $nick->category->name, 'slug' => $nick->category->slug] : null,
+                'nro_summary' => $nick->snapshot?->summary_json,
+                'nro_snapshot' => $nick->snapshot ? ['data' => $nick->snapshot->data_json, 'completeness' => $nick->snapshot->completeness_json, 'summary' => $nick->snapshot->summary_json] : null,
                 'related' => NickResource::collection($relatedNicks),
             ],
         ]);
@@ -630,6 +641,14 @@ class NickController extends Controller
                 return response()->json(['message' => 'số dư không đủ'], 400);
             }
             $buyerOldBalance = $buyer->balance;
+            if ($nick->game_account_id) {
+                $gameAccount = \App\Models\NroAccount::whereKey($nick->game_account_id)->lockForUpdate()->firstOrFail();
+                if (DB::table('nro_worker_jobs')->where('account_id', $gameAccount->id)->whereIn('status', ['queued', 'processing', 'review'])->exists()) {
+                    DB::rollBack();
+                    return response()->json(['message' => 'Nick đang được kiểm tra thông tin. Vui lòng thử lại sau.'], 409);
+                }
+                $gameAccount->update(['status' => 'sold', 'game_password' => null]);
+            }
             // Trừ tiền Buyer an toàn
             $affected = User::where('id', $buyer->id)
                 ->where('balance', '>=', $nick->price)

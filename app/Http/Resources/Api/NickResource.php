@@ -14,7 +14,8 @@ class NickResource extends JsonResource
             'description' => $this->description,
             'image' => $this->image,
             'listing_type' => $this->listing_type,
-            'attribute_cache_json' => $this->attribute_cache_json,
+            'attribute_cache_json' => $this->attribute_cache_json ?? '{}',
+            'nro_summary' => $this->whenLoaded('snapshot', fn () => $this->snapshot?->summary_json),
         ];
     }
 }

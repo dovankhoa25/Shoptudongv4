@@ -2,6 +2,18 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Keep Tailwind's native input reset out of Ant Design's themed input wrappers. */
+.nro-account-modal .ant-input-affix-wrapper > input.ant-input {
+    background: transparent;
+    color: inherit;
+    border: 0;
+    padding: 0;
+    box-shadow: none;
+}
+.nro-account-modal .ant-form-item {
+    margin-bottom: 16px;
+}
+
 @layer base {
   :root {
     color-scheme: light;

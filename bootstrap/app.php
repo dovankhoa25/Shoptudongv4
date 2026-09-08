@@ -9,13 +9,13 @@ use Illuminate\Support\Facades\Route;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
-        web: __DIR__.'/../routes/web.php',
-        api: __DIR__.'/../routes/api.php',
+        web: [__DIR__.'/../routes/web.php', __DIR__.'/../routes/nro-shop-admin.php'],
+        api: [__DIR__.'/../routes/api.php', __DIR__.'/../routes/nro-shop.php'],
         channels: __DIR__.'/../routes/channels.php',
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
         then: function (): void {
-            Route::middleware('app')
+            Route::middleware('api')
                 ->prefix('app')
                 ->group(base_path('routes/app.php'));
 
@@ -44,7 +44,7 @@ return Application::configure(basePath: dirname(__DIR__))
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(function (Request $request, \Throwable $exception): bool {
-            return $request->is('api/*') || $request->expectsJson();
+            return $request->is('api/*', 'app/*') || $request->expectsJson();
         });
 
         // $exceptions->render(function (AuthenticationException $e, $request) {
@@ -53,7 +53,7 @@ return Application::configure(basePath: dirname(__DIR__))
         //     ], 401);
         // });
         $exceptions->render(function (AuthenticationException $e, $request) {
-            if ($request->expectsJson() || $request->is('api/*')) {
+            if ($request->expectsJson() || $request->is('api/*', 'app/*')) {
                 return response()->json([
                     'message' => 'Unauthenticated.',
                 ], 401);
