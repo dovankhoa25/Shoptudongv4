@@ -19,3 +19,6 @@
 
 0.0.8
 -- filter item
+
+0.0.9
+-- tối ưu dữ liệu

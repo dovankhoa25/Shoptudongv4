@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, KeyboardEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, ClipboardEvent, FormEvent, KeyboardEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, usePage } from '@inertiajs/react';
 import { echo } from '@laravel/echo-react';
 import { Modal } from 'antd';
@@ -34,6 +34,8 @@ import {
 import type { PageProps } from '@/types';
 import UserAvatar from '@/Components/UserAvatar';
 import StartCustomerChatModal from './StartCustomerChatModal';
+import { MessageActions, ReadReceipt } from './MessageTools';
+import { clipboardImages, continuesMessageGroup, latestReadCustomerMessageId } from './chatUi';
 import type {
     ChatAttachment,
     ChatConversation,
@@ -1240,6 +1242,8 @@ export default function ChatWorkspace({
     const [selectedId, setSelectedId] = useState<number | null>(initialConversationId);
     const [selected, setSelected] = useState<ChatConversation | null>(null);
     const [messages, setMessages] = useState<ChatMessage[]>([]);
+    const publicMessages = useMemo(() => messages.filter(message => !message.is_internal), [messages]);
+    const latestSeenMessageId = latestReadCustomerMessageId(publicMessages);
     const [internalNotes, setInternalNotes] = useState<ChatMessage[]>([]);
     const [internalNotesHasMore, setInternalNotesHasMore] = useState(false);
     const [internalNotesNextBefore, setInternalNotesNextBefore] = useState<number | null>(null);
@@ -2500,10 +2504,10 @@ export default function ChatWorkspace({
     useEffect(() => {
         const resumeActiveChat = () => {
             if (!isPageActive()) return;
-            void recoverMissingMessages();
-            void refreshInternalNotes();
-            scheduleConversationRefresh();
             flushPendingRead();
+            // A healthy subscription already delivered changes while the tab was hidden.
+            // Only retry an interrupted delta; reconnect handles inbox/note reconciliation.
+            if (recoveryPendingRef.current) void recoverMissingMessages();
         };
         document.addEventListener('visibilitychange', resumeActiveChat);
         window.addEventListener('focus', resumeActiveChat);
@@ -2511,7 +2515,7 @@ export default function ChatWorkspace({
             document.removeEventListener('visibilitychange', resumeActiveChat);
             window.removeEventListener('focus', resumeActiveChat);
         };
-    }, [flushPendingRead, recoverMissingMessages, refreshInternalNotes, scheduleConversationRefresh]);
+    }, [flushPendingRead, recoverMissingMessages]);
 
     const handleRealtimeMessage = useCallback((event: ChatMessageEvent) => {
         const incoming = event.message;
@@ -2694,10 +2698,8 @@ export default function ChatWorkspace({
         }
     };
 
-    const addImages = (event: ChangeEvent<HTMLInputElement>) => {
-        const files = Array.from(event.target.files ?? []);
-        event.target.value = '';
-        if (files.length === 0) return;
+    const queueImages = (files: File[]) => {
+        if (!selected?.permissions.reply || selected.status === 'closed' || files.length === 0) return;
 
         const remainingSlots = CHAT_IMAGE_MAX_COUNT - pendingImages.length;
         if (remainingSlots <= 0) {
@@ -2725,6 +2727,27 @@ export default function ChatWorkspace({
         setError(files.length > remainingSlots
             ? `Chỉ đã chọn ${remainingSlots} ảnh còn lại (tối đa ${CHAT_IMAGE_MAX_COUNT} ảnh).`
             : null);
+    };
+
+    const addImages = (event: ChangeEvent<HTMLInputElement>) => {
+        queueImages(Array.from(event.target.files ?? []));
+        event.target.value = '';
+    };
+
+    const pasteImages = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+        const files = clipboardImages(event.clipboardData);
+        if (!files.length) return;
+        event.preventDefault();
+        if (!selected?.permissions.reply || selected.status === 'closed') return;
+        queueImages(files);
+        const text = event.clipboardData.getData('text/plain');
+        if (text) {
+            const input = event.currentTarget;
+            const start = input.selectionStart;
+            const end = input.selectionEnd;
+            setDraft(current => (current.slice(0, start) + text + current.slice(end)).slice(0, 5000));
+            requestAnimationFrame(() => input.setSelectionRange(Math.min(start + text.length, input.value.length), Math.min(start + text.length, input.value.length)));
+        }
     };
 
     const removePendingImage = (imageId: string) => {
@@ -3781,6 +3804,7 @@ export default function ChatWorkspace({
 
                         <div
                             ref={messageScrollRef}
+                            data-chat-scroll
                             onScroll={event => {
                                 const target = event.currentTarget;
                                 const wasNearBottom = messageNearBottomRef.current;
@@ -3796,7 +3820,7 @@ export default function ChatWorkspace({
                             }}
                             className="flex-1 overflow-y-auto px-3 py-4 sm:px-5"
                         >
-                            <div className="mx-auto max-w-3xl space-y-3">
+                            <div className="mx-auto max-w-3xl space-y-1">
                                 {hasMoreMessages && (
                                     <button
                                         type="button"
@@ -3808,10 +3832,10 @@ export default function ChatWorkspace({
                                         Xem tin nhắn cũ hơn
                                     </button>
                                 )}
-                                {messages.filter(message => !message.is_internal).length === 0 && (
+                                {publicMessages.length === 0 && (
                                     <div className="py-10 text-center text-sm text-slate-500">Hãy gửi tin nhắn đầu tiên để bắt đầu trao đổi.</div>
                                 )}
-                                {messages.filter(message => !message.is_internal).map(message => {
+                                {publicMessages.map((message, index) => {
                                     if (message.type === 'tip') {
                                         return <TipMessageCard key={message.client_message_id ?? message.id} message={message} compact={compact} />;
                                     }
@@ -3819,6 +3843,7 @@ export default function ChatWorkspace({
                                     const authoredByCurrentUser = isMessageMine(message, currentUserId);
                                     const agentMessage = message.sender_kind === 'agent';
                                     const alignRight = mode === 'agent' ? agentMessage : authoredByCurrentUser;
+                                    const grouped = continuesMessageGroup(publicMessages[index - 1], message);
                                     const showAgentIdentity = mode === 'agent' && agentMessage;
                                     const attachments = messageAttachments(message);
                                     const reactions = messageReactions(message);
@@ -3827,10 +3852,14 @@ export default function ChatWorkspace({
                                         && selected.permissions.reply
                                         && selected.status !== 'closed';
                                     return (
-                                        <article key={message.client_message_id ?? message.id} className={`flex items-end gap-2 ${alignRight ? 'justify-end' : 'justify-start'} ${message.delivery_state === 'failed' ? 'opacity-70' : ''}`}>
-                                            <div className={`${compact ? 'max-w-[88%]' : 'max-w-[84%] sm:max-w-[72%]'} ${alignRight ? 'items-end' : 'items-start'} flex min-w-0 flex-col`}>
-                                                {(showAgentIdentity || !alignRight) && <span className="mb-1 px-1 text-[11px] font-medium text-slate-500">{message.sender_kind === 'system' ? 'Hệ thống' : showAgentIdentity ? internalChatUserName(message.sender, 'Hỗ trợ') : chatUserName(message.sender, 'Hỗ trợ')}{showAgentIdentity && authoredByCurrentUser ? ' · Bạn' : ''}</span>}
-                                                <div className={`w-full overflow-hidden rounded-2xl text-sm leading-6 shadow-sm ${attachments.length > 0 ? 'p-1.5' : 'px-3.5 py-2.5'} ${message.is_internal
+                                        <article key={message.client_message_id ?? message.id} className={`flex items-start gap-2 ${grouped ? '' : 'pt-2'} ${alignRight ? 'justify-end' : 'justify-start'} ${message.delivery_state === 'failed' ? 'opacity-70' : ''}`}>
+                                            {agentMessage && !alignRight && (grouped ? <span aria-hidden="true" className="w-7 shrink-0" /> : <Avatar user={message.sender} className="h-7 w-7 text-[10px]" />)}
+                                            <div className={`max-w-[80%] ${alignRight ? 'items-end' : 'items-start'} flex min-w-0 flex-col`}>
+                                                {!grouped && (showAgentIdentity || !alignRight) && <span className="mb-1 px-1 text-[11px] font-medium text-slate-500">{message.sender_kind === 'system' ? 'Hệ thống' : showAgentIdentity ? internalChatUserName(message.sender, 'Hỗ trợ') : chatUserName(message.sender, 'Hỗ trợ')}{showAgentIdentity && authoredByCurrentUser ? ' · Bạn' : ''}</span>}
+                                                <MessageActions enabled={canReact} alignRight={alignRight} open={reactionPickerMessageId === message.id}
+                                                    onOpenChange={open => setReactionPickerMessageId(open ? message.id : null)}
+                                                    onReact={emoji => void toggleReaction(message, emoji)} emojis={MESSAGE_REACTION_EMOJIS}>
+                                                <div className={`max-w-full overflow-hidden rounded-2xl text-sm leading-5 shadow-sm ${attachments.length > 0 ? 'p-1.5' : 'px-3 py-2'} ${message.is_internal
                                                     ? 'border border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-100'
                                                     : alignRight
                                                         ? 'rounded-br-md bg-gradient-to-br from-indigo-600 to-blue-600 text-white'
@@ -3849,7 +3878,8 @@ export default function ChatWorkspace({
                                                         )}
                                                     </div>
                                                 </div>
-                                                {(reactions.length > 0 || canReact) && (
+                                                </MessageActions>
+                                                {reactions.length > 0 && (
                                                     <div data-reaction-picker className={`relative mt-1 flex max-w-full flex-wrap items-center gap-1 px-1 ${alignRight ? 'justify-end' : 'justify-start'}`}>
                                                         {reactions.map(reaction => (
                                                             <button
@@ -3865,31 +3895,7 @@ export default function ChatWorkspace({
                                                                 <span>{reaction.emoji}</span><span className="font-semibold">{reaction.count}</span>
                                                             </button>
                                                         ))}
-                                                        {canReact && (
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => setReactionPickerMessageId(current => current === message.id ? null : message.id)}
-                                                                className="grid h-7 w-7 place-items-center rounded-full border border-transparent text-slate-400 transition hover:border-slate-200 hover:bg-white hover:text-indigo-500 dark:hover:border-slate-700 dark:hover:bg-slate-900"
-                                                                aria-label="Thêm cảm xúc"
-                                                            >
-                                                                <Smile className="h-3.5 w-3.5" />
-                                                            </button>
-                                                        )}
-                                                        {reactionPickerMessageId === message.id && (
-                                                            <div className={`absolute bottom-9 z-40 flex gap-0.5 rounded-full border border-slate-200 bg-white p-1.5 shadow-xl dark:border-slate-700 dark:bg-slate-900 ${alignRight ? 'right-0' : 'left-0'}`}>
-                                                                {MESSAGE_REACTION_EMOJIS.map(emoji => (
-                                                                    <button
-                                                                        key={emoji}
-                                                                        type="button"
-                                                                        onClick={() => void toggleReaction(message, emoji)}
-                                                                        className="grid h-8 w-8 place-items-center rounded-full text-lg transition hover:scale-110 hover:bg-slate-100 dark:hover:bg-slate-800"
-                                                                        aria-label={`Cảm xúc ${emoji}`}
-                                                                    >
-                                                                        {emoji}
-                                                                    </button>
-                                                                ))}
-                                                            </div>
-                                                        )}
+
                                                     </div>
                                                 )}
                                                 <span className="mt-1 flex items-center gap-1 px-1 text-[10px] text-slate-400">
@@ -3902,13 +3908,9 @@ export default function ChatWorkspace({
                                                     )}
                                                     {!message.delivery_state && authoredByCurrentUser && message.sender_kind === 'agent' && <CheckCheck className="h-3 w-3" />}
                                                 </span>
-                                                {message.sender_kind === 'customer' && (message.seen_by ?? []).length > 0 && (
-                                                    <span className="mt-0.5 max-w-full truncate px-1 text-[10px] text-emerald-600 dark:text-emerald-400">
-                                                        Đã xem bởi {(message.seen_by ?? []).map(agent => chatUserName(agent)).filter(Boolean).join(', ')}
-                                                    </span>
-                                                )}
+                                                {message.id === latestSeenMessageId && <ReadReceipt readers={message.seen_by ?? []} alignRight={alignRight} />}
                                             </div>
-                                            {showAgentIdentity && <Avatar user={message.sender} className="mb-4 h-7 w-7 text-[10px]" />}
+                                            {agentMessage && alignRight && (grouped ? <span aria-hidden="true" className="w-7 shrink-0" /> : <Avatar user={message.sender} className="h-7 w-7 text-[10px]" />)}
                                         </article>
                                     );
                                 })}
@@ -3991,6 +3993,9 @@ export default function ChatWorkspace({
                                     value={draft}
                                     onChange={event => setDraft(event.target.value)}
                                     onKeyDown={handleComposerKeyDown}
+                                    onPaste={pasteImages}
+                                    aria-label="Nội dung tin nhắn"
+                                    title="Có thể dán ảnh bằng Ctrl + V hoặc ⌘ + V"
                                     rows={1}
                                     maxLength={5000}
                                     disabled={!selected.permissions.reply || selected.status === 'closed'}

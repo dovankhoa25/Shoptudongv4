@@ -27,6 +27,7 @@ class NroWorkerController extends Controller
                 NroAccount::whereKey($old->account_id)->lockForUpdate()->first();
                 $old = DB::table('nro_worker_jobs')->where('id', $old->id)->lockForUpdate()->first();
                 if (!$old || $old->status !== 'processing' || $old->lease_until >= now()->toDateTimeString()) continue;
+                $r->attributes->set('nro_changed_accounts', [...$r->attributes->get('nro_changed_accounts', []), (int) $old->account_id]);
                 if (app(\App\Services\NroReceivingService::class)->retryInterrupted($old)) continue;
                 $expiredStatus = $old->type === 'snapshot' ? 'failed' : 'review';
                 $changed = DB::table('nro_worker_jobs')->where('id', $old->id)->where('status', 'processing')->where('lease_until', '<', now())->update([
@@ -128,7 +129,12 @@ class NroWorkerController extends Controller
             if (in_array($job->status, ['completed', 'failed', 'expired'])) return response()->json(['ok' => true, 'final' => true]);
             abort_unless($job->status === 'processing' && $job->lease_until >= now()->toDateTimeString(), 409);
             DB::table('nro_worker_jobs')->where('id', $id)->update(['lease_until' => now()->addMinutes(3), 'updated_at' => now()]);
-            if ($job->order_id && $r->filled('message')) DB::table('item_orders')->where('id', $job->order_id)->update(['delivery_message' => $r->input('message'), 'updated_at' => now()]);
+            if ($job->order_id && $r->filled('message')) {
+                $changed = DB::table('item_orders')->where('id', $job->order_id)
+                    ->where(fn ($query) => $query->whereNull('delivery_message')->orWhere('delivery_message', '!=', $r->input('message')))
+                    ->update(['delivery_message' => $r->input('message'), 'updated_at' => now()]);
+                $r->attributes->set('nro_delivery_message_changed', $changed > 0);
+            }
             return response()->json(['ok' => true]);
         });
     }

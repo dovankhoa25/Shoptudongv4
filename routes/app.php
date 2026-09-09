@@ -71,7 +71,7 @@ Route::prefix('v2')->middleware('app')->group(function () {
 });
 
 // Each NRO machine has its own revocable Bearer key.
-Route::prefix('nro-worker')->middleware([NroWorkerKey::class, 'throttle:600,1'])->group(function () {
+Route::prefix('nro-worker')->middleware([NroWorkerKey::class, 'throttle:600,1', \App\Http\Middleware\PublishNroChanges::class])->group(function () {
     Route::get('accounts', [NroWorkerController::class, 'accounts']);
     Route::post('accounts/{id}/release', [NroWorkerController::class, 'release'])->whereNumber('id');
     Route::post('claim', [NroWorkerController::class, 'claim']);

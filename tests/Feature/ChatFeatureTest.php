@@ -51,6 +51,29 @@ class ChatFeatureTest extends TestCase
         }
     }
 
+    public function test_customer_message_reopens_resolved_chat_and_broadcasts_waiting_status(): void
+    {
+        $customer = User::factory()->create();
+        $conversation = $this->conversationFor($customer);
+        $conversation->update([
+            'status' => ChatConversation::STATUS_RESOLVED,
+            'resolved_at' => now(),
+        ]);
+        Event::fake([ChatMessageSent::class]);
+
+        $this->actingAs($customer)->postJson("/chat/conversations/{$conversation->id}/messages", [
+            'body' => 'Mình cần hỗ trợ thêm.',
+            'client_message_id' => (string) Str::uuid(),
+        ])->assertCreated()->assertJsonPath('conversation.status', ChatConversation::STATUS_WAITING_AGENT);
+
+        $this->assertDatabaseHas('chat_conversations', [
+            'id' => $conversation->id, 'status' => ChatConversation::STATUS_WAITING_AGENT,
+            'resolved_at' => null, 'resolved_by' => null,
+        ]);
+        Event::assertDispatched(ChatMessageSent::class, fn (ChatMessageSent $event): bool =>
+            $event->broadcastWith()['conversation']['status'] === ChatConversation::STATUS_WAITING_AGENT);
+    }
+
     public function test_customer_can_resolve_send_and_read_a_general_conversation(): void
     {
         $customer = User::factory()->create();

@@ -21,7 +21,6 @@ export default function OrdersTab({ dataVersion }: { dataVersion: number }) {
         '/orders',
         'Không tải được danh sách đơn giao đồ',
         dataVersion,
-        5000,
     );
 
     return (

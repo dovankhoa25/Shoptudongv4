@@ -2,6 +2,7 @@
 namespace Tests\Feature;
 
 use App\Models\Category;
+use App\Events\NroShopUpdated;
 use App\Models\GameType;
 use App\Models\Nick;
 use App\Models\NroAccount;
@@ -11,6 +12,7 @@ use App\Services\NroShopService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Routing\Middleware\ThrottleRequests;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Str;
 use Laravel\Passport\Passport;
 use Spatie\Permission\Models\Permission;
@@ -28,6 +30,58 @@ class NroShopWorkflowTest extends TestCase
         $this->token = 'nrow_'.Str::random(64);
         DB::table('nro_worker_keys')->insert(['name' => 'test', 'token_hash' => hash('sha256', $this->token), 'accepts_delivery' => true, 'last_used_at' => now(), 'created_at' => now(), 'updated_at' => now()]);
     }
+    public function test_idle_worker_claim_does_not_trigger_website_refresh(): void
+    {
+        Event::fake([NroShopUpdated::class]);
+        $this->withToken($this->token)->postJson('/app/nro-worker/claim', ['protocolVersion' => 3, 'types' => ['delivery']])->assertSuccessful();
+        Event::assertNotDispatched(NroShopUpdated::class);
+    }
+
+    public function test_catalog_reads_never_broadcast_a_refresh(): void
+    {
+        Event::fake([NroShopUpdated::class]);
+        $this->getJson('/api/nro-shop/listings')->assertOk();
+        Event::assertNotDispatched(NroShopUpdated::class);
+    }
+
+    public function test_listing_write_emits_one_public_invalidation_without_private_data(): void
+    {
+        $seller = $this->seller();
+        $account = $this->warehouse($seller);
+        Event::fake([NroShopUpdated::class]);
+        $this->listing($seller, $account);
+        Event::assertDispatchedTimes(NroShopUpdated::class, 1);
+        Event::assertDispatched(NroShopUpdated::class, function (NroShopUpdated $event): bool {
+            $this->assertSame(['event_id', 'catalog'], array_keys($event->broadcastWith()));
+            $this->assertSame(['Nro.Shop', 'private-Nro.Admin'], array_map(fn ($channel) => $channel->name, $event->broadcastOn()));
+            return $event->catalog;
+        });
+    }
+
+    public function test_private_order_signal_does_not_reach_public_catalog(): void
+    {
+        $event = new NroShopUpdated('event-test', false, [123]);
+        $this->assertSame(['private-Nro.Admin', 'private-User.123'], array_map(fn ($channel) => $channel->name, $event->broadcastOn()));
+        $this->assertSame(['event_id' => 'event-test', 'catalog' => false], $event->broadcastWith());
+    }
+
+    public function test_purchase_signal_targets_the_buyer_and_not_unrelated_users(): void
+    {
+        $seller = $this->seller();
+        $account = $this->warehouse($seller);
+        $listingId = $this->listing($seller, $account);
+        $buyer = User::factory()->create(['balance' => 1000]);
+        User::factory()->create();
+        Passport::actingAs($buyer);
+        Event::fake([NroShopUpdated::class]);
+        $this->postJson('/api/nro-shop/orders', [
+            'listingId' => $listingId, 'recipientName' => 'khachgame',
+            'serverId' => 10, 'requestKey' => (string) Str::uuid(),
+        ])->assertOk();
+        Event::assertDispatchedTimes(NroShopUpdated::class, 1);
+        Event::assertDispatched(NroShopUpdated::class, fn (NroShopUpdated $event): bool => $event->catalog && $event->buyerIds === [$buyer->id]);
+    }
+
     private function seller(): User
     {
         $user = User::factory()->create(['balance' => 0]); $user->assignRole('ctv'); $user->givePermissionTo(['nicks.manage','nro-accounts.manage','item-listings.manage']); return $user;

@@ -10,19 +10,17 @@ import type { Paged } from './types';
  * Tabs are only mounted while open, so nothing here runs for a tab the operator never looks at.
  * Stale responses are dropped by request id, which matters when someone types in the search box.
  */
-export function usePagedTab<T>(path: string, errorText: string, dataVersion = 0, pollMs = 0) {
+export function usePagedTab<T>(path: string, errorText: string, dataVersion = 0) {
     const [rows, setRows] = useState<Paged<T>>({ data: [], total: 0, page: 1, perPage: 20 });
     const [loading, setLoading] = useState(false);
     const [filters, setFilters] = useState<Record<string, unknown>>({});
     const request = useRef(0);
     const firstLoad = useRef(true);
     const appliedFilters = useRef<Record<string, unknown>>({});
-    const inFlight = useRef(false);
 
     const load = useCallback(
         async (params: Record<string, unknown> = filters, page = 1, quiet = false) => {
             const id = ++request.current;
-            inFlight.current = true;
             if (!quiet) setLoading(true);
             try {
                 const all: Record<string, unknown> = { ...params, page };
@@ -34,7 +32,7 @@ export function usePagedTab<T>(path: string, errorText: string, dataVersion = 0,
             } catch {
                 if (id === request.current && !quiet) message.error(errorText);
             } finally {
-                if (id === request.current) { inFlight.current = false; setLoading(false); }
+                if (id === request.current) setLoading(false);
             }
         },
         [path, errorText, filters],
@@ -53,14 +51,6 @@ export function usePagedTab<T>(path: string, errorText: string, dataVersion = 0,
         void load(appliedFilters.current, rows.page);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [dataVersion]);
-
-    useEffect(() => {
-        if (!pollMs) return;
-        const timer = window.setInterval(() => {
-            if (!document.hidden && !inFlight.current) void load(appliedFilters.current, rows.page, true);
-        }, pollMs);
-        return () => window.clearInterval(timer);
-    }, [pollMs, load, rows.page]);
 
     const apply = (next: Record<string, unknown> = filters, page = 1) => {
         appliedFilters.current = next;

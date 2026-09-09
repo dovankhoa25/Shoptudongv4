@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { echo } from '@laravel/echo-react';
 import { router } from '@inertiajs/react';
 import axios from 'axios';
 import { Button, Collapse, Dropdown, Form, Space, Tabs, Tag, message } from 'antd';
@@ -53,21 +54,15 @@ export default function NroShop({
         if (accountStats) setStats(accountStats);
     }, [accountStats]);
 
-    /** Poll only the header counts. Tab bodies are never rebuilt by the timer. */
+    /** Used after an explicit action. Background updates arrive over WebSocket. */
     const refreshStats = useCallback(async () => {
         try {
             const { data } = await axios.get(`${base}/status`);
             setStats(data);
         } catch {
-            /* A dropped poll is not worth interrupting the operator over. */
+            /* Keep the previous counts on a temporary request failure. */
         }
     }, []);
-
-    useEffect(() => {
-        if (!stats.activeJobs) return;
-        const timer = window.setInterval(refreshStats, 10000);
-        return () => window.clearInterval(timer);
-    }, [stats.activeJobs, refreshStats]);
 
     const reloadAccounts = () =>
         router.reload({
@@ -77,6 +72,41 @@ export default function NroShop({
 
     /** Bumped after every successful write so open tabs refetch instead of showing stale rows. */
     const [dataVersion, setDataVersion] = useState(0);
+    const realtimeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    useEffect(() => {
+        const channel = echo().private('Nro.Admin');
+        let active = true;
+        let inFlight = false;
+        let dirty = false;
+        const refresh = () => {
+            dirty = true;
+            if (!active || inFlight || realtimeTimer.current) return;
+            realtimeTimer.current = setTimeout(() => {
+                realtimeTimer.current = null;
+                dirty = false;
+                inFlight = true;
+                router.reload({
+                    only: ['accounts', 'accountStats', 'accountPagination', 'salePolicy'],
+                    onFinish: () => {
+                        inFlight = false;
+                        if (active && dirty) refresh();
+                    },
+                });
+                setDataVersion(value => value + 1);
+            }, 350);
+        };
+        channel.listen('.NroShopUpdated', refresh);
+        channel.on('pusher:subscription_succeeded', refresh);
+        if ((channel as unknown as { subscription?: { subscribed?: boolean } }).subscription?.subscribed) refresh();
+        return () => {
+            active = false;
+            if (realtimeTimer.current) clearTimeout(realtimeTimer.current);
+            realtimeTimer.current = null;
+            channel.stopListening('.NroShopUpdated', refresh);
+            channel.stopListening('.pusher:subscription_succeeded', refresh);
+            echo().leave('Nro.Admin');
+        };
+    }, []);
 
     const run = async (action: () => Promise<unknown>, success = 'Đã lưu') => {
         setBusy(true);

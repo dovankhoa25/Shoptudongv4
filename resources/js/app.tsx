@@ -15,6 +15,8 @@ configureEcho({
     broadcaster: 'ably',
     key: ablyPublicKey,
     authEndpoint: '/broadcasting/auth',
+    enabledTransports: ['ws', 'wss'],
+    disableStats: true,
 });
 
 const appName = import.meta.env.VITE_APP_NAME || 'Laravel';

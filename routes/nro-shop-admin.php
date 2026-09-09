@@ -1,7 +1,7 @@
 <?php
 use App\Http\Controllers\Admin\NroShopController;
 use Illuminate\Support\Facades\Route;
-Route::prefix('admin/nro-shop')->name('admin.nro-shop.')->middleware(['auth', 'unlocked.user', 'throttle:120,1'])->group(function () {
+Route::prefix('admin/nro-shop')->name('admin.nro-shop.')->middleware(['auth', 'unlocked.user', 'throttle:120,1', \App\Http\Middleware\PublishNroChanges::class])->group(function () {
     Route::get('/', [NroShopController::class, 'index'])->middleware('permission:nro-accounts.view,nro-accounts.manage,nicks.create,nicks.manage,item-listings.view,item-listings.manage,item-orders.view,item-orders.reconcile,nro-workers.manage,nro-settings.manage,nro-sale-policy.manage')->name('index');
     // Per-tab endpoints: each tab loads only when opened, so one page view never builds all five.
     Route::get('status', [NroShopController::class, 'status'])->middleware('permission:nro-accounts.view,nro-accounts.manage,nicks.create,nicks.manage,item-listings.view,item-listings.manage,item-orders.view,item-orders.reconcile,nro-workers.manage,nro-settings.manage,nro-sale-policy.manage')->name('status');
