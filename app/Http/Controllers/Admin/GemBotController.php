@@ -12,6 +12,7 @@ use App\Models\ServerGameLogin;
 use App\Services\BotHistoryService;
 use App\Services\InventoryMovementService;
 use App\Support\AdminTableSearch;
+use App\Support\ApiCache;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Redirect;
@@ -125,6 +126,7 @@ class GemBotController extends Controller
 
             return $gemBot;
         });
+        ApiCache::clearGroups(['public:gembot']);
 
         return Redirect::back()
             ->with('success', 'Gem Bot đã được tạo thành công.');
@@ -329,6 +331,7 @@ class GemBotController extends Controller
                 note: 'Admin updated gem bot manually'
             );
         });
+        ApiCache::clearGroups(['public:gembot']);
 
         return Redirect::back()
             ->with('success', 'Gem Bot đã được cập nhật thành công.');
@@ -346,6 +349,7 @@ class GemBotController extends Controller
         }
 
         $gemBot->delete();
+        ApiCache::clearGroups(['public:gembot']);
 
         return Redirect::back()
             ->with('success', 'Gem Bot đã được xóa thành công.');
@@ -379,6 +383,7 @@ class GemBotController extends Controller
                 );
             }
         });
+        ApiCache::clearGroups(['public:gembot']);
 
         return response()->json([
             'message' => 'Đã đồng bộ số lượng ngọc thành công',
@@ -421,6 +426,7 @@ class GemBotController extends Controller
                 note: "Admin gem quantity operation: {$operation}"
             );
         });
+        ApiCache::clearGroups(['public:gembot']);
 
         return response()->json([
             'message' => 'Cập nhật số lượng ngọc thành công',
@@ -437,6 +443,7 @@ class GemBotController extends Controller
             'status' => ! $gemBot->status,
             'updated_by' => 'web',
         ]);
+        ApiCache::clearGroups(['public:gembot']);
 
         $status = $gemBot->status ? 'kích hoạt' : 'vô hiệu hóa';
 

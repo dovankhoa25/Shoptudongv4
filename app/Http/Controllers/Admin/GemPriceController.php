@@ -9,6 +9,7 @@ use App\Http\Resources\GemPrice\GemPriceResource;
 use App\Models\GemPrice;
 use App\Models\Server;
 use App\Support\AdminTableSearch;
+use App\Support\ApiCache;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Redirect;
 use Inertia\Inertia;
@@ -81,6 +82,7 @@ class GemPriceController extends Controller
         }
 
         $gemPrice = GemPrice::create($validated);
+        ApiCache::clearGroups(['public:server-prices']);
 
         return Redirect::route('admin.gem-prices.index')
             ->with('success', 'Hệ số giá ngọc đã được tạo thành công.');
@@ -106,6 +108,7 @@ class GemPriceController extends Controller
         }
 
         $gemPrice->update($validated);
+        ApiCache::clearGroups(['public:server-prices']);
 
         return Redirect::route('admin.gem-prices.index')
             ->with('success', 'Hệ số giá ngọc đã được cập nhật thành công.');
@@ -127,6 +130,7 @@ class GemPriceController extends Controller
         }
 
         $gemPrice->delete();
+        ApiCache::clearGroups(['public:server-prices']);
 
         return Redirect::route('admin.gem-prices.index')
             ->with('success', 'Hệ số giá ngọc đã được xóa thành công.');
@@ -148,6 +152,7 @@ class GemPriceController extends Controller
         $gemPrice->update([
             'status' => ! $gemPrice->status,
         ]);
+        ApiCache::clearGroups(['public:server-prices']);
 
         $status = $gemPrice->status ? 'kích hoạt' : 'vô hiệu hóa';
 
@@ -178,6 +183,7 @@ class GemPriceController extends Controller
                 'multiplier' => $update['multiplier'],
                 'status' => true,
             ]);
+            ApiCache::clearGroups(['public:server-prices']);
         }
 
         return response()->json([

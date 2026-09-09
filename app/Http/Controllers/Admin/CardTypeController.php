@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\CardType\CardTypeResource;
 use App\Models\CardType;
 use App\Support\AdminTableSearch;
+use App\Support\ApiCache;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Inertia\Inertia;
@@ -42,6 +43,7 @@ class CardTypeController extends Controller
             'discount_rate' => $validated['discount_rate'] ?? 0,
             'status' => $validated['status'] ?? true,
         ]);
+        ApiCache::clearGroups(['public:card-types']);
 
         return redirect()->back()->with('success', 'Tạo thành công!');
     }
@@ -64,6 +66,7 @@ class CardTypeController extends Controller
                 'discount_rate' => $validated['discount_rate'] ?? 0,
                 'status' => $validated['status'] ?? true,
             ]);
+            ApiCache::clearGroups(['public:card-types']);
 
             Log::info('UPDATED:', [$updated]);
             Log::info('AFTER UPDATE:', $cardtype->fresh()->toArray());
@@ -79,6 +82,7 @@ class CardTypeController extends Controller
     public function destroy(CardType $cardtype)
     {
         $cardtype->delete();
+        ApiCache::clearGroups(['public:card-types']);
 
         return redirect()->back()->with('success', 'Xóa thành công!');
     }

@@ -18,6 +18,7 @@ use App\Models\NickOrder;
 use App\Models\User;
 use App\Services\TransactionService;
 use App\Support\AdminTableSearch;
+use App\Support\ApiCache;
 use Carbon\Carbon;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Illuminate\Http\Request;
@@ -231,6 +232,7 @@ class NickController extends Controller
             $nick->save();
 
             DB::commit();
+            ApiCache::clearGroups(['public:nick']);
 
             return redirect()->back()->with('success', 'Nick created successfully!');
         } catch (\Exception $e) {
@@ -443,6 +445,7 @@ class NickController extends Controller
             $nick->save();
 
             DB::commit();
+            ApiCache::clearGroups(['public:nick']);
 
             return redirect()->back()->with('success', 'Nick updated successfully!');
         } catch (\Exception $e) {
@@ -460,6 +463,17 @@ class NickController extends Controller
         if (in_array($nick->status, ['deleted', 'sold', 'return'])) {
             return back()->with('info', 'Chỉ có thể xóa nick ở trạng thái chưa bán.');
         }
+        if ($nick->game_account_id) {
+            DB::transaction(function () use ($nick) {
+                $account = \App\Models\NroAccount::whereKey($nick->game_account_id)->lockForUpdate()->firstOrFail();
+                $current = Nick::whereKey($nick->id)->lockForUpdate()->firstOrFail();
+                \App\Services\NroShopService::require($current->status === 'not_sold', 'Tin không còn đang bán.');
+                $current->status = 'deleted'; $current->save();
+                $account->update(['auto_publish' => false, 'publish_status' => 'paused']);
+            });
+            ApiCache::clearGroups(['public:nick']);
+            return back()->with('success', 'Đã ngừng bán. Có thể sửa và đăng lại tại Acc & kho đồ NRO.');
+        }
         $nick->status = 'deleted';
         $nick->save();
 
@@ -470,6 +484,7 @@ class NickController extends Controller
         $nick->getMedia('images')->each(function ($media) {
             $media->delete(); // Này sẽ xóa cả file vật lý
         });
+        ApiCache::clearGroups(['public:nick']);
 
         return back()->with('success', 'Xoá nick thành công!');
     }
@@ -679,6 +694,7 @@ class NickController extends Controller
             ]);
 
             DB::commit();
+            ApiCache::clearGroups(['public:nick']);
 
             $message = 'Hoàn tiền thành công';
             if ($penaltyAmount > 0) {

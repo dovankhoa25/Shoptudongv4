@@ -11,6 +11,7 @@ use App\Models\ServerGameLogin;
 use App\Services\BotHistoryService;
 use App\Services\InventoryMovementService;
 use App\Support\AdminTableSearch;
+use App\Support\ApiCache;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Redirect;
@@ -128,6 +129,7 @@ class BotController extends Controller
 
             return $bot;
         });
+        ApiCache::clearGroups(['public:bots']);
 
         return Redirect::route('admin.bots.index')->with('success', 'Bot đã được tạo thành công!');
     }
@@ -310,6 +312,7 @@ class BotController extends Controller
                 note: 'Admin updated bot manually'
             );
         });
+        ApiCache::clearGroups(['public:bots']);
 
         return redirect()->back()->with('success', 'Bot đã được cập nhật thành công!');
     }
@@ -364,6 +367,7 @@ class BotController extends Controller
         ]);
 
         $status = $bot->status ? 'kích hoạt' : 'tạm dừng';
+        ApiCache::clearGroups(['public:bots']);
 
         return back()->with('success', "Bot đã được {$status} thành công!");
     }
@@ -391,6 +395,7 @@ class BotController extends Controller
 
         $botName = $bot->name ?? $bot->account_name;
         $bot->delete();
+        ApiCache::clearGroups(['public:bots']);
 
         return back()->with('success', "Bot \"{$botName}\" đã được xóa thành công!");
     }
@@ -411,6 +416,7 @@ class BotController extends Controller
                 'updated_by' => 'web',
                 'updated_at' => now(),
             ]);
+        ApiCache::clearGroups(['public:bots']);
 
         return back()->with('success', "Đã kích hoạt {$updated} bot!");
     }
@@ -431,6 +437,7 @@ class BotController extends Controller
                 'updated_by' => 'web',
                 'updated_at' => now(),
             ]);
+        ApiCache::clearGroups(['public:bots']);
 
         return back()->with('success', "Đã tạm dừng {$updated} bot!");
     }
@@ -447,6 +454,7 @@ class BotController extends Controller
 
         $deleted = Bot::whereIn('id', $request->bot_ids)->count();
         Bot::whereIn('id', $request->bot_ids)->delete();
+        ApiCache::clearGroups(['public:bots']);
 
         return back()->with('success', "Đã xóa {$deleted} bot!");
     }

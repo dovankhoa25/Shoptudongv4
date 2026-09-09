@@ -12,6 +12,7 @@ Route::prefix('admin/nro-shop')->name('admin.nro-shop.')->middleware(['auth', 'u
     Route::post('accounts/import', [NroShopController::class, 'importAccounts'])->middleware('permission:nro-accounts.manage')->name('accounts.import');
     Route::post('accounts', [NroShopController::class, 'store'])->middleware('permission:nro-accounts.manage')->name('accounts.store');
     Route::get('accounts/{id}', [NroShopController::class, 'detail'])->middleware('permission:nro-accounts.view,nro-accounts.manage,nicks.create,nicks.manage,item-listings.manage')->name('accounts.show');
+    Route::patch('accounts/{id}', [NroShopController::class, 'updateAccount'])->middleware('permission:nro-accounts.manage')->name('accounts.update');
     Route::patch('accounts/{id}/password', [NroShopController::class, 'password'])->middleware('permission:nro-accounts.manage')->name('accounts.password');
     Route::post('accounts/{id}/scan', [NroShopController::class, 'scan'])->middleware('permission:nro-accounts.manage')->name('scan');
     Route::post('accounts/{id}/nick', [NroShopController::class, 'publishNick'])->middleware('permission:nicks.create,nicks.manage')->name('nick');

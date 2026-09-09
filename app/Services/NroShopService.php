@@ -4,6 +4,7 @@ namespace App\Services;
 use App\Models\NroAccount;
 use App\Models\NroAccountSnapshot;
 use App\Models\User;
+use App\Support\ApiCache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -26,6 +27,7 @@ class NroShopService
             && $snapshot->captured_at->lte(now()->addMinutes(5)) && $account->status === 'active' && $account->usage_type === 'warehouse';
         $workerOnline = DB::table('nro_worker_keys')->where('accepts_delivery', true)->whereNull('revoked_at')->where('last_used_at', '>', now()->subSeconds(90))->exists();
         $busy = DB::table('nro_worker_jobs')->where('account_id', $listing->account_id)->whereIn('status', ['processing', 'review'])->pluck('status');
+        $lastOrderStatus = DB::table('item_orders')->where('listing_id', $listing->id)->orderByDesc('id')->value('status');
         $reasons = [];
         $policy = NroListingStock::policy();
         if ($items->contains(fn ($i) => !NroListingStock::allows((int) json_decode($i->item_json, true)['templateId'], $policy))) $reasons[] = 'Gói chứa vật phẩm ngoài danh sách được phép bán';
@@ -46,7 +48,7 @@ class NroShopService
             $reasons[] = $physical > 0 ? (array_sum($allocated) > 0 ? 'Đồ đã được phân cho gói khác hoặc đơn chưa nhận' : 'Đồ đã được giữ cho đơn chưa nhận') : 'Không đủ đồ cho một gói';
         }
         return ['id' => $listing->id, 'title' => $listing->title, 'description' => $listing->description,
-            'price' => (string) $listing->price, 'status' => $listing->status, 'serverIndex' => $account?->server_index, 'serverId' => $account?->server_id, 'serverName' => $account ? DB::table('servers')->where('id', $account->server_id)->value('name_view') : null,
+            'price' => (string) $listing->price, 'status' => $listing->status, 'lastOrderStatus' => $lastOrderStatus, 'serverIndex' => $account?->server_index, 'serverId' => $account?->server_id, 'serverName' => $account ? DB::table('servers')->where('id', $account->server_id)->value('name_view') : null,
             'available' => !$reasons ? min(1, $available) : 0, 'stockAvailable' => $available, 'unavailableReasons' => $reasons, 'workerOnline' => $workerOnline,
             'needsSync' => !$fresh, 'items' => $items->map(fn ($i) => ['inventoryItemId' => $i->id, 'quantity' => $i->quantity, 'item' => json_decode($i->item_json, true)])->all()];
     }
@@ -82,6 +84,7 @@ class NroShopService
             $before = (int) $buyer->balance; $buyer->decrement('balance', $listing->price);
             TransactionService::log(userId: $buyer->id, type: 'buy_nro_items', amount: -$listing->price, description: "Mua gói đồ #$order", related: 'nro_item_order', relatedId: $order, oldBalance: $before, newBalance: $before - $listing->price, idempotencyKey: "nro-order:$order:debit");
             DB::table('item_listings')->where('id', $listingId)->update(['status' => 'sold', 'updated_at' => now()]);
+            ApiCache::clearGroups(['public:nro-shop:listings']);
             return $order;
         }, 3);
     }
@@ -128,5 +131,6 @@ class NroShopService
         if ($delivered) DB::table('item_order_items')->where('order_id', $orderId)->update(['delivered' => DB::raw('quantity')]);
         // Force a fresh inventory before the next sale after manual settlement.
         NroAccount::whereKey($order->account_id)->update(['last_synced_at' => null]);
+        ApiCache::clearGroups(['public:nro-shop:listings']);
     }
 }

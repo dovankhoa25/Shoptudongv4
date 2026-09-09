@@ -8,6 +8,7 @@ use App\Http\Resources\AppAuto\VersionTwo\AppGemBotVersionTwoResource;
 use App\Models\GemBot;
 use App\Services\BotHistoryService;
 use App\Services\InventoryMovementService;
+use App\Support\ApiCache;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -63,6 +64,7 @@ class AppGemBotVersionTwoController extends Controller
             'status' => $validated['status'],
             'updated_by' => 'web',
         ]);
+        ApiCache::clearGroups(['public:gembot']);
 
         return response()->json([
             'success' => true,
@@ -181,6 +183,7 @@ class AppGemBotVersionTwoController extends Controller
 
             return $bot->fresh();
         });
+        ApiCache::clearGroups(['public:gembot']);
 
         return response()->json([
             'success'         => true,

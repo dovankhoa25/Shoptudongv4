@@ -362,8 +362,53 @@ class NroShopWorkflowTest extends TestCase
         $this->assertDatabaseHas('item_orders', ['id' => $order, 'status' => 'refunded']);
         $this->assertDatabaseHas('nro_delivery_sessions', ['order_id' => $order, 'status' => 'refunded', 'receiver_credentials' => null, 'receiver_lock' => null]);
         $this->assertDatabaseHas('item_listings', ['id' => $listing, 'status' => 'sold']);
+        $this->assertSame('refunded', app(NroShopService::class)->listing(DB::table('item_listings')->find($listing))['lastOrderStatus']);
         $this->getJson('/api/nro-shop/listings/'.$listing)->assertNotFound();
         $this->actingAs($seller, 'web')->patchJson('/admin/nro-shop/listings/'.$listing, ['status' => 'active'])->assertUnprocessable();
+    }
+
+    public function test_login_failure_before_trade_is_reported_and_order_can_be_reopened_safely(): void
+    {
+        $seller = $this->seller(); $a = $this->warehouse($seller); $listing = $this->listing($seller, $a);
+        $buyer = User::factory()->create(['balance' => 1000]);
+        $order = app(NroShopService::class)->purchase($buyer, $listing, '', 10, (string) Str::uuid());
+        app(\App\Services\NroReceivingService::class)->start($buyer, $order, ['mode' => 'auto', 'username' => 'receiver', 'password' => 'private-receiver', 'requestKey' => (string) Str::uuid()]);
+        $job = $this->withToken($this->token)->postJson('/app/nro-worker/claim', ['protocolVersion' => 3, 'types' => ['delivery']])->assertOk()->json('data');
+        $message = 'Acc nhận: hành trang đã đầy. Hãy dọn túi rồi bấm Nhận đồ lại.';
+        $this->postJson('/app/nro-worker/jobs/'.$job['id'].'/complete', [
+            'leaseToken' => $job['leaseToken'], 'outcome' => 'login_failed', 'message' => $message,
+            'loginFailureKind' => 'inventory_full', 'retryable' => true, 'loginAccountRole' => 'receiver',
+        ])->assertOk()->assertJsonPath('retrySafe', true);
+        $this->assertDatabaseHas('item_orders', ['id' => $order, 'status' => 'awaiting_receipt', 'delivery_message' => $message]);
+        $this->assertDatabaseHas('nro_delivery_sessions', ['order_id' => $order, 'status' => 'failed', 'receiver_credentials' => null, 'receiver_lock' => null]);
+        $this->assertDatabaseHas('item_listings', ['id' => $listing, 'status' => 'sold']);
+        $this->assertNotSame('login_blocked', $a->fresh()->publish_status);
+        $this->assertGreaterThan(0, DB::table('nro_inventory_items')->where('account_id', $a->id)->sum('reserved'));
+    }
+
+    public function test_permanent_shop_login_failure_blocks_more_jobs_until_password_is_changed(): void
+    {
+        $seller = $this->seller(); $a = $this->warehouse($seller); $listing = $this->listing($seller, $a);
+        $buyer = User::factory()->create(['balance' => 1000]);
+        $order = app(NroShopService::class)->purchase($buyer, $listing, '', 10, (string) Str::uuid());
+        app(\App\Services\NroReceivingService::class)->start($buyer, $order, ['mode' => 'manual', 'recipientName' => 'khach', 'requestKey' => (string) Str::uuid()]);
+        $job = $this->withToken($this->token)->postJson('/app/nro-worker/claim', ['protocolVersion' => 3, 'types' => ['delivery']])->assertOk()->json('data');
+        $message = 'Acc kho: tài khoản đang bị khóa; đã dừng đăng nhập.';
+        $this->postJson('/app/nro-worker/jobs/'.$job['id'].'/complete', [
+            'leaseToken' => $job['leaseToken'], 'outcome' => 'login_failed', 'message' => $message,
+            'loginFailureKind' => 'AccountLocked', 'retryable' => false, 'loginAccountRole' => 'sender',
+        ])->assertOk()->assertJsonPath('retrySafe', true);
+        $this->assertDatabaseHas('nro_accounts', ['id' => $a->id, 'publish_status' => 'login_blocked', 'publish_error' => $message]);
+        try {
+            app(\App\Services\NroReceivingService::class)->start($buyer, $order, ['mode' => 'manual', 'recipientName' => 'khach', 'requestKey' => (string) Str::uuid()]);
+            $this->fail('Acc kho bị khóa đăng nhập không được tạo thêm job.');
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            $this->assertStringContainsString('đang bị khóa', implode(' ', $e->errors()['nro'] ?? []));
+        }
+        $this->actingAs($seller, 'web')->patchJson('/admin/nro-shop/accounts/'.$a->id.'/password', ['password' => 'new-safe-password'])->assertOk();
+        $this->assertDatabaseHas('nro_accounts', ['id' => $a->id, 'publish_status' => null, 'publish_error' => null]);
+        app(\App\Services\NroReceivingService::class)->start($buyer, $order, ['mode' => 'manual', 'recipientName' => 'khach', 'requestKey' => (string) Str::uuid()]);
+        $this->assertDatabaseHas('item_orders', ['id' => $order, 'status' => 'queued']);
     }
 
     public function test_shortage_refund_rejects_incomplete_stale_matching_and_unconfirmed_evidence(): void
@@ -1007,5 +1052,28 @@ class NroShopWorkflowTest extends TestCase
         }
         $target = $a->replicate(); $target->account_name = 'refresh-target'; $target->last_synced_at = null; $target->save();
         $this->withToken($this->token)->postJson('/app/nro-worker/claim', ['protocolVersion' => 3, 'types' => ['snapshot']])->assertOk()->assertJsonPath('data.account.id', $target->id);
+    }
+
+    public function test_edit_paused_nick_rescans_and_republishes_same_id_and_rejects_foreign_sold_and_busy_accounts(): void
+    {
+        [$seller, , $category] = $this->nickAttributesFixture();
+        $id = $this->actingAs($seller, 'web')->postJson('/admin/nro-shop/accounts', ['username' => 'edit-original', 'password' => 'secret', 'serverId' => 10, 'serverGameId' => 37, 'usageType' => 'nick', 'categoryId' => $category->id, 'price' => 500])->assertOk()->json('id');
+        $this->finishAutoSnapshot();
+        $nick = Nick::withoutUserOwnedScope()->where('game_account_id', $id)->firstOrFail();
+        $nick->update(['status' => 'deleted']);
+        DB::table('server_game_login')->insert(['id' => 38, 'name' => 'Other login', 'ip' => '127.0.0.1', 'port' => '14445']);
+        $body = ['username' => 'edit-corrected', 'serverId' => 10, 'serverGameId' => 38];
+        $this->actingAs($this->seller(), 'web')->patchJson('/admin/nro-shop/accounts/'.$id, $body)->assertNotFound();
+        $this->actingAs($seller, 'web')->patchJson('/admin/nro-shop/accounts/'.$id, $body)->assertOk();
+        $this->assertDatabaseHas('nicks', ['id' => $nick->id, 'status' => 'deleted', 'snapshot_id' => null]);
+        $this->assertNull(NroAccount::find($id)->latest_snapshot_id);
+        $this->assertSame('secret', NroAccount::find($id)->game_password);
+        $this->patchJson('/admin/nro-shop/accounts/'.$id, $body)->assertUnprocessable();
+        $this->finishAutoSnapshot();
+        $this->assertDatabaseHas('nicks', ['id' => $nick->id, 'status' => 'not_sold', 'account_name' => 'edit-corrected']);
+        $this->assertSame(1, Nick::withoutUserOwnedScope()->where('game_account_id', $id)->count());
+        $this->assertArrayNotHasKey('resumeNickId', NroAccount::find($id)->publish_config);
+        $nick->refresh()->update(['status' => 'sold']);
+        $this->actingAs($seller, 'web')->patchJson('/admin/nro-shop/accounts/'.$id, $body)->assertUnprocessable();
     }
 }

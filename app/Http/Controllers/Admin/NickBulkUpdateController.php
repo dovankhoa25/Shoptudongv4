@@ -9,6 +9,7 @@ use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use App\Support\ApiCache;
 use Illuminate\Validation\Rule;
 use Spatie\Permission\Models\Role;
 
@@ -265,6 +266,7 @@ class NickBulkUpdateController extends Controller
             ]);
 
             DB::commit();
+            ApiCache::clearGroups(['public:nick']);
 
             return response()->json([
                 'success' => true,
@@ -321,6 +323,7 @@ class NickBulkUpdateController extends Controller
 
             $oldStatus = $nick->status;
             $nick->update(['status' => $validated['new_status']]);
+            ApiCache::clearGroups(['public:nick']);
 
             return response()->json([
                 'success' => true,
@@ -359,6 +362,7 @@ class NickBulkUpdateController extends Controller
             $newStatus = $nick->status === 'hide' ? 'not_sold' : 'hide';
 
             $nick->update(['status' => $newStatus]);
+            ApiCache::clearGroups(['public:nick']);
 
             return redirect()->back();
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {

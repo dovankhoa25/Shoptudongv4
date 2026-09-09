@@ -11,6 +11,7 @@ use App\Services\NroShopService;
 use App\Services\NroListingStock;
 use App\Models\Setting;
 use App\Services\NroNickAttributeService;
+use App\Support\ApiCache;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -69,6 +70,7 @@ class NroShopController extends Controller
         $listingCounts = DB::table('item_listings')->whereIn('account_id', clone $ownedIds)
             ->selectRaw("account_id, COUNT(*) as total, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active")
             ->groupBy('account_id')->get()->keyBy('account_id');
+        $owners = DB::table('users')->whereIn('id', NroAccount::whereIn('id', clone $ownedIds)->select('user_id'))->pluck('username', 'id');
         $categories = $r->user()->canViewAllAdminData() ? Category::query() : $r->user()->categories()->wherePivot('can_post', true);
         $listings = DB::table('item_listings')->whereIn('account_id', clone $ownedIds)->orderByDesc('id')->limit(100)->get();
         $orders = DB::table('item_orders')->whereIn('account_id', clone $ownedIds)->orderByDesc('id')->limit(50)->get();
@@ -80,7 +82,7 @@ class NroShopController extends Controller
             'servers' => DB::table('servers')->where('status', true)->get(['id','name','name_view']),
             'loginServers' => $caps['manageAccounts'] || $caps['settings'] ? DB::table('server_game_login')->get(['id','name']) : [],
             'accounts' => $caps['accounts'] ? $accounts->map(fn ($a) => [
-            'id' => $a->id, 'account_name' => $a->account_name, 'server_index' => $a->server_index, 'usage_type' => $a->usage_type,
+            'ownerUsername' => $owners->get($a->user_id), 'id' => $a->id, 'account_name' => $a->account_name, 'server_index' => $a->server_index, 'usage_type' => $a->usage_type,
             'character_name' => $a->character_name, 'last_synced_at' => $a->last_synced_at, 'latest_snapshot_id' => $a->latest_snapshot_id,
             'server_id' => $a->server_id, 'server_game_id' => $a->server_game_id, 'delivery_map' => $a->delivery_map, 'delivery_zone' => $a->delivery_zone, 'wait_minutes' => $a->wait_minutes,
             'delivery_zone_mode' => $a->delivery_zone_mode,
@@ -88,7 +90,7 @@ class NroShopController extends Controller
             'status' => $a->status, 'nick' => $this->nickSummary($nicks->get($a->id)),
             'listingCounts' => $caps['listings'] ? ['total' => (int) ($listingCounts->get($a->id)?->total ?? 0), 'active' => (int) ($listingCounts->get($a->id)?->active ?? 0)] : null,
         ]) : [], 'categories' => $categories->where('template', 'default')->where('status', 'active')->get(['categories.id', 'categories.name']),
-            'listings' => $caps['listings'] ? $listings->map(fn ($l) => [...$shop->listing($l), 'accountId' => $l->account_id]) : [], 'orders' => $caps['orders'] ? $orders->map(fn ($o) => $shop->order($o->id)) : [],
+            'listings' => $caps['listings'] ? $listings->map(fn ($l) => [...$shop->listing($l), 'accountId' => $l->account_id, 'ownerUsername' => $owners->get($l->user_id)]) : [], 'orders' => $caps['orders'] ? $orders->map(fn ($o) => $shop->order($o->id)) : [],
             'jobs' => $caps['manageAccounts'] || $caps['reconcile'] ? DB::table('nro_worker_jobs')->whereIn('account_id', clone $ownedIds)->orderByDesc('id')->limit(50)->get(['id', 'account_id', 'order_id', 'type', 'status', 'updated_at', 'result_json']) : [],
             'canReconcile' => $caps['reconcile'],
             'workerKeys' => $caps['workers'] ? DB::table('nro_worker_keys')->orderByDesc('id')->get(['id', 'name', 'last_used_at', 'revoked_at', 'accepts_delivery']) : []]);
@@ -109,7 +111,42 @@ class NroShopController extends Controller
     public function store(Request $r, \App\Services\NroAccountRegistration $registration)
     {
         $account = $registration->create($r->user(), $r->all());
+        ApiCache::clearGroups(['public:nick', 'public:nro-shop:listings']);
         return response()->json(['id' => $account->id]);
+    }
+
+    public function updateAccount(Request $r, int $id)
+    {
+        $a = $this->account($r, $id);
+        $v = $r->validate(['username' => 'required|string|max:141', 'password' => 'nullable|string|max:64',
+            'serverId' => 'required|integer|exists:servers,id', 'serverGameId' => 'required|integer|exists:server_game_login,id']);
+        $v['username'] = trim($v['username']);
+        NroShopService::require($v['username'] !== '', 'Tài khoản không được để trống.');
+        DB::transaction(function () use ($r, $id, $v) {
+            $this->requireAvailableRegistration($v['username'], (int) $v['serverGameId'], $id);
+            $a = NroAccount::whereKey($id)->lockForUpdate()->firstOrFail();
+            NroShopService::require($a->usage_type === 'nick' && $a->status === 'active', 'Chỉ sửa acc bán nick chưa bán, đang hoạt động.');
+            NroShopService::require(!DB::table('nro_worker_jobs')->where('account_id', $id)->whereIn('status', ['queued','processing','review'])->exists(), 'Chờ công việc tool hoặc đối soát kết thúc trước khi sửa acc.');
+            $nick = Nick::withoutUserOwnedScope()->where('game_account_id', $id)->lockForUpdate()->first();
+            if ($nick) {
+                $this->checkLinkedNick($r, $a, $nick);
+                NroShopService::require(in_array($nick->status, ['not_sold','deleted']), 'Tin đã có lịch sử bán/hoàn trả, không được sửa để mở lại.');
+                $this->nickCategory($r, $nick->category_id);
+            }
+            $config = $a->publish_config ?? [];
+            if ($nick) $config = array_merge($config, ['categoryId' => $nick->category_id, 'price' => (int) $nick->price, 'description' => $nick->description, 'attributeSelections' => [], 'resumeNickId' => $nick->id]);
+            NroShopService::require(!empty($config['categoryId']), 'Cần cấu hình danh mục trước khi sửa và đăng lại.');
+            $this->nickCategory($r, (int) $config['categoryId']);
+            abort_unless($r->user()->can('nicks.manage') || (!$nick && $r->user()->can('nicks.create')), 403);
+            $a->update(['account_name' => $v['username'], 'game_password' => $v['password'] ?? $a->game_password,
+                'server' => 'login'.$v['serverGameId'], 'server_game_id' => $v['serverGameId'], 'server_id' => $v['serverId'],
+                'latest_snapshot_id' => null, 'last_synced_at' => null, 'character_name' => null,
+                'auto_publish' => true, 'publish_config' => $config, 'publish_status' => 'waiting_snapshot', 'publish_error' => null]);
+            if ($nick) { $nick->forceFill(['status' => 'deleted', 'account_name' => $a->account_name, 'snapshot_id' => null])->save(); }
+            DB::table('nro_worker_jobs')->insert(['account_id' => $id, 'type' => 'snapshot', 'status' => 'queued', 'created_at' => now(), 'updated_at' => now()]);
+        });
+        ApiCache::clearGroups(['public:nick', 'public:nro-shop:listings']);
+        return response()->json(['ok' => true]);
     }
 
     public function importAccounts(Request $r, \App\Services\NroAccountImport $import)
@@ -141,6 +178,7 @@ class NroShopController extends Controller
         abort_unless($r->user()->canViewAllAdminData() || $r->user()->can('nro-sale-policy.manage'), 403);
         $v = $r->validate(['enabled' => 'required|boolean', 'ids' => 'present|array|max:10000', 'ids.*' => 'required|integer|min:0|max:100000|distinct']);
         Setting::set('nro_sale_item_policy', json_encode(['enabled' => $v['enabled'], 'ids' => array_map('intval', $v['ids'])]));
+        ApiCache::clearGroups(['public:nick', 'public:nro-shop:listings']);
         return response()->json(['ok' => true]);
     }
     public function password(Request $r, int $id)
@@ -150,9 +188,15 @@ class NroShopController extends Controller
             $a = NroAccount::whereKey($a->id)->lockForUpdate()->firstOrFail();
             NroShopService::require($a->status === 'active', 'Không được đổi mật khẩu acc đã bán hoặc ngừng hoạt động.');
             NroShopService::require(!DB::table('nro_worker_jobs')->where('account_id', $a->id)->whereIn('status', ['queued', 'processing', 'review'])->exists(), 'Chờ công việc tool kết thúc trước khi đổi thông tin đăng nhập.');
-            $a->update(['game_password' => $v['password']]);
+            $updates = ['game_password' => $v['password']];
+            if ($a->publish_status === 'login_blocked') {
+                $updates['publish_status'] = $a->usage_type === 'nick' && $a->auto_publish ? 'waiting_snapshot' : null;
+                $updates['publish_error'] = null;
+            }
+            $a->update($updates);
             Nick::withoutUserOwnedScope()->where('game_account_id', $a->id)->where('status', 'not_sold')->update(['account_password' => AccountEncrypt::encrypt($v['password'])]);
         });
+        ApiCache::clearGroups(['public:nick', 'public:nro-shop:listings']);
         return response()->json(['ok' => true]);
     }
     public function scan(Request $r, int $id)
@@ -166,6 +210,7 @@ class NroShopController extends Controller
             if ($a->auto_publish) $a->update(['publish_status' => 'waiting_snapshot', 'publish_error' => null]);
             DB::table('nro_worker_jobs')->insert(['account_id' => $a->id, 'type' => 'snapshot', 'status' => 'queued', 'created_at' => now(), 'updated_at' => now()]);
         });
+        ApiCache::clearGroups(['public:nick', 'public:nro-shop:listings']);
         return response()->json(['ok' => true]);
     }
     private function nickCategory(Request $r, int $id): Category
@@ -179,7 +224,7 @@ class NroShopController extends Controller
     {
         abort_unless($r->user()->can('nicks.manage'), 403);
         abort_unless($nick->user_id === $account->user_id && ($r->user()->canViewAllAdminData() || $nick->user_id === $r->user()->id), 403);
-        NroShopService::require($nick->status !== 'sold' && $nick->account_name === $account->account_name, 'Nick phải chưa bán và khớp tài khoản.');
+        NroShopService::require(in_array($nick->status, ['not_sold', 'deleted']) && $nick->account_name === $account->account_name, 'Nick phải chưa bán và khớp tài khoản.');
     }
 
     public function draftNickAttributes(Request $r, NroNickAttributeService $attributes)
@@ -228,6 +273,7 @@ class NroShopController extends Controller
             $a->update(['auto_publish' => false, 'publish_status' => 'published', 'publish_error' => null]);
             return $nick;
         });
+        ApiCache::clearGroups(['public:nick', 'public:nro-shop:listings']);
         return response()->json(['id' => $nick->id]);
     }
     public function accountListings(Request $r, int $id, NroShopService $shop)
@@ -260,6 +306,7 @@ class NroShopController extends Controller
             }
             return $listing;
         });
+        ApiCache::clearGroups(['public:nick', 'public:nro-shop:listings']);
         return response()->json(['id' => $listing]);
     }
     public function toggle(Request $r, int $id)
@@ -280,6 +327,7 @@ class NroShopController extends Controller
             }
             DB::table('item_listings')->where('id', $id)->update(['status' => $v['status'], 'updated_at' => now()]);
         }, 3);
+        ApiCache::clearGroups(['public:nick', 'public:nro-shop:listings']);
         return response()->json(['ok' => true]);
     }
     public function settings(Request $r, int $id)
@@ -299,6 +347,7 @@ class NroShopController extends Controller
             }
             $a->update([...$v, 'server' => 'login'.$v['server_game_id']]);
         });
+        ApiCache::clearGroups(['public:nick', 'public:nro-shop:listings']);
         return response()->json(['ok' => true]);
     }
     public function reconcile(Request $r, int $id, NroShopService $shop)
@@ -331,6 +380,8 @@ class NroShopController extends Controller
             app(\App\Services\NroReceivingService::class)->finish($job, $job->order_id && DB::table('item_orders')->where('id', $job->order_id)->value('status') === 'completed' ? 'completed' : 'failed');
             DB::table('nro_worker_jobs')->where('id', $id)->update(['status' => 'completed', 'lease_token' => null, 'result_json' => json_encode(['resolution' => $v, 'actorId' => $r->user()->id]), 'updated_at' => now()]);
         });
+        ApiCache::clearGroups(['public:nick', 'public:nro-shop:listings']);
         return response()->json(['ok' => true]);
     }
+
 }

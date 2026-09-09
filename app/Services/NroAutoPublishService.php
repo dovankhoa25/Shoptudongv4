@@ -59,7 +59,7 @@ class NroAutoPublishService
                 NroShopService::require(is_numeric(data_get($snapshot->data_json, 'character.power')) && in_array(data_get($snapshot->data_json, 'character.gender'), [0, 1, 2], true), 'Snapshot thiếu sức mạnh hoặc hành tinh. Yêu cầu lấy lại dữ liệu.');
                 NroShopService::require($snapshot->captured_at->between(now()->subMinutes(15), now()->addMinutes(5)), 'Snapshot quá cũ. Yêu cầu lấy lại dữ liệu trước khi đăng.');
                 $nick = Nick::withoutUserOwnedScope()->where('game_account_id', $accountId)->lockForUpdate()->first() ?? new Nick;
-                NroShopService::require(!$nick->exists || ($nick->user_id === $account->user_id && $nick->status === 'not_sold'), 'Tin liên kết đã bán hoặc đã ngừng bán, không tự mở bán lại.');
+                NroShopService::require(!$nick->exists || ($nick->user_id === $account->user_id && ($nick->status === 'not_sold' || ($nick->status === 'deleted' && (int) ($config['resumeNickId'] ?? 0) === $nick->id && $owner->can('nicks.manage')))), 'Tin liên kết đã bán hoặc đã ngừng bán, không tự mở bán lại.');
                 $preview = $this->attributes->preview($account, $category);
                 $selections = $config['attributeSelections'] ?? [];
                 $this->validateSelections($preview, $selections);
@@ -74,7 +74,8 @@ class NroAutoPublishService
                 $nick->save();
                 $this->attributes->sync($nick, $preview, $selections);
                 $this->attachImages($account, $nick);
-                $account->update(['publish_status' => 'published', 'publish_error' => null]);
+                unset($config['resumeNickId']);
+                $account->update(['publish_config' => $config, 'publish_status' => 'published', 'publish_error' => null]);
             });
         } catch (ValidationException $e) {
             NroAccount::whereKey($accountId)->update(['publish_status' => 'needs_attention', 'publish_error' => collect($e->errors())->flatten()->first()]);

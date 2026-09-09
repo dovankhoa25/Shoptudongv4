@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\Server\ServerResource;
 use App\Models\Server;
 use App\Support\AdminTableSearch;
+use App\Support\ApiCache;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Redirect;
 use Inertia\Inertia;
@@ -42,6 +43,7 @@ class ServerController extends Controller
             'port' => $request->port,
             'status' => $request->status,
         ]);
+        ApiCache::clearGroups(['public:servers', 'public:server-prices']);
 
         return Redirect::route('admin.servers.index')->with('success', 'Role created.');
     }
@@ -63,6 +65,7 @@ class ServerController extends Controller
             'port' => $request->port,
             'status' => $request->status,
         ]);
+        ApiCache::clearGroups(['public:servers', 'public:server-prices']);
 
         return Redirect::route('admin.servers.index')->with('success', 'Role updated.');
     }

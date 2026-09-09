@@ -10,6 +10,7 @@ use App\Http\Resources\RandomNick\RandomNickResource;
 use App\Models\RandomBox;
 use App\Models\RandomNick;
 use App\Support\AdminTableSearch;
+use App\Support\ApiCache;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
@@ -67,6 +68,7 @@ class RandomNickController extends Controller
         if ($request->hasFile('image')) {
             $randomNick->addMediaFromRequest('image')->toMediaCollection('image');
         }
+        ApiCache::clearGroups(['public:nick']);
 
         return redirect()->back()
             ->with('success', 'Tạo nick random thành công!');
@@ -129,6 +131,7 @@ class RandomNickController extends Controller
             DB::commit();
 
             $count = count($createdNicks);
+            ApiCache::clearGroups(['public:nick']);
 
             return redirect()->back()
                 ->with('success', "Đã tạo thành công {$count} nick random!");
@@ -151,6 +154,7 @@ class RandomNickController extends Controller
             $randomNick->clearMediaCollection('image');
             $randomNick->addMediaFromRequest('image')->toMediaCollection('image');
         }
+        ApiCache::clearGroups(['public:nick']);
 
         return redirect()->back()
             ->with('success', 'Cập nhật nick random thành công!');
@@ -160,6 +164,7 @@ class RandomNickController extends Controller
     {
         // Soft delete - mark as deleted
         $randomNick->markAsDeleted();
+        ApiCache::clearGroups(['public:nick']);
 
         return redirect()->back()
             ->with('success', 'Xóa nick random thành công!');
@@ -168,6 +173,7 @@ class RandomNickController extends Controller
     public function restore(RandomNick $randomNick)
     {
         $randomNick->markAsAvailable();
+        ApiCache::clearGroups(['public:nick']);
 
         return redirect()->back()
             ->with('success', 'Khôi phục nick random thành công!');
@@ -180,6 +186,7 @@ class RandomNickController extends Controller
         ]);
 
         $randomNick->update(['status' => $request->status]);
+        ApiCache::clearGroups(['public:nick']);
 
         return redirect()->back()
             ->with('success', 'Cập nhật trạng thái thành công!');

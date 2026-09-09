@@ -2,6 +2,7 @@
 namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Services\NroShopService;
+use App\Support\ApiCache;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Arr;
@@ -9,42 +10,65 @@ class NroShopController extends Controller
 {
     public function index(Request $r, NroShopService $s)
     {
-        $r->validate(['page' => 'sometimes|integer|min:1', 'server' => 'nullable|integer|min:1',
+        $filters = $r->validate(['page' => 'sometimes|integer|min:1', 'server' => 'nullable|integer|min:1',
             'q' => 'nullable|string|max:100', 'bundle' => 'nullable|in:single,combo',
             'minPrice' => 'nullable|numeric|min:0|max:1000000000000',
             'maxPrice' => ['nullable','numeric','min:0','max:1000000000000', ...($r->filled('minPrice') ? ['gte:minPrice'] : [])],
             'sort' => 'nullable|in:newest,price_asc,price_desc']);
-        $q = DB::table('item_listings')->where('status', 'active')->whereNotExists(fn ($orders) => $orders->selectRaw('1')->from('item_orders')->whereColumn('item_orders.listing_id', 'item_listings.id'));
-        if ($r->filled('server')) $q->whereIn('account_id', DB::table('nro_accounts')->select('id')->where('server_id', $r->integer('server')));
-        $search = trim((string) $r->input('q', ''));
-        if ($search !== '') {
-            // Search public item names/IDs only; internal listing notes stay private.
-            $pattern = '%'.str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $search).'%';
-            $q->whereExists(function ($items) use ($search, $pattern) {
-                $items->selectRaw('1')->from('item_listing_items as li')->join('nro_inventory_items as i', 'i.id', '=', 'li.inventory_item_id')
-                    ->whereColumn('li.listing_id', 'item_listings.id')->where(function ($match) use ($search, $pattern) {
-                        $column = DB::connection()->getQueryGrammar()->wrap('i.item_json->name');
-                        $match->whereRaw($column." LIKE ? ESCAPE '!'", [$pattern]);
-                        if (ctype_digit($search) && strlen($search) <= 10) $match->orWhere('i.template_id', (int) $search);
-                    });
-            });
-        }
-        if ($r->filled('bundle')) $q->where(function ($count) {
-            $count->from('item_listing_items')->selectRaw('COUNT(*)')->whereColumn('listing_id', 'item_listings.id');
-        }, $r->input('bundle') === 'single' ? '=' : '>', 1);
-        if ($r->filled('minPrice')) $q->where('price', '>=', $r->input('minPrice'));
-        if ($r->filled('maxPrice')) $q->where('price', '<=', $r->input('maxPrice'));
-        if ($r->input('sort') === 'price_asc') $q->orderBy('price');
-        elseif ($r->input('sort') === 'price_desc') $q->orderByDesc('price');
-        $page = $q->orderByDesc('id')->paginate(20);
-        return response()->json(['data' => collect($page->items())->map(fn ($i) => Arr::except($s->listing($i), ['description'])),
-            'lastPage' => $page->lastPage(), 'total' => $page->total(), 'currentPage' => $page->currentPage(),
-            'servers' => DB::table('servers')->where('status', true)->get(['id','name','name_view'])]);
+        $cachePayload = $filters;
+        $cachePayload['q'] = trim((string) ($cachePayload['q'] ?? ''));
+        if (($cachePayload['q'] ?? '') === '') unset($cachePayload['q']);
+        ksort($cachePayload);
+        $cacheKey = ApiCache::key('nro-shop:listings', 'v1', json_encode($cachePayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+
+        $payload = ApiCache::remember('public:nro-shop:listings', $cacheKey, 60, function () use ($filters, $s) {
+            $q = DB::table('item_listings')->where('status', 'active')->whereNotExists(fn ($orders) => $orders->selectRaw('1')->from('item_orders')->whereColumn('item_orders.listing_id', 'item_listings.id'));
+            if (! empty($filters['server'])) $q->whereIn('account_id', DB::table('nro_accounts')->select('id')->where('server_id', (int) $filters['server']));
+            $search = trim((string) ($filters['q'] ?? ''));
+            if ($search !== '') {
+                // Search public item names/IDs only; internal listing notes stay private.
+                $pattern = '%'.str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $search).'%';
+                $q->whereExists(function ($items) use ($search, $pattern) {
+                    $items->selectRaw('1')->from('item_listing_items as li')->join('nro_inventory_items as i', 'i.id', '=', 'li.inventory_item_id')
+                        ->whereColumn('li.listing_id', 'item_listings.id')->where(function ($match) use ($search, $pattern) {
+                            $column = DB::connection()->getQueryGrammar()->wrap('i.item_json->name');
+                            $match->whereRaw($column.' LIKE ? ESCAPE \'!\'', [$pattern]);
+                            if (ctype_digit($search) && strlen($search) <= 10) $match->orWhere('i.template_id', (int) $search);
+                        });
+                });
+            }
+            if (! empty($filters['bundle'])) $q->where(function ($count) use ($filters) {
+                $count->from('item_listing_items')->selectRaw('COUNT(*)')->whereColumn('listing_id', 'item_listings.id');
+            }, $filters['bundle'] === 'single' ? '=' : '>', 1);
+            if (! empty($filters['minPrice'])) $q->where('price', '>=', (float) $filters['minPrice']);
+            if (! empty($filters['maxPrice'])) $q->where('price', '<=', (float) $filters['maxPrice']);
+            if (($filters['sort'] ?? null) === 'price_asc') $q->orderBy('price');
+            elseif (($filters['sort'] ?? null) === 'price_desc') $q->orderByDesc('price');
+
+            $page = $q->orderByDesc('id')->paginate(20);
+            return [
+                'data' => collect($page->items())->map(fn ($i) => Arr::except($s->listing($i), ['description'])),
+                'lastPage' => $page->lastPage(), 'total' => $page->total(), 'currentPage' => $page->currentPage(),
+                'servers' => DB::table('servers')->where('status', true)->get(['id','name','name_view'])
+            ];
+        });
+        return response()->json($payload);
     }
     public function show(int $id, NroShopService $s)
     {
-        $l = DB::table('item_listings')->where('id', $id)->where('status', 'active')->whereNotExists(fn ($orders) => $orders->selectRaw('1')->from('item_orders')->whereColumn('item_orders.listing_id', 'item_listings.id'))->first(); abort_unless($l, 404);
-        return response()->json(['data' => Arr::except($s->listing($l), ['description'])]);
+        $payload = ApiCache::remember(
+            'public:nro-shop:listings',
+            ApiCache::key('nro-shop:listing', $id),
+            120,
+            function () use ($id, $s) {
+                $l = DB::table('item_listings')->where('id', $id)->where('status', 'active')->whereNotExists(fn ($orders) => $orders->selectRaw('1')->from('item_orders')->whereColumn('item_orders.listing_id', 'item_listings.id'))->first();
+                abort_unless($l, 404);
+
+                return ['data' => Arr::except($s->listing($l), ['description'])];
+            }
+        );
+
+        return response()->json($payload);
     }
     public function purchase(Request $r, NroShopService $s)
     {

@@ -7,6 +7,7 @@ use App\Http\Resources\GoldPrices\GoldPriceResource;
 use App\Models\GoldPrice;
 use App\Models\Server;
 use App\Support\AdminTableSearch;
+use App\Support\ApiCache;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Redirect;
 use Inertia\Inertia;
@@ -48,6 +49,7 @@ class GoldPriceController extends Controller
             'import_price' => $request->import_price,
             'status' => $request->status,
         ]);
+        ApiCache::clearGroups(['public:server-prices']);
 
         return Redirect::route('admin.gold-prices.index')->with('success', 'Giá vàng đã được tạo.');
     }
@@ -67,6 +69,7 @@ class GoldPriceController extends Controller
             'import_price' => $request->import_price,
             'status' => $request->status,
         ]);
+        ApiCache::clearGroups(['public:server-prices']);
 
         return Redirect::route('admin.gold-prices.index')->with('success', 'Giá vàng đã được cập nhật.');
     }
@@ -74,6 +77,7 @@ class GoldPriceController extends Controller
     public function destroy(GoldPrice $goldPrice)
     {
         $goldPrice->delete();
+        ApiCache::clearGroups(['public:server-prices']);
 
         return Redirect::route('admin.gold-prices.index')->with('success', 'Giá vàng đã được xoá.');
     }

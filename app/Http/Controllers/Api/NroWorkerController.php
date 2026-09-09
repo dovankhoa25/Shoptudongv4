@@ -98,7 +98,10 @@ class NroWorkerController extends Controller
 
     public function complete(Request $r, int $id, NroSnapshotService $snapshots, NroShopService $shop)
     {
-        $r->validate(['leaseToken' => 'required|uuid', 'outcome' => 'required|in:success,review,failed,expired,missing_items', 'message' => 'nullable|string|max:250', 'payload' => 'nullable|array']);
+        $r->validate(['leaseToken' => 'required|uuid', 'outcome' => 'required|in:success,review,failed,expired,missing_items,login_failed',
+            'message' => 'nullable|string|max:250', 'payload' => 'nullable|array',
+            'loginFailureKind' => 'nullable|string|max:50', 'retryable' => 'nullable|boolean',
+            'loginAccountRole' => 'nullable|in:sender,receiver']);
         abort_if(strlen($r->getContent()) > 4 * 1024 * 1024, 413);
         return DB::transaction(function () use ($r, $id, $snapshots, $shop) {
             // Account lock serializes stock ingestion with purchases and listing changes.
@@ -135,7 +138,13 @@ class NroWorkerController extends Controller
             }
             $success = $r->input('outcome') === 'success';
             $expired = $r->input('outcome') === 'expired';
-            if (!$success && !$expired && app(\App\Services\NroReceivingService::class)->retryInterrupted($job)) return response()->json(['ok' => true, 'retrySafe' => true]);
+            $permanentSenderLoginFailure = $r->input('loginAccountRole') === 'sender'
+                && $r->boolean('retryable', true) === false && $r->filled('loginFailureKind');
+            if ($permanentSenderLoginFailure) $account->update([
+                'publish_status' => 'login_blocked',
+                'publish_error' => $r->input('message') ?: 'Acc kho bị chặn đăng nhập. Hãy sửa mật khẩu trước khi chạy lại.',
+            ]);
+            if (!$success && !$expired && app(\App\Services\NroReceivingService::class)->retryInterrupted($job, $r->input('message'))) return response()->json(['ok' => true, 'retrySafe' => true]);
             if ($expired) {
                 $session = DB::table('nro_delivery_sessions')->where('id', $job->delivery_session_id)->lockForUpdate()->first();
                 abort_unless($session && $session->status === 'ready' && !$session->trade_in_flight && $session->expires_at <= now()->toDateTimeString(), 409);
@@ -162,8 +171,12 @@ class NroWorkerController extends Controller
             DB::table('nro_worker_jobs')->where('id', $id)->update(['status' => $status, 'result_json' => json_encode(['message' => $r->input('message'), 'snapshotId' => $snapshot?->id]), 'updated_at' => now()]);
             if ($job->type === 'snapshot' && $account->auto_publish) {
                 if ($success) app(\App\Services\NroAutoPublishService::class)->publish($account->id);
-                else $account->update(['publish_status' => 'scan_failed', 'publish_error' => 'Lấy dữ liệu chưa thành công. Kiểm tra tài khoản và công việc tool rồi lấy lại snapshot.']);
+                else $account->update(['publish_status' => 'scan_failed', 'publish_error' => $r->input('message') ?: 'Lấy dữ liệu chưa thành công. Kiểm tra tài khoản và công việc tool rồi lấy lại snapshot.']);
             }
+            if ($permanentSenderLoginFailure) $account->update([
+                'publish_status' => 'login_blocked',
+                'publish_error' => $r->input('message') ?: 'Acc bị chặn đăng nhập. Hãy sửa mật khẩu trước khi chạy lại.',
+            ]);
             return response()->json(['ok' => true, 'snapshotId' => $snapshot?->id]);
         }, 3);
     }
@@ -205,6 +218,7 @@ class NroWorkerController extends Controller
     {
         $v = $r->validate(['leaseToken' => 'required|uuid', 'characterId' => 'required|integer', 'name' => 'required|string|max:50',
             'mapId' => 'required|integer|min:0|max:10000', 'mapName' => 'nullable|string|max:100', 'zone' => 'required|integer|min:0|max:255',
+            'x' => 'nullable|integer|min:-10000|max:10000', 'y' => 'nullable|integer|min:-10000|max:10000',
             'recipientName' => 'required|string|max:50']);
         return DB::transaction(function () use ($r, $id, $v) {
             $job = $this->job($r, $id);

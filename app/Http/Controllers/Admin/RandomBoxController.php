@@ -9,6 +9,7 @@ use App\Http\Resources\RandomBox\RandomBoxResource;
 use App\Models\Category;
 use App\Models\RandomBox;
 use App\Support\AdminTableSearch;
+use App\Support\ApiCache;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 
@@ -55,6 +56,7 @@ class RandomBoxController extends Controller
         $imageUrl = $randomBox->getFirstMediaUrl('image'); // ✅ Đây là cách đúng
         $randomBox->image = $imageUrl;
         $randomBox->save(); // ✅ Lưu lại giá trị vào DB
+        ApiCache::clearGroups(['public:nick']);
 
         return redirect()->back()
             ->with('success', 'Tạo hộp random thành công!');
@@ -78,6 +80,7 @@ class RandomBoxController extends Controller
         $imageUrl = $randomBox->getFirstMediaUrl('image');
         $randomBox->image = $imageUrl;
         $randomBox->save();
+        ApiCache::clearGroups(['public:nick']);
 
         return redirect()->back()
             ->with('success', 'Cập nhật hộp random thành công!');
@@ -87,6 +90,7 @@ class RandomBoxController extends Controller
     {
         // Soft delete bằng cách set is_public = false
         $randomBox->update(['is_public' => false]);
+        ApiCache::clearGroups(['public:nick']);
 
         return redirect()->back()
             ->with('success', 'Xóa hộp random thành công!');
@@ -95,6 +99,7 @@ class RandomBoxController extends Controller
     public function restore(RandomBox $randomBox)
     {
         $randomBox->update(['is_public' => true]);
+        ApiCache::clearGroups(['public:nick']);
 
         return redirect()->back()
             ->with('success', 'Khôi phục hộp random thành công!');

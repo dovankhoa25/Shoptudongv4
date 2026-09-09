@@ -11,6 +11,7 @@ use App\Http\Resources\GameType\GameTypeResource;
 use App\Models\Category;
 use App\Models\GameType;
 use App\Support\AdminTableSearch;
+use App\Support\ApiCache;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 
@@ -42,6 +43,7 @@ class CategoryController extends Controller
         $data = $request->validated();
 
         $category = Category::create($data);
+        ApiCache::clearGroups(['public:catalog']);
 
         if ($request->hasFile('image')) {
             $category->addMediaFromRequest('image')->toMediaCollection('image');
@@ -69,6 +71,7 @@ class CategoryController extends Controller
         $data['is_public'] = filter_var($data['is_public'], FILTER_VALIDATE_BOOLEAN);
 
         $category->update($data);
+        ApiCache::clearGroups(['public:catalog']);
 
         // Nếu có image_file (upload) hoặc image_url
         if ($request->hasFile('image_file')) {
@@ -86,6 +89,7 @@ class CategoryController extends Controller
     public function destroy(Category $category)
     {
         $category->delete();
+        ApiCache::clearGroups(['public:catalog']);
 
         return redirect()->route('admin.games.categories.index')
             ->with('success', 'Xóa danh mục thành công!');

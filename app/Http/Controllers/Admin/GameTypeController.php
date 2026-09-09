@@ -7,6 +7,7 @@ use App\Http\Requests\GameType\StoreGameTypeRequest;
 use App\Http\Requests\GameType\UpdateGameTypeRequest;
 use App\Http\Resources\GameType\GameTypeResource;
 use App\Models\GameType;
+use App\Support\ApiCache;
 use App\Support\AdminTableSearch;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -30,6 +31,7 @@ class GameTypeController extends Controller
     public function store(StoreGameTypeRequest $request)
     {
         $gameType = GameType::create($request->validated());
+        ApiCache::clearGroups(['public:catalog']);
 
         return redirect()->route('admin.games.gametypes.index')
             ->with('success', 'Tạo loại game thành công!');
@@ -38,6 +40,7 @@ class GameTypeController extends Controller
     public function update(UpdateGameTypeRequest $request, GameType $gametype)
     {
         $gametype->update($request->validated());
+        ApiCache::clearGroups(['public:catalog']);
 
         return redirect()->route('admin.games.gametypes.index')
             ->with('success', 'Cập nhật loại game thành công!');
@@ -46,6 +49,7 @@ class GameTypeController extends Controller
     public function destroy(GameType $gametype)
     {
         $gametype->delete();
+        ApiCache::clearGroups(['public:catalog']);
 
         return redirect()->route('admin.games.gametypes.index')
             ->with('success', 'Xóa loại game thành công!');

@@ -10,9 +10,9 @@ import NroNickAttributes from '@/Components/Nro/NroNickAttributes';
 
 type NickListing = { id: number; status: string; price: string; description: string; categoryId: number; categoryName?: string; categorySlug?: string; categoryActive: boolean; snapshotId?: number };
 type PublishConfig = { categoryId: number; price: number; description?: string; attributeSelections?: Record<string, number | null> };
-type Account = { publishStatus?: string; publishError?: string; publishConfig?: PublishConfig; id: number; account_name: string; server_index: number; server_id: number; server_game_id: number; delivery_map: number; delivery_zone: number; delivery_zone_mode: 'auto' | 'fixed'; wait_minutes: number; usage_type: string; character_name?: string; last_synced_at?: string; latest_snapshot_id?: number; status: string; nick: NickListing | null; listingCounts: { total: number; active: number } | null };
+type Account = { ownerUsername?: string; publishStatus?: string; publishError?: string; publishConfig?: PublishConfig; id: number; account_name: string; server_index: number; server_id: number; server_game_id: number; delivery_map: number; delivery_zone: number; delivery_zone_mode: 'auto' | 'fixed'; wait_minutes: number; usage_type: string; character_name?: string; last_synced_at?: string; latest_snapshot_id?: number; status: string; nick: NickListing | null; listingCounts: { total: number; active: number } | null };
 type Inventory = { listed: number; selectable: number; sellable: boolean; id: number; quantity: number; reserved: number; item: NroItem; locations: { location: string; slot: number; quantity: number }[] };
-type Listing = { description?: string; id: number; accountId: number; title: string; price: string; available: number; stockAvailable?: number; unavailableReasons?: string[]; status: string; items: { item: NroItem; quantity: number }[] };
+type Listing = { ownerUsername?: string; description?: string; id: number; accountId: number; title: string; price: string; available: number; stockAvailable?: number; unavailableReasons?: string[]; status: string; lastOrderStatus?: string; items: { item: NroItem; quantity: number }[] };
 type Order = { serverName?: string; session?: { status: string; mode: string; expiresAt?: string }; items: { id: number; quantity: number; delivered: number; item: NroItem }[]; id: number; title: string; recipientName: string; serverIndex: number; price: string; status: string; message?: string };
 type Job = { id: number; account_id: number; order_id?: number; type: string; status: string; result_json?: string };
 type WorkerKey = { id: number; name: string; last_used_at?: string; revoked_at?: string; accepts_delivery: boolean };
@@ -25,12 +25,13 @@ const money = (price: string | number) => `${Number(price).toLocaleString('vi-VN
 const isSold = (a: Account) => a.status === 'sold' || a.nick?.status === 'sold';
 
 function ListingAvailability({ listing }: { listing: Listing }) {
-    if (listing.status === 'sold') return <span className="text-xs text-slate-500 dark:text-slate-400">Đã ẩn khỏi shop · Theo dõi tại Đơn giao đồ</span>;
+    if (listing.status === 'sold') return <span className="text-xs text-slate-500 dark:text-slate-400">{listing.lastOrderStatus === 'refunded' ? 'Đơn đã hoàn tiền · Gói vẫn ẩn vì tồn kho cần đồng bộ lại' : 'Đã ẩn khỏi shop · Theo dõi tại Đơn giao đồ'}</span>;
     return <div className="min-w-40 text-xs"><strong className="text-sm">{listing.available} gói có thể mua</strong><div className="mt-1 text-slate-500 dark:text-slate-400">Tồn chưa giữ cho đơn: {listing.stockAvailable ?? listing.available} gói</div>{listing.unavailableReasons?.map(reason => <div key={reason} className="mt-1 text-amber-600 dark:text-amber-400">{reason}</div>)}</div>;
 }
 
 function NickSaleSummary({ account: a, shopUrl, categories }: { account: Account; shopUrl: string | null; categories: { id: number; name: string }[] }) {
     const nick = a.nick;
+    if (a.publishStatus === 'waiting_snapshot') return <div><Tag color="blue">Chờ snapshot mới → tự đăng lại</Tag>{nick && <span>Nick #{nick.id}</span>}</div>;
     if (!nick && a.publishStatus && !isSold(a)) return <div className="max-w-sm space-y-1"><Tag color={a.publishStatus === 'waiting_snapshot' ? 'blue' : 'orange'}>{{ waiting_snapshot: 'Chờ tool lấy dữ liệu → tự đăng', needs_attention: 'Chờ bổ sung', scan_failed: 'Lấy dữ liệu lỗi', publish_failed: 'Đăng tin lỗi' }[a.publishStatus] || 'Chưa đăng bán'}</Tag>{a.publishConfig && <div className="text-xs">{categories.find(c => c.id === a.publishConfig?.categoryId)?.name || `Danh mục #${a.publishConfig.categoryId}`} · {money(a.publishConfig.price)}</div>}{a.publishError && <p className="text-xs text-amber-600 dark:text-amber-400">{a.publishError}</p>}</div>;
     if (!nick) return <Tag color={isSold(a) ? 'default' : a.latest_snapshot_id ? 'gold' : undefined}>{isSold(a) ? 'Đã bán' : a.latest_snapshot_id ? 'Chưa đăng bán' : 'Chưa lấy dữ liệu'}</Tag>;
     return <div className="space-y-1">
@@ -43,6 +44,8 @@ function NickSaleSummary({ account: a, shopUrl, categories }: { account: Account
 }
 
 export default function NroShop({ accountStats, accountFilters = EMPTY_FILTERS, accountPagination, accounts, categories, listings, orders, jobs, canReconcile, workerKeys, capabilities: caps, servers, loginServers, shopUrl, salePolicy }: Props) {
+    const [editingAccount, setEditingAccount] = useState<Account | null>(null);
+    const [editAccountForm] = Form.useForm();
     const [settings, setSettings] = useState<Account | null>(null);
     const [settingsForm] = Form.useForm();
     const [adding, setAdding] = useState(false);
@@ -152,15 +155,17 @@ export default function NroShop({ accountStats, accountFilters = EMPTY_FILTERS, 
                     </div>
                     <Table size="small" rowKey="id" dataSource={accounts} pagination={{ current: accountPagination?.current || 1, total: accountPagination?.total ?? accounts.length, pageSize: accountPagination?.pageSize || 30, showSizeChanger: false, showTotal: total => total + ' acc', onChange: page => applyFilters(filters, page) }} scroll={{ x: 1000 }} columns={[
                     { title: 'Acc', dataIndex: 'account_name', render: (v, a) => <><strong>{v}</strong><div className="text-xs text-slate-500">#{a.id} · {a.character_name || 'Chưa quét'}</div></> },
+                    { title: 'Người đăng', dataIndex: 'ownerUsername', render: v => v || '—' },
                     { title: 'Server', dataIndex: 'server_id', render: v => servers.find(s => s.id === v)?.name_view || 'Chưa cấu hình' },
                     { title: 'Vai trò', dataIndex: 'usage_type', render: v => <Tag>{v === 'nick' ? 'Bán nick' : 'Kho đồ'}</Tag> },
-                    { title: 'Tin bán', width: 310, render: (_, a) => a.usage_type === 'nick' ? <NickSaleSummary account={a} shopUrl={shopUrl} categories={categories} /> : a.listingCounts ? <div><Button type="link" className="!p-0" onClick={() => showWarehouse(a)}>{a.listingCounts.active} gói đang bán</Button><div className="text-xs text-slate-500">{a.listingCounts.total} gói tổng cộng · {a.listingCounts.total - a.listingCounts.active} gói đã bán / tạm dừng</div></div> : <span className="text-slate-500">Không có quyền xem gói đồ</span> },
+                    { title: 'Tin bán', width: 310, render: (_, a) => a.usage_type === 'nick' ? <NickSaleSummary account={a} shopUrl={shopUrl} categories={categories} /> : a.publishStatus === 'login_blocked' ? <div className="max-w-sm"><Tag color="red">Dừng đăng nhập</Tag><p className="mt-1 text-xs text-red-600 dark:text-red-400">{a.publishError || 'Hãy sửa mật khẩu rồi chạy lại.'}</p></div> : a.listingCounts ? <div><Button type="link" className="!p-0" onClick={() => showWarehouse(a)}>{a.listingCounts.active} gói đang bán</Button><div className="text-xs text-slate-500">{a.listingCounts.total} gói tổng cộng · {a.listingCounts.total - a.listingCounts.active} gói đã bán / tạm dừng</div></div> : <span className="text-slate-500">Không có quyền xem gói đồ</span> },
                     { title: 'Dữ liệu', dataIndex: 'last_synced_at', width: 145, render: v => <span className="text-xs text-slate-500 dark:text-slate-400">{v ? new Date(v).toLocaleString('vi-VN') : 'Chờ lấy / cập nhật'}</span> },
                     { title: 'Thao tác', width: 280, render: (_, a) => <Space wrap>
                         {(caps.readAccountSnapshots || (a.usage_type === 'nick' ? caps.publishNick : caps.manageListings)) && <Button disabled={busy} onClick={() => inspect(a)}>Xem dữ liệu</Button>}
-                        {canPublish(a) && <Button type="primary" disabled={busy} onClick={() => inspect(a, a.usage_type === 'nick' ? 'publish' : 'view')}>{a.usage_type === 'warehouse' ? 'Tạo gói đồ' : a.nick ? 'Sửa tin bán' : 'Đăng bán'}</Button>}
+                        {canPublish(a) && <Button type="primary" disabled={busy} onClick={() => inspect(a, a.usage_type === 'nick' ? 'publish' : 'view')}>{a.usage_type === 'warehouse' ? 'Tạo gói đồ' : a.nick ? (a.nick.status === 'deleted' ? 'Đăng bán lại' : 'Sửa tin bán') : 'Đăng bán'}</Button>}
                         {(caps.manageAccounts || caps.settings) && <Dropdown trigger={['click']} menu={{ items: [
                             ...(caps.manageAccounts ? [{ key: 'scan', label: 'Lấy dữ liệu', disabled: busy || isSold(a) || a.status !== 'active', onClick: () => run(() => axios.post(`${base}/accounts/${a.id}/scan`), 'Đã xếp hàng lấy dữ liệu') },
+                                { key: 'edit-account', label: 'Sửa tài khoản / server', disabled: isSold(a) || a.status !== 'active' || a.usage_type !== 'nick' || !(a.nick ? caps.editNick : caps.publishNick), onClick: () => { setEditingAccount(a); editAccountForm.resetFields(); editAccountForm.setFieldsValue({ username: a.account_name, serverId: a.server_id, serverGameId: a.server_game_id }); } },
                                 { key: 'password', label: 'Sửa mật khẩu', disabled: isSold(a) || a.status !== 'active', onClick: () => { setEditingPassword(a); setNewPassword(''); } }] : []),
                             ...(caps.settings ? [{ key: 'settings', label: 'Cấu hình', disabled: isSold(a), onClick: () => { setSettings(a); settingsForm.setFieldsValue(a); } }] : []),
                         ] }}><Button>Quản lý acc ▾</Button></Dropdown>}
@@ -168,10 +173,11 @@ export default function NroShop({ accountStats, accountFilters = EMPTY_FILTERS, 
                 ]} /></> },
                 { key: 'listings', label: `Gói đồ (${listings.length})`, children: <Table rowKey="id" dataSource={listings} scroll={{ x: 700 }} columns={[
                     { title: 'Gói đồ', render: (_, l) => <><strong>#{l.id} {l.title}</strong>{l.description && <p className="mt-1 whitespace-pre-line text-xs text-slate-500 dark:text-slate-400">{l.description}</p>}<div className="flex gap-1 mt-1">{l.items.map((i, n) => <span key={n} title={`${i.item.name} × ${i.quantity}`}><NroIcon item={i.item} size={30} /><span className="block text-center text-xs">×{i.quantity.toLocaleString('vi-VN')}</span></span>)}</div></> },
+                    { title: 'Người đăng', dataIndex: 'ownerUsername', render: v => v || '—' },
                     { title: 'Acc kho', render: (_, l) => accounts.find(a => a.id === l.accountId)?.account_name || `#${l.accountId}` },
                     { title: 'Giá gói', dataIndex: 'price', render: v => `${Number(v).toLocaleString('vi-VN')}đ` },
                     { title: 'Tồn kho / khả dụng', render: (_, l) => <ListingAvailability listing={l} /> },
-                    { title: 'Trạng thái', dataIndex: 'status', render: v => statusName[v] || v },
+                    { title: 'Trạng thái', render: (_, l) => l.lastOrderStatus === 'refunded' ? <Tag color="orange">Đã hoàn tiền</Tag> : statusName[l.status] || l.status },
                     { title: '', render: (_, l) => caps.manageListings && l.status !== 'sold' && <Button onClick={() => run(() => axios.patch(`${base}/listings/${l.id}`, { status: l.status === 'active' ? 'paused' : 'active' }))}>{l.status === 'active' ? 'Tạm dừng' : 'Đăng lại'}</Button> },
                 ]} /> },
                 { key: 'orders', label: 'Đơn giao đồ', children: <Table rowKey="id" dataSource={orders} scroll={{ x: 700 }} columns={[
@@ -274,6 +280,16 @@ export default function NroShop({ accountStats, accountFilters = EMPTY_FILTERS, 
                 ]} />
             </Card>}
             {snapshot && account && canPublish(account) && <Button type="primary" className="mt-4" disabled={account.usage_type === 'warehouse' && (!inventoryReady || !Object.keys(selected).length)} onClick={() => beginPublish(account)}>{account.usage_type === 'nick' ? account.nick ? 'Sửa tin bán' : 'Đăng bán' : `Tạo gói ${Object.keys(selected).length} loại đồ`}</Button>}
+        </Modal>
+        <Modal title="Sửa tài khoản / server" open={!!editingAccount} onCancel={() => setEditingAccount(null)} footer={null}>
+            <Alert type="info" showIcon className="mb-4" message="Tin sẽ được ẩn và giữ nguyên mã nick. Tool lấy snapshot mới rồi tự đăng lại; thuộc tính game được tính lại theo dữ liệu mới." />
+            <Form form={editAccountForm} layout="vertical" onFinish={v => run(async () => { await axios.patch(`${base}/accounts/${editingAccount!.id}`, v); setEditingAccount(null); }, 'Đã lưu, đang chờ tool lấy dữ liệu và đăng lại')}>
+                <Form.Item name="username" label="Tài khoản game" rules={[{ required: true }]}><Input /></Form.Item>
+                <Form.Item name="password" label="Mật khẩu mới (để trống để giữ nguyên)"><Input.Password autoComplete="new-password" /></Form.Item>
+                <Form.Item name="serverId" label="Server hiển thị" rules={[{ required: true }]}><Select options={servers.map(s => ({ value:s.id, label:s.name_view || s.name }))} /></Form.Item>
+                <Form.Item name="serverGameId" label="Server đăng nhập" rules={[{ required: true }]}><Select options={loginServers.map(s => ({ value:s.id, label:s.name }))} /></Form.Item>
+                <Button type="primary" htmlType="submit" loading={busy}>Lưu và đăng lại</Button>
+            </Form>
         </Modal>
         <Modal width={760} title={account?.usage_type === 'nick' ? account.nick ? `Sửa tin bán #${account.nick.id}` : 'Đăng nick bằng dữ liệu game' : 'Đăng gói đồ'} open={publish} onCancel={() => { setPublish(false); setDetailOpen(!!account); }} footer={null}>
             {account && <p className="mb-3">Acc: <strong>{account.account_name}</strong> · {servers.find(s => s.id === account.server_id)?.name_view || 'Chưa cấu hình server'}</p>}

@@ -17,6 +17,7 @@ use App\Models\Transaction;
 use App\Models\User;
 use App\Scopes\UserOwnedScope;
 use App\Services\TransactionService;
+use App\Support\ApiCache;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -66,132 +67,177 @@ class NickController extends Controller
 
     private function handleDefault(Request $request, Category $category)
     {
-        $orderBys = $this->parseSort($request);
+        $queryParams = $request->query();
+        ksort($queryParams);
 
-        $query = Nick::query()
-            ->with('snapshot:id,summary_json')
-            ->select([
-                'snapshot_id',
-                'id',
-                'price',
-                'description',
-                'image',
-                'listing_type',
-                'attribute_cache_json',
-            ])
-            ->where('category_id', $category->id)
-            ->where('status', 'not_sold');
+        return ApiCache::remember(
+            'public:nick',
+            ApiCache::key(
+                'nick-category',
+                $category->id,
+                'default',
+                json_encode($queryParams, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+            ),
+            90,
+            function () use ($request, $category) {
+                $orderBys = $this->parseSort($request);
 
-        // Search nick_id (group để không phá các điều kiện filter khác)
-        if ($request->filled('nick_id')) {
-            $nickId = trim((string) $request->query('nick_id')); // GET -> query()
+                $query = Nick::query()
+                    ->with('snapshot:id,summary_json')
+                    ->select([
+                        'snapshot_id',
+                        'id',
+                        'price',
+                        'description',
+                        'image',
+                        'listing_type',
+                        'attribute_cache_json',
+                    ])
+                    ->where('category_id', $category->id)
+                    ->where('status', 'not_sold');
 
-            $query->where(function ($q) use ($nickId) {
-                if (is_numeric($nickId)) {
-                    $q->where('id', (int) $nickId);
-                } else {
-                    // id thường là int -> search description là chính
-                    $q->where('description', 'LIKE', '%'.$nickId.'%');
+                // Search nick_id (group để không phá các điều kiện filter khác)
+                if ($request->filled('nick_id')) {
+                    $nickId = trim((string) $request->query('nick_id')); // GET -> query()
+
+                    $query->where(function ($q) use ($nickId) {
+                        if (is_numeric($nickId)) {
+                            $q->where('id', (int) $nickId);
+                        } else {
+                            // id thường là int -> search description là chính
+                            $q->where('description', 'LIKE', '%'.$nickId.'%');
+                        }
+                    });
                 }
-            });
-        }
 
-        // Attribute filters: attr_{attributeId} = {optionId}
-        foreach ($request->query() as $key => $value) {
-            if (! str_starts_with($key, 'attr_')) {
-                continue;
-            }
+                // Attribute filters: attr_{attributeId} = {optionId}
+                foreach ($request->query() as $key => $value) {
+                    if (! str_starts_with($key, 'attr_')) {
+                        continue;
+                    }
 
-            $attributeID = (int) str_replace('attr_', '', $key);
-            $optionID = (int) $value;
+                    $attributeID = (int) str_replace('attr_', '', $key);
+                    $optionID = (int) $value;
 
-            // tránh case optionID = 0 / attributeID = 0
-            if ($attributeID <= 0 || $optionID <= 0) {
-                continue;
-            }
+                    // tránh case optionID = 0 / attributeID = 0
+                    if ($attributeID <= 0 || $optionID <= 0) {
+                        continue;
+                    }
 
-            $query->whereHas('attributes', function ($q) use ($attributeID, $optionID) {
-                $q->where('attributes.id', $attributeID)
-                    ->where('attribute_option_id', $optionID);
-            });
-        }
-
-        // Price range: "min-max" hoặc "min+"
-        if ($request->filled('price_range')) {
-            $range = trim((string) $request->query('price_range'));
-
-            if (str_contains($range, '-')) {
-                [$min, $max] = array_map('trim', explode('-', $range, 2));
-                $min = (int) $min;
-                $max = (int) $max;
-
-                if ($min >= 0 && $max > 0 && $min <= $max) {
-                    $query->whereBetween('price', [$min, $max]);
+                    $query->whereHas('attributes', function ($q) use ($attributeID, $optionID) {
+                        $q->where('attributes.id', $attributeID)
+                            ->where('attribute_option_id', $optionID);
+                    });
                 }
-            } elseif (str_ends_with($range, '+')) {
-                $min = (int) rtrim($range, '+');
-                if ($min > 0) {
-                    $query->where('price', '>=', $min);
+
+                // Price range: "min-max" hoặc "min+"
+                if ($request->filled('price_range')) {
+                    $range = trim((string) $request->query('price_range'));
+
+                    if (str_contains($range, '-')) {
+                        [$min, $max] = array_map('trim', explode('-', $range, 2));
+                        $min = (int) $min;
+                        $max = (int) $max;
+
+                        if ($min >= 0 && $max > 0 && $min <= $max) {
+                            $query->whereBetween('price', [$min, $max]);
+                        }
+                    } elseif (str_ends_with($range, '+')) {
+                        $min = (int) rtrim($range, '+');
+                        if ($min > 0) {
+                            $query->where('price', '>=', $min);
+                        }
+                    }
                 }
+
+                // Apply multi-order
+                foreach ($orderBys as [$field, $dir]) {
+                    $query->orderBy($field, $dir);
+                }
+
+                $nicks = $query->paginate(20);
+
+                return NickResource::collection($nicks)->additional([
+                    'filters' => [
+                        'attributes' => ApiAttributeResource::collection($category->attributes),
+                    ],
+                    'template' => 'default',
+                ]);
             }
-        }
-
-        // Apply multi-order
-        foreach ($orderBys as [$field, $dir]) {
-            $query->orderBy($field, $dir);
-        }
-
-        $nicks = $query->paginate(20);
-
-        return NickResource::collection($nicks)->additional([
-            'filters' => [
-                'attributes' => ApiAttributeResource::collection($category->attributes),
-            ],
-            'template' => 'default',
-        ]);
+        );
     }
 
     private function handleSpin(Request $request, Category $category)
     {
-        $orderBys = $this->parseSort($request);
+        $queryParams = $request->query();
+        ksort($queryParams);
 
-        $query = Spin::where('category_id', $category->id);
+        return ApiCache::remember(
+            'public:nick',
+            ApiCache::key(
+                'nick-category',
+                $category->id,
+                'spin',
+                json_encode($queryParams, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+            ),
+            90,
+            function () use ($request, $category) {
+                $orderBys = $this->parseSort($request);
 
-        foreach ($orderBys as [$field, $direction]) {
-            $query->orderBy($field, $direction);
-        }
+                $query = Spin::where('category_id', $category->id);
 
-        $spins = $query->paginate(20);
+                foreach ($orderBys as [$field, $direction]) {
+                    $query->orderBy($field, $direction);
+                }
 
-        return response()->json([
-            'template' => 'spin',
-            'data' => $spins,
-            'is_spin' => true,
-        ]);
+                $spins = $query->paginate(20);
+
+                return [
+                    'template' => 'spin',
+                    'data' => $spins,
+                    'is_spin' => true,
+                ];
+            }
+        );
     }
 
     private function handleRandom(Request $request, Category $category)
     {
-        $orders = $this->parseSort($request);
+        $queryParams = $request->query();
+        ksort($queryParams);
 
-        $query = RandomBox::where('category_id', $category->id)
-            ->where('is_public', true)
-            ->withCount(['randomNicks as available_nicks_count' => function ($query) {
-                $query->where('status', 'available');
-            }])
-            ->orderBy('sort_order', 'asc');
+        return ApiCache::remember(
+            'public:nick',
+            ApiCache::key(
+                'nick-category',
+                $category->id,
+                'random',
+                json_encode($queryParams, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+            ),
+            90,
+            function () use ($request, $category) {
+                $orders = $this->parseSort($request);
 
-        foreach ($orders as [$field, $dir]) {
-            $query->orderBy($field, $dir);
-        }
+                $query = RandomBox::where('category_id', $category->id)
+                    ->where('is_public', true)
+                    ->withCount(['randomNicks as available_nicks_count' => function ($query) {
+                        $query->where('status', 'available');
+                    }])
+                    ->orderBy('sort_order', 'asc');
 
-        $randomBoxes = $query->paginate(20);
+                foreach ($orders as [$field, $dir]) {
+                    $query->orderBy($field, $dir);
+                }
 
-        return response()->json([
-            'template' => 'random',
-            'data' => $randomBoxes,
-            'is_random_box' => true,
-        ]);
+                $randomBoxes = $query->paginate(20);
+
+                return [
+                    'template' => 'random',
+                    'data' => $randomBoxes,
+                    'is_random_box' => true,
+                ];
+            }
+        );
     }
 
     public function getRandomBoxDetail(Request $request, $categorySlug, $boxId)
@@ -214,24 +260,39 @@ class NickController extends Controller
             return response()->json(['message' => 'Random box not found'], 404);
         }
 
-        $orders = $this->parseSort($request);
+        $queryParams = $request->query();
+        ksort($queryParams);
+        $cacheKey = ApiCache::key(
+            'nick-random-box-detail',
+            $randomBox->id,
+            json_encode($queryParams, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+        );
 
-        $query = RandomNick::select('id', 'status')
-            ->where('random_box_id', $randomBox->id)
-            ->where('status', 'available');
+        return ApiCache::remember(
+            'public:nick',
+            $cacheKey,
+            60,
+            function () use ($request, $randomBox) {
+                $orders = $this->parseSort($request);
 
-        foreach ($orders as [$field, $dir]) {
-            $query->orderBy($field, $dir);
-        }
+                $query = RandomNick::select('id', 'status')
+                    ->where('random_box_id', $randomBox->id)
+                    ->where('status', 'available');
 
-        $randomNicks = $query->paginate(20);
+                foreach ($orders as [$field, $dir]) {
+                    $query->orderBy($field, $dir);
+                }
 
-        return response()->json([
-            'template' => 'random_detail',
-            'box' => $randomBox,
-            'data' => $randomNicks,
-            'is_random_detail' => true,
-        ]);
+                $randomNicks = $query->paginate(20);
+
+                return [
+                    'template' => 'random_detail',
+                    'box' => $randomBox,
+                    'data' => $randomNicks,
+                    'is_random_detail' => true,
+                ];
+            }
+        );
     }
 
     // Method để mua random (chọn ngẫu nhiên)
@@ -347,6 +408,7 @@ class NickController extends Controller
                 }
             }
             DB::commit();
+            ApiCache::clearGroups(['public:nick']);
 
             return response()->json([
                 'message' => 'Purchase successful',
@@ -506,6 +568,7 @@ class NickController extends Controller
                 }
 
                 DB::commit();
+                ApiCache::clearGroups(['public:nick']);
 
                 return response()->json([
                     'message' => 'Nick purchased successfully',
@@ -543,69 +606,86 @@ class NickController extends Controller
 
     public function show($id)
     {
-        $nick = Nick::select([
-            'snapshot_id',
-            'id',
-            'price',
-            'description',
-            'image',
-            'listing_type',
-            'attribute_cache_json',
-            'category_id',
-        ])
-            ->with(['snapshot', 'category:id,name,slug'])
-            ->find($id);
+        $cacheKey = ApiCache::key('nick-detail', $id);
 
-        if (! $nick) {
+        $cached = ApiCache::remember(
+            'public:nick',
+            $cacheKey,
+            120,
+            function () use ($id) {
+                $nick = Nick::select([
+                    'snapshot_id',
+                    'id',
+                    'price',
+                    'description',
+                    'image',
+                    'listing_type',
+                    'attribute_cache_json',
+                    'category_id',
+                ])
+                    ->with(['snapshot', 'category:id,name,slug'])
+                    ->find($id);
+
+                if (! $nick) {
+                    return null;
+                }
+
+                // Lấy toàn bộ media của nick
+                $images = $nick->getMedia('images')->toBase()->map(function ($media) {
+                    return [
+                        'url' => $media->getUrl(),
+                    ];
+                });
+
+                if ($nick->image && ! $images->contains('url', $nick->image)) {
+                    $images->prepend(['url' => $nick->image]);
+                }
+
+                $relatedNicks = Nick::select([
+                    'snapshot_id',
+                    'id',
+                    'price',
+                    'description',
+                    'image',
+                    'listing_type',
+                    'attribute_cache_json',
+                ])
+                    ->with('snapshot:id,summary_json')
+                    ->where('id', '!=', $nick->id)
+                    ->where('category_id', $nick->category_id)
+                    ->where('status', 'not_sold')
+                    ->whereBetween('price', [
+                        $nick->price * 0.8,
+                        $nick->price * 1.2,
+                    ])
+                    ->limit(10)
+                    ->get();
+
+                return [
+                    'data' => [
+                        'id' => $nick->id,
+                        'price' => $nick->price,
+                        'description' => $nick->description,
+                        'image' => $nick->image,
+                        'listing_type' => $nick->listing_type,
+                        'attribute_cache_json' => $nick->attribute_cache_json ?? '{}',
+                        'images' => $images,
+                        'category' => $nick->category ? ['name' => $nick->category->name, 'slug' => $nick->category->slug] : null,
+                        'nro_summary' => $nick->snapshot?->summary_json,
+                        'nro_snapshot' => $nick->snapshot ? ['data' => $nick->snapshot->data_json, 'completeness' => $nick->snapshot->completeness_json, 'summary' => $nick->snapshot->summary_json] : null,
+                        'related' => NickResource::collection($relatedNicks),
+                    ],
+                ];
+            }
+        );
+
+        if (! $cached) {
             return response()->json([
                 'message' => 'Nick not found',
             ], 404);
         }
 
-        // Lấy toàn bộ media của nick
-        $images = $nick->getMedia('images')->toBase()->map(function ($media) {
-            return [
-                'url' => $media->getUrl(),
-                // 'name' => $media->name,
-                // 'id' => $media->id
-            ];
-        });
-        if ($nick->image && !$images->contains('url', $nick->image)) $images->prepend(['url' => $nick->image]);
-        $relatedNicks = Nick::select([
-            'snapshot_id',
-            'id',
-            'price',
-            'description',
-            'image',
-            'listing_type',
-            'attribute_cache_json',
-        ])
-            ->with('snapshot:id,summary_json')
-            ->where('id', '!=', $nick->id)
-            ->where('category_id', $nick->category_id)
-            ->where('status', 'not_sold')
-            ->whereBetween('price', [
-                $nick->price * 0.8,
-                $nick->price * 1.2,
-            ])
-            ->limit(10)
-            ->get();
-
-        return response()->json([
-            'data' => [
-                'id' => $nick->id,
-                'price' => $nick->price,
-                'description' => $nick->description,
-                'image' => $nick->image,
-                'listing_type' => $nick->listing_type,
-                'attribute_cache_json' => $nick->attribute_cache_json ?? '{}',
-                'images' => $images,
-                'category' => $nick->category ? ['name' => $nick->category->name, 'slug' => $nick->category->slug] : null,
-                'nro_summary' => $nick->snapshot?->summary_json,
-                'nro_snapshot' => $nick->snapshot ? ['data' => $nick->snapshot->data_json, 'completeness' => $nick->snapshot->completeness_json, 'summary' => $nick->snapshot->summary_json] : null,
-                'related' => NickResource::collection($relatedNicks),
-            ],
-        ]);
+        return response()->json($cached);
     }
 
     public function purchase(Request $request)
@@ -723,6 +803,7 @@ class NickController extends Controller
             ]);
 
             DB::commit();
+            ApiCache::clearGroups(['public:nick']);
 
             return response()->json([
                 'success' => true,

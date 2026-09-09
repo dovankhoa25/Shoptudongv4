@@ -7,6 +7,7 @@ use App\Http\Resources\AppAuto\AppBotResource;
 use App\Http\Resources\AppAuto\AppGemBotResource;
 use App\Models\Bot;
 use App\Models\GemBot;
+use App\Support\ApiCache;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
@@ -64,6 +65,7 @@ class AppGemBotController extends Controller
                 'last_synced_at' => now(),
             ]
         ));
+        ApiCache::clearGroups(['public:gembot']);
 
         return response()->json([
             'success' => true,
