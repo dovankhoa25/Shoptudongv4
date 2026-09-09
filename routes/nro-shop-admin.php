@@ -11,6 +11,7 @@ Route::prefix('admin/nro-shop')->name('admin.nro-shop.')->middleware(['auth', 'u
     Route::get('worker-keys', [NroShopController::class, 'workerKeys'])->middleware('permission:nro-workers.manage')->name('worker-keys.index');
     Route::post('worker-keys', [NroShopController::class, 'createKey'])->middleware('permission:nro-workers.manage')->name('worker-keys.store');
     Route::delete('worker-keys/{id}', [NroShopController::class, 'revokeKey'])->middleware('permission:nro-workers.manage')->name('worker-keys.revoke');
+    Route::patch('accounts/{id}/visibility', [NroShopController::class, 'visibility'])->middleware('permission:nro-accounts.manage')->name('accounts.visibility');
     Route::patch('accounts/{id}/settings', [NroShopController::class, 'settings'])->middleware('permission:nro-settings.manage')->name('accounts.settings');
     // Controller authorizes admin/super-admin OR the dedicated sale-policy permission.
     Route::patch('sale-policy', [NroShopController::class, 'salePolicy'])->name('sale-policy');

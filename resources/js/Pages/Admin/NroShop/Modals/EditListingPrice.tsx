@@ -1,3 +1,4 @@
+import { Pencil } from 'lucide-react';
 import { useState } from 'react';
 import axios from 'axios';
 import { Alert, Button, InputNumber, Modal, message } from 'antd';
@@ -12,9 +13,9 @@ export default function EditListingPrice({ listing, disabled, onSaved }: {
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
     return <>
-        <Button disabled={disabled || listing.status === 'sold'} onClick={() => {
+        <Button title="Sửa giá" aria-label="Sửa giá" icon={<Pencil size={16} />} disabled={disabled || listing.status === 'sold'} onClick={() => {
             setPrice(Number(listing.price)); setError(''); setOpen(true);
-        }}>Sửa giá</Button>
+        }} />
         <Modal title={`Sửa giá gói #${listing.id}`} open={open} confirmLoading={saving}
             okText="Lưu giá" cancelText="Đóng" okButtonProps={{ disabled: !price || price < 1 }}
             onCancel={() => { if (!saving) setOpen(false); }} onOk={async () => {

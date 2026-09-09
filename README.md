@@ -13,3 +13,9 @@
 
 0.0.6
 - đăng ac đồ tự động
+
+0.0.7
+- sửa đăng đồ acc v.v
+
+0.0.8
+-- filter item

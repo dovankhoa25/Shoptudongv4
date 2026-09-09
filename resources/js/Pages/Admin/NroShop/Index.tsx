@@ -93,7 +93,9 @@ export default function NroShop({
     };
 
     const openPolicy = () => {
-        policyForm.setFieldsValue({ enabled: salePolicy.enabled, ids: salePolicy.ids.join(', ') });
+        const groupIds: Record<string, string> = Object.fromEntries(['equipment','dragon_balls','upgrade_stones','crystals','support','other'].map(group=>[group,'']));
+        for (const row of salePolicy.groupOverrides || []) groupIds[row.group] = [groupIds[row.group], String(row.id)].filter(Boolean).join(', ');
+        policyForm.setFieldsValue({ enabled: salePolicy.enabled, ids: salePolicy.ids.join(', '), groupIds });
         setPolicyOpen(true);
     };
 

@@ -1,7 +1,8 @@
 import EditListingPrice from './EditListingPrice';
 import { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
-import { Button, Modal, Space, Table, Tag, message } from 'antd';
+import { Eye, MoreVertical } from 'lucide-react';
+import { Dropdown, Button, Modal, Space, Table, Tag, message } from 'antd';
 import { base, ItemStrip, ListingAvailability, money, statusName } from '../shared';
 import type { Account, Capabilities, Listing, Paged } from '../types';
 
@@ -92,7 +93,7 @@ export default function WarehouseListingsModal({
                         title: 'Trạng thái',
                         dataIndex: 'status',
                         width: 120,
-                        render: v => <Tag color={v === 'active' ? 'green' : undefined}>{statusName[v] || v}</Tag>,
+                        render: (v, l: Listing) => l.shopHidden && v === 'active' ? <Tag color="orange">Tạm ẩn theo acc</Tag> : <Tag color={v === 'active' ? 'green' : undefined}>{statusName[v] || v}</Tag>,
                     },
                     {
                         title: 'Tồn kho / khả dụng',
@@ -101,29 +102,21 @@ export default function WarehouseListingsModal({
                     },
                     {
                         title: 'Thao tác',
-                        width: 190,
+                        width: 130,
                         render: (_, l: Listing) => (
                             <Space wrap>
                                 {caps.manageListings && l.status !== 'sold' && <EditListingPrice listing={l} disabled={busy} onSaved={() => load(rows.page)} />}
                                 {shopUrl && l.status !== 'sold' && (
-                                    <Button href={`${shopUrl}/mua-do/${l.id}`} target="_blank" rel="noopener noreferrer">
-                                        Xem trên shop ↗
-                                    </Button>
+                                    <Button title="Xem trên shop" aria-label="Xem trên shop" icon={<Eye size={16} />} href={`${shopUrl}/mua-do/${l.id}`} target="_blank" rel="noopener noreferrer" />
                                 )}
                                 {caps.manageListings && l.status !== 'sold' && (
-                                    <Button
-                                        disabled={busy}
-                                        onClick={() =>
-                                            run(async () => {
-                                                await axios.patch(`${base}/listings/${l.id}`, {
-                                                    status: l.status === 'active' ? 'paused' : 'active',
-                                                });
-                                                await load(rows.page);
-                                            })
-                                        }
-                                    >
-                                        {l.status === 'active' ? 'Tạm dừng' : 'Đăng lại'}
-                                    </Button>
+                                    <Dropdown trigger={['click']} menu={{ items: [{
+                                        key: 'toggle', label: l.status === 'active' ? 'Tạm dừng gói' : 'Đăng lại gói', disabled: busy,
+                                        onClick: () => run(async () => {
+                                            await axios.patch(`${base}/listings/${l.id}`, { status: l.status === 'active' ? 'paused' : 'active' });
+                                            await load(rows.page);
+                                        }),
+                                    }] }}><Button title="Thao tác khác" aria-label="Thao tác khác" icon={<MoreVertical size={16} />} disabled={busy} /></Dropdown>
                                 )}
                             </Space>
                         ),

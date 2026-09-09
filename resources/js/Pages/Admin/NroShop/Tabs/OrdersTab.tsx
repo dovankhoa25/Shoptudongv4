@@ -69,6 +69,8 @@ export default function OrdersTab({ dataVersion }: { dataVersion: number }) {
                 columns={[
                     {
                         title: 'Đơn',
+                        width: 190,
+
                         render: (_, o: Order) => (
                             <>
                                 <strong>

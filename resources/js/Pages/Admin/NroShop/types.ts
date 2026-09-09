@@ -32,6 +32,7 @@ export type Account = {
     delivery_zone_mode: 'auto' | 'fixed';
     wait_minutes: number;
     usage_type: string;
+    shop_hidden?: boolean;
     character_name?: string;
     last_synced_at?: string;
     latest_snapshot_id?: number;
@@ -57,6 +58,7 @@ export type Inventory = {
 export type Listing = {
     id: number;
     accountId: number;
+    shopHidden?: boolean;
     accountName?: string;
     ownerUsername?: string;
     title: string;
@@ -139,7 +141,7 @@ export type PageProps = {
     accountStats?: Stats;
     accountFilters?: AccountFilters;
     accountPagination?: { total: number; current: number; pageSize: number };
-    salePolicy: { enabled: boolean; ids: number[] };
+    salePolicy: { enabled: boolean; ids: number[]; groupOverrides?: { id: number; group: string }[]; groups?: { value: string; label: string }[] };
     shopUrl: string | null;
     capabilities: Capabilities;
     servers: Server[];

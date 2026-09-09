@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { router } from '@inertiajs/react';
 import axios from 'axios';
-import { Button, Dropdown, Form, Input, Select, Space, Table, Tag, message } from 'antd';
+import { Eye, Pencil, Plus, MoreVertical, EyeOff } from 'lucide-react';
+import { Button, Dropdown, Form, Input, Select, Space, Table, Tag, Tooltip, message } from 'antd';
 import type { NroSnapshot } from '@/Components/Nro/NroSnapshot';
 import { base, dateTime, isSold, NickSaleSummary } from '../shared';
 import AccountDetailModal from '../Modals/AccountDetailModal';
@@ -182,6 +183,7 @@ export default function AccountsTab({
                     options={[
                         { value: 'waiting', label: 'Chờ tự đăng' },
                         { value: 'published', label: 'Nick đang bán' },
+                        { value: 'hidden', label: 'Kho tạm ẩn khỏi shop' },
                         { value: 'attention', label: 'Cần xử lý' },
                         { value: 'sold', label: 'Đã bán' },
                     ]}
@@ -209,6 +211,8 @@ export default function AccountsTab({
                     {
                         title: 'Acc',
                         dataIndex: 'account_name',
+                        width: 200,
+
                         render: (v, a: Account) => (
                             <>
                                 <strong>{v}</strong>
@@ -229,7 +233,7 @@ export default function AccountsTab({
                         title: 'Vai trò',
                         dataIndex: 'usage_type',
                         width: 100,
-                        render: (v, a: Account) => <><Tag>{v === 'nick' ? 'Bán nick' : 'Kho đồ'}</Tag>{a.deliveryActivity?.message && <div className="mt-1 text-xs text-sky-700 dark:text-sky-300">{a.deliveryActivity.message}</div>}</>,
+                        render: (v, a: Account) => <><Tag>{v === 'nick' ? 'Bán nick' : 'Kho đồ'}</Tag>{a.shop_hidden && <Tooltip title="Gói đồ đã ẩn khỏi shop. Đơn đã mua vẫn được giao."><Tag color="orange">Tạm ẩn shop</Tag></Tooltip>}{a.deliveryActivity?.message && <div className="mt-1 text-xs text-sky-700 dark:text-sky-300">{a.deliveryActivity.message}</div>}</>,
                     },
                     {
                         title: 'Tin bán',
@@ -247,7 +251,7 @@ export default function AccountsTab({
                             ) : a.listingCounts ? (
                                 <div>
                                     <Button type="link" className="!p-0" onClick={() => setWarehouse(a)}>
-                                        {a.listingCounts.active} gói đang bán
+                                        {a.listingCounts.active} {a.shop_hidden ? 'gói tạm ẩn' : 'gói đang bán'}
                                     </Button>
                                     <div className="text-xs text-slate-500">
                                         {a.listingCounts.total} gói tổng cộng ·{' '}
@@ -270,29 +274,19 @@ export default function AccountsTab({
                     },
                     {
                         title: 'Thao tác',
-                        width: 280,
+                        width: 130,
                         render: (_, a: Account) => (
                             <Space wrap>
                                 {(caps.readAccountSnapshots ||
                                     (a.usage_type === 'nick' ? caps.publishNick : caps.manageListings)) && (
-                                    <Button disabled={working} onClick={() => inspect(a)}>
-                                        Xem dữ liệu
-                                    </Button>
+                                    <Tooltip title="Xem dữ liệu"><Button aria-label="Xem dữ liệu" icon={<Eye size={16} />} disabled={working} onClick={() => inspect(a)} /></Tooltip>
                                 )}
                                 {canPublish(a) && (
-                                    <Button
-                                        type="primary"
-                                        disabled={working}
-                                        onClick={() => inspect(a, a.usage_type === 'nick' ? 'publish' : 'view')}
-                                    >
-                                        {a.usage_type === 'warehouse'
-                                            ? 'Tạo gói đồ'
-                                            : a.nick
-                                              ? a.nick.status === 'deleted'
-                                                  ? 'Đăng bán lại'
-                                                  : 'Sửa tin bán'
-                                              : 'Đăng bán'}
-                                    </Button>
+                                    <Tooltip title={a.usage_type === 'warehouse' ? 'Tạo gói đồ' : a.nick ? 'Sửa / đăng lại tin bán' : 'Đăng bán'}>
+                                        <Button type="primary" aria-label={a.usage_type === 'warehouse' ? 'Tạo gói đồ' : 'Sửa / đăng tin bán'}
+                                            icon={a.usage_type === 'warehouse' || !a.nick ? <Plus size={16} /> : <Pencil size={16} />}
+                                            disabled={working} onClick={() => inspect(a, a.usage_type === 'nick' ? 'publish' : 'view')} />
+                                    </Tooltip>
                                 )}
                                 {(caps.manageAccounts || caps.settings) && (
                                     <Dropdown
@@ -301,6 +295,14 @@ export default function AccountsTab({
                                             items: [
                                                 ...(caps.manageAccounts
                                                     ? [
+                                                          ...(a.usage_type === 'warehouse' ? [{
+                                                              key: 'visibility',
+                                                              icon: a.shop_hidden ? <Eye size={14} /> : <EyeOff size={14} />,
+                                                              label: a.shop_hidden ? 'Hiện lại gói đồ trên shop' : 'Tạm ẩn acc và gói đồ khỏi shop',
+                                                              disabled: working,
+                                                              onClick: () => run(() => axios.patch(`${base}/accounts/${a.id}/visibility`, { hidden: !a.shop_hidden }),
+                                                                  a.shop_hidden ? 'Đã hiện lại gói đồ đang bán' : 'Đã ẩn khỏi shop. Đơn đã mua vẫn được giao.'),
+                                                          }] : []),
                                                           {
                                                               key: 'scan',
                                                               label: 'Lấy dữ liệu',
@@ -353,7 +355,7 @@ export default function AccountsTab({
                                             ],
                                         }}
                                     >
-                                        <Button>Quản lý acc ▾</Button>
+                                        <Button aria-label="Thao tác khác" title="Thao tác khác" icon={<MoreVertical size={16} />} disabled={working} />
                                     </Dropdown>
                                 )}
                             </Space>

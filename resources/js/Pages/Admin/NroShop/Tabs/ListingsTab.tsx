@@ -1,6 +1,7 @@
 import EditListingPrice from '../Modals/EditListingPrice';
 import axios from 'axios';
-import { Button, Input, Select, Space, Table, Tag } from 'antd';
+import { Eye, MoreVertical } from 'lucide-react';
+import { Dropdown, Button, Input, Select, Space, Table, Tag } from 'antd';
 import { base, ListingAvailability, ItemStrip, money, statusName } from '../shared';
 import { usePagedTab } from '../usePagedTab';
 import type { Capabilities, Listing } from '../types';
@@ -71,6 +72,7 @@ export default function ListingsTab({
                 columns={[
                     {
                         title: 'Gói đồ',
+                        width: 220,
                         render: (_, l: Listing) => (
                             <>
                                 <strong>
@@ -97,7 +99,7 @@ export default function ListingsTab({
                         title: 'Trạng thái',
                         width: 120,
                         render: (_, l: Listing) =>
-                            l.lastOrderStatus === 'refunded' ? (
+                            l.shopHidden && l.status === 'active' ? <Tag color="orange">Tạm ẩn theo acc</Tag> : l.lastOrderStatus === 'refunded' ? (
                                 <Tag color="orange">Đã hoàn tiền</Tag>
                             ) : (
                                 <Tag color={l.status === 'active' ? 'green' : undefined}>
@@ -107,28 +109,21 @@ export default function ListingsTab({
                     },
                     {
                         title: 'Thao tác',
-                        width: 190,
+                        width: 130,
                         render: (_, l: Listing) => (
                             <Space wrap>
                                 {caps.manageListings && l.status !== 'sold' && <EditListingPrice listing={l} disabled={busy} onSaved={reload} />}
                                 {shopUrl && l.status !== 'sold' && (
-                                    <Button href={`${shopUrl}/mua-do/${l.id}`} target="_blank" rel="noopener noreferrer">
-                                        Xem trên shop ↗
-                                    </Button>
+                                    <Button title="Xem trên shop" aria-label="Xem trên shop" icon={<Eye size={16} />} href={`${shopUrl}/mua-do/${l.id}`} target="_blank" rel="noopener noreferrer" />
                                 )}
                                 {caps.manageListings && l.status !== 'sold' && (
-                                    <Button
-                                        disabled={busy}
-                                        onClick={() =>
-                                            run(async () => {
-                                                await axios.patch(`${base}/listings/${l.id}`, {
-                                                    status: l.status === 'active' ? 'paused' : 'active',
-                                                });
-                                            })
-                                        }
-                                    >
-                                        {l.status === 'active' ? 'Tạm dừng' : 'Đăng lại'}
-                                    </Button>
+                                    <Dropdown trigger={['click']} menu={{ items: [{
+                                        key: 'toggle', label: l.status === 'active' ? 'Tạm dừng gói' : 'Đăng lại gói', disabled: busy,
+                                        onClick: () => run(async () => {
+                                            await axios.patch(`${base}/listings/${l.id}`, { status: l.status === 'active' ? 'paused' : 'active' });
+                                            await reload();
+                                        }),
+                                    }] }}><Button title="Thao tác khác" aria-label="Thao tác khác" icon={<MoreVertical size={16} />} disabled={busy} /></Dropdown>
                                 )}
                             </Space>
                         ),

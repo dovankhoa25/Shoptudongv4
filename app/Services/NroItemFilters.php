@@ -2,14 +2,21 @@
 namespace App\Services;
 
 use App\Models\Setting;
-use Illuminate\Support\Str;
 
 class NroItemFilters
 {
     public const GROUPS = ['equipment'=>'Trang bị', 'dragon_balls'=>'Ngọc Rồng', 'upgrade_stones'=>'Đá nâng cấp',
         'crystals'=>'Sao pha lê', 'support'=>'Hỗ trợ & sự kiện', 'other'=>'Vật phẩm khác'];
-    public const EQUIPMENT = ['0'=>'Áo', '1'=>'Quần', '2'=>'Găng', '3'=>'Giày', '4'=>'Rada', '5'=>'Cải trang & ngoại hình', '19'=>'Bông tai', '32'=>'Giáp tập luyện'];
-    public const STATS = ['damage'=>'Sức đánh', 'hp'=>'HP', 'ki'=>'KI'];
+    public const EQUIPMENT = ['0'=>'Áo', '1'=>'Quần', '2'=>'Găng', '3'=>'Giày', '4'=>'Rada'];
+    public const ITEM_GROUP_IDS = [
+        'upgrade_stones'=>[220,221,222,223,224],
+        'crystals'=>[447,446,445,444,443,442,441],
+        'dragon_balls'=>[14,15,16,17,18,19,20],
+    ];
+    public const STATS = ['damage'=>'Sức đánh', 'life_steal'=>'Hút máu', 'ki_steal'=>'Hút KI',
+        'gold'=>'Vàng từ quái', 'hp'=>'HP', 'ki'=>'KI', 'other'=>'Khác'];
+    // Other combat/utility stats, excluding slot counts, item level, expiry and trade metadata.
+    public const OTHER_STAT_IDS = [3,4,5,10,14,15,16,17,18,19,27,28,42,43,44,45,46,47,62,78,79,80,81,88,94,197,204,206];
     private array $catalog;
     private array $overrides;
     public function __construct()
@@ -22,23 +29,31 @@ class NroItemFilters
     public function group(array $template): string
     {
         if (isset($this->overrides[$template['id']])) return $this->overrides[$template['id']];
-        if (preg_match('/^ngoc rong(?: |$)/', Str::lower(Str::ascii($template['name'] ?? '')))) return 'dragon_balls';
-        $type = $template['type'] ?? -1;
-        if (array_key_exists($type, self::EQUIPMENT)) return 'equipment';
-        if ($type === 14) return 'upgrade_stones';
-        if ($type === 30) return 'crystals';
+        foreach (self::ITEM_GROUP_IDS as $group=>$ids) if (in_array((int)$template['id'],$ids,true)) return $group;
+        $type = (int)($template['type'] ?? -1);
+        if (in_array($type,[0,1,2,3,4],true)) return 'equipment';
         if (in_array($type, [6,7,8,13,22,23,24,25,27,29,31,35,37], true)) return 'support';
         return 'other';
     }
     public function metadata(): array
     {
         $options = fn ($values) => array_map(fn ($id, $label) => ['value'=>(string)$id, 'label'=>$label], array_keys($values), array_values($values));
-        return ['groups'=>$options(self::GROUPS), 'equipmentTypes'=>$options(self::EQUIPMENT), 'stats'=>$options(self::STATS)];
+        $itemsByGroup = [];
+        foreach (self::ITEM_GROUP_IDS as $group=>$defaults) {
+            $ids = array_values(array_unique([...$defaults, ...$this->templateIds(['group'=>$group])]));
+            $itemsByGroup[$group] = [];
+            foreach ($ids as $id) {
+                $item=$this->catalog[$id] ?? null;
+                if ($item && $this->group($item)===$group) $itemsByGroup[$group][]=['value'=>(string)$id,'label'=>$item['name']];
+            }
+        }
+        return ['groups'=>$options(self::GROUPS), 'equipmentTypes'=>$options(self::EQUIPMENT), 'stats'=>$options(self::STATS), 'itemsByGroup'=>$itemsByGroup];
     }
     public function templateIds(array $filters): array
     {
         return array_keys(array_filter($this->catalog, function ($item) use ($filters) {
             if (!empty($filters['group']) && $this->group($item) !== $filters['group']) return false;
+            if (isset($filters['itemId']) && (int)$item['id'] !== (int)$filters['itemId']) return false;
             if (isset($filters['equipmentType']) && (int)$item['type'] !== (int)$filters['equipmentType']) return false;
             if (isset($filters['gender']) && !in_array((int)($item['gender'] ?? -1), [(int)$filters['gender'],3], true)) return false;
             return true;
@@ -50,6 +65,14 @@ class NroItemFilters
         $stars = array_filter($options, fn ($o) => in_array((int)$o['optionId'], [102,107], true) && $o['param'] >= 0 && $o['param'] <= 9);
         $has = fn ($ids) => collect($options)->contains(fn ($o) => in_array((int)$o['optionId'], $ids, true) && $o['param'] > 0);
         return ['filter_stars'=>$stars ? max(array_column($stars, 'param')) : null,
-            'filter_damage'=>$has([0,49,50]), 'filter_hp'=>$has([2,6,22,48,77]), 'filter_ki'=>$has([2,7,23,48,103])];
+            'filter_damage'=>$has([0,49,50,147]), 'filter_hp'=>$has([2,6,22,48,77]), 'filter_ki'=>$has([2,7,23,48,103])];
     }
+    public static function extraInventoryColumns(array $item): array
+    {
+        $options=$item['options'] ?? [];
+        $has=fn($ids)=>collect($options)->contains(fn($o)=>in_array((int)($o['optionId'] ?? -1),$ids,true) && ($o['param'] ?? 0)>0);
+        return ['filter_life_steal'=>$has([8,95,104]), 'filter_ki_steal'=>$has([8,96]),
+            'filter_gold'=>$has([100]), 'filter_other'=>$has(self::OTHER_STAT_IDS)];
+    }
+
 }

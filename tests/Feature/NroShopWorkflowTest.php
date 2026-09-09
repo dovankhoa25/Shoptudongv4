@@ -1321,4 +1321,154 @@ class NroShopWorkflowTest extends TestCase
         $this->postJson('/app/nro-worker/jobs/'.$jobs[1]['id'].'/ready',[...$body,'leaseToken'=>$jobs[1]['leaseToken']])->assertOk()->assertJson(fn ($json)=>$json->where('remainingSeconds',fn($v)=>$v>1798)->etc());
     }
 
+
+    public function test_item_filters_match_one_item_in_combo_and_old_inventory_is_backfilled(): void
+    {
+        $seller=$this->seller(); $account=$this->warehouse($seller);
+        $catalog=collect(json_decode(file_get_contents(resource_path('nro/item-templates.json')),true));
+        $glove=$catalog->firstWhere('type',2)['id'];
+        $payload=$this->payload();
+        $payload['snapshot']['bag'][0]['options']=[['optionId'=>6,'param'=>100],['optionId'=>107,'param'=>2]];
+        $payload['snapshot']['bag'][1]['templateId']=$glove;
+        $payload['snapshot']['bag'][1]['options']=[['optionId'=>0,'param'=>150],['optionId'=>107,'param'=>7]];
+        // Use a fresh warehouse inventory to avoid including historic zero-quantity rows in the helper.
+        DB::table('nro_inventory_items')->where('account_id',$account->id)->delete();
+        app(NroSnapshotService::class)->ingest($account,$payload);
+        $id=$this->listing($seller,$account);
+        $url='/api/nro-shop/listings?group=equipment&bundle=combo';
+        $this->getJson($url.'&equipmentType=2&minStars=5&stat=damage')->assertOk()->assertJsonPath('total',1)->assertJsonPath('data.0.id',$id)->assertJsonPath('from',1)->assertJsonPath('to',1);
+        $this->getJson($url.'&equipmentType=0&minStars=5')->assertOk()->assertJsonPath('total',0);
+        $this->getJson($url.'&equipmentType=2&stat=hp')->assertOk()->assertJsonPath('total',0);
+        $this->getJson($url.'&q=0&equipmentType=2')->assertOk()->assertJsonPath('total',0);
+        $this->getJson('/api/nro-shop/listings?group=dragon_balls')->assertOk()->assertJsonPath('total',0);
+        $this->getJson('/api/nro-shop/listings?group=invalid')->assertUnprocessable();
+        $this->getJson('/api/nro-shop/listings?group=crystals&minStars=5')->assertUnprocessable();
+        $this->getJson('/api/nro-shop/listings?group=equipment&minStars=10')->assertUnprocessable();
+        $migration=require database_path('migrations/2026_09_10_000004_add_nro_inventory_filters.php');
+        $migration->down(); $migration->up();
+        $this->assertDatabaseHas('nro_inventory_items',['account_id'=>$account->id,'template_id'=>$glove,'filter_stars'=>7,'filter_damage'=>true,'filter_hp'=>false]);
+        $this->assertDatabaseHas('nro_inventory_items',['account_id'=>$account->id,'template_id'=>0,'filter_stars'=>2,'filter_hp'=>true]);
+    }
+
+    public function test_classification_override_is_permission_guarded_and_does_not_change_sale_policy(): void
+    {
+        $seller=$this->seller(); $a=$this->warehouse($seller); $id=$this->listing($seller,$a);
+        $body=['enabled'=>false,'ids'=>[],'groupOverrides'=>[['id'=>0,'group'=>'other']]];
+        $this->actingAs($seller,'web')->patchJson('/admin/nro-shop/sale-policy',$body)->assertForbidden();
+        $seller->givePermissionTo('nro-sale-policy.manage');
+        $this->actingAs($seller,'web')->patchJson('/admin/nro-shop/sale-policy',$body)->assertOk();
+        $this->getJson('/api/nro-shop/listings?group=equipment')->assertOk()->assertJsonPath('total',0);
+        $this->getJson('/api/nro-shop/listings?group=other')->assertOk()->assertJsonPath('total',1)->assertJsonPath('data.0.id',$id);
+        $this->assertTrue(\App\Services\NroListingStock::allows(0));
+        // Existing clients saving only the allow-list preserve classification overrides.
+        $this->patchJson('/admin/nro-shop/sale-policy',['enabled'=>false,'ids'=>[]])->assertOk();
+        $this->assertCount(1,\App\Services\NroItemFilters::overrides());
+        $this->patchJson('/admin/nro-shop/sale-policy',[...$body,'groupOverrides'=>[['id'=>99999,'group'=>'other']]])->assertUnprocessable();
+        $this->patchJson('/admin/nro-shop/sale-policy',[...$body,'groupOverrides'=>[['id'=>0,'group'=>'other'],['id'=>0,'group'=>'equipment']]])->assertUnprocessable();
+        $this->patchJson('/admin/nro-shop/sale-policy',[...$body,'groupOverrides'=>[]])->assertOk();
+        $this->getJson('/api/nro-shop/listings?group=equipment')->assertOk()->assertJsonPath('total',1);
+    }
+
+    public function test_catalog_groups_and_unknown_star_data_are_not_guessed(): void
+    {
+        $filters=app(\App\Services\NroItemFilters::class);
+        $this->assertSame('other',$filters->group(['id'=>-1,'name'=>'Ngọc Rồng Namek 1 sao','type'=>11]));
+        $this->assertSame('other',$filters->group(['id'=>-1,'name'=>'Đứa bé','type'=>11]));
+        $this->assertSame('equipment',$filters->group(['id'=>-1,'name'=>'Áo','type'=>0]));
+        $this->assertSame('other',$filters->group(['id'=>-1,'name'=>'Sao pha lê','type'=>30]));
+        $unknown=\App\Services\NroItemFilters::inventoryColumns(['options'=>[]]);
+        $this->assertNull($unknown['filter_stars']);
+        $this->assertFalse($unknown['filter_damage']);
+        $this->assertFalse(\App\Services\NroItemFilters::inventoryColumns(['options'=>[['optionId'=>95,'param'=>10]]])['filter_hp']);
+        $this->assertSame(7,\App\Services\NroItemFilters::inventoryColumns(['options'=>[['optionId'=>102,'param'=>3],['optionId'=>107,'param'=>7]]])['filter_stars']);
+    }
+    public function test_hidden_warehouse_blocks_new_sales_and_preserves_existing_delivery(): void
+    {
+        $seller = $this->seller(); $a = $this->warehouse($seller); $sold = $this->listing($seller, $a);
+        $buyer = User::factory()->create(['balance' => 1000]);
+        $order = app(NroShopService::class)->purchase($buyer, $sold, 'khach', 10, (string) Str::uuid());
+        $available = $this->listing($seller, $a);
+        // Prime both caches before hiding.
+        $this->getJson('/api/nro-shop/listings')->assertJsonPath('total', 1);
+        $this->getJson('/api/nro-shop/listings/'.$available)->assertOk();
+        $this->actingAs($seller, 'web')->patchJson('/admin/nro-shop/accounts/'.$a->id.'/visibility', ['hidden' => true])->assertOk();
+        $this->assertDatabaseHas('nro_accounts', ['id' => $a->id, 'shop_hidden' => true, 'status' => 'active']);
+        $this->assertDatabaseHas('item_listings', ['id' => $available, 'status' => 'active']);
+        $this->getJson('/api/nro-shop/listings')->assertJsonPath('total', 0);
+        $this->getJson('/api/nro-shop/listings/'.$available)->assertNotFound();
+        Passport::actingAs($buyer);
+        $this->postJson('/api/nro-shop/orders', ['listingId' => $available, 'serverId' => 10, 'requestKey' => (string) Str::uuid()])->assertUnprocessable();
+        $this->assertEquals(800, $buyer->fresh()->balance);
+        $this->assertDatabaseCount('item_orders', 1);
+        app(\App\Services\NroReceivingService::class)->start($buyer, $order, ['mode' => 'auto', 'username' => 'receiver', 'password' => 'test-only', 'requestKey' => (string) Str::uuid()]);
+        $job = $this->withToken($this->token)->postJson('/app/nro-worker/claim', ['protocolVersion' => 3, 'types' => ['delivery']])->assertOk()->json('data');
+        $this->assertNotNull($job);
+        $this->assertDatabaseHas('nro_worker_jobs', ['id' => $job['id'], 'order_id' => $order, 'status' => 'processing']);
+        // Unhide must not republish sold or manually paused listings.
+        DB::table('item_listings')->where('id', $available)->update(['status' => 'paused']);
+        $this->actingAs($seller, 'web')->patchJson('/admin/nro-shop/accounts/'.$a->id.'/visibility', ['hidden' => false])->assertOk();
+        $this->assertDatabaseHas('item_listings', ['id' => $sold, 'status' => 'sold']);
+        $this->getJson('/api/nro-shop/listings')->assertJsonPath('total', 0);
+        DB::table('item_listings')->where('id', $available)->update(['status' => 'active']);
+        $this->patchJson('/admin/nro-shop/accounts/'.$a->id.'/visibility', ['hidden' => false])->assertOk();
+        $this->getJson('/api/nro-shop/listings')->assertJsonPath('total', 1);
+        $this->getJson('/api/nro-shop/listings/'.$available)->assertOk();
+    }
+
+    public function test_warehouse_visibility_enforces_permission_ownership_and_type(): void
+    {
+        $owner = $this->seller(); $a = $this->warehouse($owner); $foreign = $this->seller();
+        $url = '/admin/nro-shop/accounts/'.$a->id.'/visibility';
+        $this->actingAs($foreign)->patchJson($url, ['hidden' => true])->assertNotFound();
+        $viewer = User::factory()->create(); $viewer->assignRole('ctv'); $viewer->givePermissionTo('nro-accounts.view');
+        $this->actingAs($viewer)->patchJson($url, ['hidden' => true])->assertForbidden();
+        $this->actingAs($owner)->patchJson($url, ['hidden' => 'invalid'])->assertUnprocessable();
+        $a->update(['usage_type' => 'nick']);
+        $this->patchJson($url, ['hidden' => true])->assertUnprocessable();
+        $this->assertFalse($a->fresh()->shop_hidden);
+    }
+
+    public function test_exact_item_groups_and_extra_stat_flags(): void
+    {
+        $f = app(\App\Services\NroItemFilters::class);
+        foreach ([220=>'upgrade_stones',224=>'upgrade_stones',441=>'crystals',447=>'crystals',14=>'dragon_balls',20=>'dragon_balls'] as $id=>$group) {
+            $this->assertSame($group, $f->group(['id'=>$id,'name'=>'', 'type'=>99]));
+        }
+        $this->assertSame('equipment', $f->group(['id'=>-1,'type'=>2]));
+        $flags = $f::extraInventoryColumns(['options'=>[['optionId'=>95,'param'=>10],['optionId'=>96,'param'=>0],['optionId'=>100,'param'=>20],['optionId'=>14,'param'=>5]]]);
+        $this->assertTrue($flags['filter_life_steal']);
+        $this->assertFalse($flags['filter_ki_steal']);
+        $this->assertTrue($flags['filter_gold']);
+        $this->assertTrue($flags['filter_other']);
+    }
+
+    public function test_extra_filter_migration_resumes_after_partial_ddl_without_touching_stock(): void
+    {
+        $a = $this->warehouse($this->seller());
+        $item = DB::table('nro_inventory_items')->where('account_id', $a->id)->first();
+        $json = json_encode(['options' => [
+            ['optionId'=>107,'param'=>5], ['optionId'=>102,'param'=>0],
+            ['optionId'=>50,'param'=>23], ['optionId'=>95,'param'=>10],
+            ['optionId'=>96,'param'=>0], ['optionId'=>100,'param'=>20], ['optionId'=>14,'param'=>3],
+        ]]);
+        DB::table('nro_inventory_items')->where('id', $item->id)->update(['item_json'=>$json, 'reserved'=>1]);
+        $migration = require database_path('migrations/2026_09_10_000005_add_nro_extra_stat_filters.php');
+        $count = DB::table('nro_inventory_items')->count();
+        // Failed after all four columns, failed after one column, and a fresh run.
+        foreach (['all', 'partial', 'none'] as $state) {
+            if ($state !== 'all') {
+                $migration->down();
+                if ($state === 'partial') \Illuminate\Support\Facades\Schema::table('nro_inventory_items', fn ($t) => $t->boolean('filter_life_steal')->default(false));
+            }
+            $migration->up();
+            $migration->up(); // Repeating a backfill must also be safe.
+            $this->assertDatabaseCount('nro_inventory_items', $count);
+            $this->assertDatabaseHas('nro_inventory_items', [
+                'id'=>$item->id, 'account_id'=>$a->id, 'quantity'=>$item->quantity, 'reserved'=>1, 'item_json'=>$json,
+                'filter_stars'=>5, 'filter_damage'=>true, 'filter_hp'=>false, 'filter_ki'=>false,
+                'filter_life_steal'=>true, 'filter_ki_steal'=>false, 'filter_gold'=>true, 'filter_other'=>true,
+            ]);
+        }
+    }
+
 }

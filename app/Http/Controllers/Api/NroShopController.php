@@ -16,22 +16,23 @@ class NroShopController extends Controller
             'maxPrice' => ['nullable','numeric','min:0','max:1000000000000', ...($r->filled('minPrice') ? ['gte:minPrice'] : [])],
             'sort' => 'nullable|in:newest,price_asc,price_desc',
             'group'=>'nullable|in:'.implode(',',array_keys(\App\Services\NroItemFilters::GROUPS)),
-            'equipmentType'=>'nullable|in:'.implode(',',array_keys(\App\Services\NroItemFilters::EQUIPMENT)),
-            'gender'=>'nullable|integer|in:0,1,2', 'minStars'=>'nullable|integer|min:1|max:9', 'stat'=>'nullable|in:damage,hp,ki']);
+            'equipmentType'=>'nullable|in:0,1,2,3,4',
+            'gender'=>'nullable|integer|in:0,1,2', 'minStars'=>'nullable|integer|min:1|max:9', 'stat'=>'nullable|in:'.implode(',',array_keys(\App\Services\NroItemFilters::STATS)), 'itemId'=>'nullable|integer|min:0|max:100000']);
         foreach (['equipmentType','gender','minStars','stat'] as $key) if (isset($filters[$key])) {
             if (($filters['group'] ?? '') !== 'equipment') throw \Illuminate\Validation\ValidationException::withMessages([$key=>'Chọn nhóm Trang bị để dùng bộ lọc này.']);
         }
+        if (isset($filters['itemId']) && empty($filters['group'])) throw \Illuminate\Validation\ValidationException::withMessages(['itemId'=>'Chọn nhóm vật phẩm trước.']);
         $cachePayload = $filters;
         $cachePayload['q'] = trim((string) ($cachePayload['q'] ?? ''));
         if (($cachePayload['q'] ?? '') === '') unset($cachePayload['q']);
         ksort($cachePayload);
-        $cacheKey = ApiCache::key('nro-shop:listings', 'filters-v2', json_encode($cachePayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        $cacheKey = ApiCache::key('nro-shop:listings', 'filters-v5-visibility', (string) \Illuminate\Support\Facades\Cache::get('nro-shop:visibility-version', '0'), json_encode($cachePayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 
         $payload = ApiCache::remember('public:nro-shop:listings', $cacheKey, 60, function () use ($filters, $s, $itemFilters) {
-            $q = DB::table('item_listings')->where('status', 'active')->whereNotExists(fn ($orders) => $orders->selectRaw('1')->from('item_orders')->whereColumn('item_orders.listing_id', 'item_listings.id'));
+            $q = DB::table('item_listings')->where('status', 'active')->whereIn('account_id', DB::table('nro_accounts')->select('id')->whereNull('deleted_at')->where('shop_hidden', false))->whereNotExists(fn ($orders) => $orders->selectRaw('1')->from('item_orders')->whereColumn('item_orders.listing_id', 'item_listings.id'));
             if (! empty($filters['server'])) $q->whereIn('account_id', DB::table('nro_accounts')->select('id')->where('server_id', (int) $filters['server']));
             $search = trim((string) ($filters['q'] ?? ''));
-            if ($search !== '') {
+            if ($search !== '' && empty($filters['group'])) {
                 // Search public item names/IDs only; internal listing notes stay private.
                 $pattern = '%'.str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $search).'%';
                 $q->whereExists(function ($items) use ($search, $pattern) {
@@ -45,13 +46,21 @@ class NroShopController extends Controller
             }
             if (!empty($filters['group'])) {
                 $ids = $itemFilters->templateIds($filters);
-                $q->whereExists(function ($items) use ($filters, $ids, $itemFilters) {
+                $q->whereExists(function ($items) use ($filters, $ids, $itemFilters, $search) {
                     $items->selectRaw('1')->from('item_listing_items as li')->join('nro_inventory_items as i','i.id','=','li.inventory_item_id')
                         ->whereColumn('li.listing_id','item_listings.id');
                     $items->where(function($templates) use ($ids,$filters,$itemFilters) {
                         $templates->whereIn('i.template_id',$ids);
-                        if ($filters['group'] === 'other') $templates->orWhereNotIn('i.template_id',$itemFilters->knownIds());
+                        if ($filters['group'] === 'other' && !isset($filters['itemId'])) $templates->orWhereNotIn('i.template_id',$itemFilters->knownIds());
                     });
+                    if ($search !== '') {
+                        $pattern = '%'.str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $search).'%';
+                        $items->where(function ($match) use ($search, $pattern) {
+                            $column = DB::connection()->getQueryGrammar()->wrap('i.item_json->name');
+                            $match->whereRaw($column.' LIKE ? ESCAPE \'!\'', [$pattern]);
+                            if (ctype_digit($search) && strlen($search) <= 10) $match->orWhere('i.template_id', (int)$search);
+                        });
+                    }
                     // Every item-specific condition must match the SAME item in a combo.
                     if (isset($filters['minStars'])) $items->where('i.filter_stars','>=',(int)$filters['minStars']);
                     if (!empty($filters['stat'])) $items->where('i.filter_'.$filters['stat'],true);
@@ -80,10 +89,10 @@ class NroShopController extends Controller
     {
         $payload = ApiCache::remember(
             'public:nro-shop:listings',
-            ApiCache::key('nro-shop:listing', $id),
+            ApiCache::key('nro-shop:listing', $id, (string) \Illuminate\Support\Facades\Cache::get('nro-shop:visibility-version', '0')),
             120,
             function () use ($id, $s) {
-                $l = DB::table('item_listings')->where('id', $id)->where('status', 'active')->whereNotExists(fn ($orders) => $orders->selectRaw('1')->from('item_orders')->whereColumn('item_orders.listing_id', 'item_listings.id'))->first();
+                $l = DB::table('item_listings')->where('id', $id)->where('status', 'active')->whereIn('account_id', DB::table('nro_accounts')->select('id')->whereNull('deleted_at')->where('shop_hidden', false))->whereNotExists(fn ($orders) => $orders->selectRaw('1')->from('item_orders')->whereColumn('item_orders.listing_id', 'item_listings.id'))->first();
                 abort_unless($l, 404);
 
                 return ['data' => Arr::except($s->listing($l), ['description'])];

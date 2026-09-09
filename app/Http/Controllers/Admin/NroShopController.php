@@ -62,6 +62,22 @@ class NroShopController extends Controller
         return $q->select('id');
     }
 
+    /** Storefront visibility never disables the account or changes purchased orders. */
+    public function visibility(Request $r, int $id)
+    {
+        $this->account($r, $id);
+        $v = $r->validate(['hidden' => 'required|boolean']);
+        DB::transaction(function () use ($id, $v) {
+            $a = NroAccount::whereKey($id)->lockForUpdate()->firstOrFail();
+            NroShopService::require($a->usage_type === 'warehouse', 'Chức năng này dành cho acc kho đồ.');
+            $a->update(['shop_hidden' => $v['hidden']]);
+        });
+        // A new namespace prevents an in-flight old read from repopulating visible data.
+        \Illuminate\Support\Facades\Cache::forever('nro-shop:visibility-version', (string) Str::uuid());
+        ApiCache::clearGroup('public:nro-shop:listings');
+        return response()->json(['hidden' => (bool) $v['hidden']]);
+    }
+
     public function index(Request $r)
     {
         $caps = $this->capabilities($r);
@@ -69,11 +85,12 @@ class NroShopController extends Controller
         if (!$r->user()->canViewAllAdminData()) $q->where('user_id', $r->user()->id);
         $ownedIds = (clone $q)->select('id');
         $filters = $r->validate(['q' => 'nullable|string|max:100', 'usage' => 'nullable|in:nick,warehouse', 'server' => 'nullable|integer',
-            'state' => 'nullable|in:waiting,published,attention,sold', 'page' => 'nullable|integer|min:1']);
+            'state' => 'nullable|in:waiting,published,attention,sold,hidden', 'page' => 'nullable|integer|min:1']);
         if (!empty($filters['server'])) $filters['server'] = (int) $filters['server'];
         if (!empty($filters['q'])) $q->where(fn ($s) => $s->where('account_name', 'like', '%'.$filters['q'].'%')->orWhere('character_name', 'like', '%'.$filters['q'].'%'));
         if (!empty($filters['usage'])) $q->where('usage_type', $filters['usage']);
         if (!empty($filters['server'])) $q->where('server_id', $filters['server']);
+        if (($filters['state'] ?? '') === 'hidden') $q->where('shop_hidden', true);
         if (($filters['state'] ?? '') === 'waiting') $q->where('publish_status', 'waiting_snapshot');
         if (($filters['state'] ?? '') === 'published') $q->whereIn('id', Nick::withoutUserOwnedScope()->where('status', 'not_sold')->select('game_account_id'));
         if (($filters['state'] ?? '') === 'attention') $q->whereIn('publish_status', ['needs_attention', 'scan_failed', 'publish_failed']);
@@ -106,7 +123,7 @@ class NroShopController extends Controller
                 'server_id' => $a->server_id, 'server_game_id' => $a->server_game_id, 'delivery_map' => $a->delivery_map, 'delivery_zone' => $a->delivery_zone, 'wait_minutes' => $a->wait_minutes,
                 'delivery_zone_mode' => $a->delivery_zone_mode,
                 'publishStatus' => $a->publish_status, 'publishError' => $a->publish_error, 'publishConfig' => $a->publish_config,
-                'status' => $a->status, 'nick' => $this->nickSummary($nicks->get($a->id)),
+                'shop_hidden' => $a->shop_hidden, 'status' => $a->status, 'nick' => $this->nickSummary($nicks->get($a->id)),
                 'listingCounts' => $caps['listings'] ? ['total' => (int) ($listingCounts->get($a->id)?->total ?? 0), 'active' => (int) ($listingCounts->get($a->id)?->active ?? 0)] : null,
             ]) : [],
             'categories' => $categories->where('template', 'default')->where('status', 'active')->get(['categories.id', 'categories.name']),
