@@ -540,6 +540,60 @@ class NroShopWorkflowTest extends TestCase
         }
     }
 
+    public function test_interrupted_snapshot_jobs_never_become_orphaned_in_review(): void
+    {
+        $a = $this->warehouse($this->seller());
+        $a->update(['auto_publish' => true, 'publish_status' => 'waiting_snapshot']);
+        $firstId = DB::table('nro_worker_jobs')->insertGetId(['account_id' => $a->id, 'type' => 'snapshot', 'status' => 'queued', 'created_at' => now(), 'updated_at' => now()]);
+        $first = $this->withToken($this->token)->postJson('/app/nro-worker/claim', ['protocolVersion' => 3, 'types' => ['snapshot']])->assertOk()->json('data');
+        $this->assertSame($firstId, $first['id']);
+        $this->postJson('/app/nro-worker/jobs/'.$firstId.'/complete', [
+            'leaseToken' => $first['leaseToken'], 'outcome' => 'review', 'message' => 'Journal cũ của snapshot',
+        ])->assertOk();
+        $this->assertDatabaseHas('nro_worker_jobs', ['id' => $firstId, 'status' => 'failed']);
+
+        $secondId = DB::table('nro_worker_jobs')->insertGetId(['account_id' => $a->id, 'type' => 'snapshot', 'status' => 'queued', 'created_at' => now(), 'updated_at' => now()]);
+        $second = $this->postJson('/app/nro-worker/claim', ['protocolVersion' => 3, 'types' => ['snapshot']])->assertOk()->json('data');
+        $this->assertSame($secondId, $second['id']);
+        $this->travel(4)->minutes();
+        $this->postJson('/app/nro-worker/claim', ['protocolVersion' => 3, 'types' => ['snapshot']])->assertOk();
+        $this->assertDatabaseHas('nro_worker_jobs', ['id' => $secondId, 'status' => 'failed']);
+        $this->assertDatabaseMissing('nro_worker_jobs', ['account_id' => $a->id, 'status' => 'review']);
+        $this->assertDatabaseHas('nro_accounts', ['id' => $a->id, 'publish_status' => 'scan_failed']);
+        $this->travelBack();
+    }
+
+    public function test_unclaimable_jobs_are_resolved_and_rotated_key_can_flush_journal(): void
+    {
+        $seller = $this->seller(); $blocked = $this->warehouse($seller);
+        $blocked->update(['last_synced_at' => null, 'publish_status' => 'login_blocked', 'publish_error' => 'Acc bị khóa đăng nhập.']);
+        $blockedJob = DB::table('nro_worker_jobs')->insertGetId(['account_id' => $blocked->id, 'type' => 'snapshot', 'status' => 'queued', 'created_at' => now(), 'updated_at' => now()]);
+        $this->withToken($this->token)->postJson('/app/nro-worker/claim', ['protocolVersion' => 3, 'types' => ['snapshot']])->assertOk()->assertJsonPath('data', null);
+        $this->assertDatabaseHas('nro_worker_jobs', ['id' => $blockedJob, 'status' => 'failed']);
+        $this->assertDatabaseMissing('nro_worker_jobs', ['account_id' => $blocked->id, 'status' => 'queued']);
+
+        $seller2 = $this->seller(); $a = $this->warehouse($seller2);
+        $jobId = DB::table('nro_worker_jobs')->insertGetId(['account_id' => $a->id, 'type' => 'snapshot', 'status' => 'queued', 'created_at' => now(), 'updated_at' => now()]);
+        $job = $this->postJson('/app/nro-worker/claim', ['protocolVersion' => 3, 'types' => ['snapshot']])->assertOk()->json('data');
+        $newToken = 'nrow_'.Str::random(64);
+        DB::table('nro_worker_keys')->insert(['name' => 'replacement', 'token_hash' => hash('sha256', $newToken), 'accepts_delivery' => true, 'created_at' => now(), 'updated_at' => now()]);
+        $this->withToken($newToken)->postJson('/app/nro-worker/jobs/'.$jobId.'/complete', [
+            'leaseToken' => $job['leaseToken'], 'outcome' => 'failed', 'message' => 'Gửi lại journal bằng key mới.',
+        ])->assertOk();
+        $this->assertDatabaseHas('nro_worker_jobs', ['id' => $jobId, 'status' => 'failed']);
+        DB::table('nro_worker_jobs')->where('id', $jobId)->update(['lease_token' => null]);
+        $this->withToken($newToken)->postJson('/app/nro-worker/jobs/'.$jobId.'/complete', [
+            'leaseToken' => (string) Str::uuid(), 'outcome' => 'failed', 'message' => 'Journal cũ sau khi backend đã chốt.',
+        ])->assertOk()->assertJsonPath('alreadyFinalized', true);
+
+        $listing = $this->listing($seller2, $a); $buyer = User::factory()->create(['balance' => 1000]);
+        $order = app(NroShopService::class)->purchase($buyer, $listing, 'khach', 10, (string) Str::uuid());
+        $legacy = DB::table('nro_worker_jobs')->insertGetId(['account_id' => $a->id, 'order_id' => $order, 'type' => 'delivery', 'status' => 'queued', 'created_at' => now(), 'updated_at' => now()]);
+        $this->withToken($newToken)->postJson('/app/nro-worker/claim', ['protocolVersion' => 3, 'types' => ['delivery']])->assertOk()->assertJsonPath('data', null);
+        $this->assertDatabaseHas('nro_worker_jobs', ['id' => $legacy, 'status' => 'review']);
+        $this->assertDatabaseHas('item_orders', ['id' => $order, 'status' => 'review']);
+    }
+
     public function test_stopping_after_confirmed_round_keeps_only_remaining_items_reserved(): void
     {
         $seller = $this->seller(); $a = $this->warehouse($seller); $listing = $this->listing($seller, $a);

@@ -28,14 +28,20 @@ class NroWorkerController extends Controller
                 $old = DB::table('nro_worker_jobs')->where('id', $old->id)->lockForUpdate()->first();
                 if (!$old || $old->status !== 'processing' || $old->lease_until >= now()->toDateTimeString()) continue;
                 if (app(\App\Services\NroReceivingService::class)->retryInterrupted($old)) continue;
-                $changed = DB::table('nro_worker_jobs')->where('id', $old->id)->where('status', 'processing')->where('lease_until', '<', now())->update(['status' => 'review', 'updated_at' => now()]);
+                $expiredStatus = $old->type === 'snapshot' ? 'failed' : 'review';
+                $changed = DB::table('nro_worker_jobs')->where('id', $old->id)->where('status', 'processing')->where('lease_until', '<', now())->update([
+                    'status' => $expiredStatus,
+                    'result_json' => $old->type === 'snapshot' ? json_encode(['message' => 'Tool mất kết nối khi lấy snapshot; có thể yêu cầu lấy lại.']) : $old->result_json,
+                    'updated_at' => now(),
+                ]);
                 if ($changed && $old->order_id) DB::table('item_orders')->where('id', $old->order_id)->whereNotIn('status', ['completed', 'refunded'])->update(['status' => 'review', 'delivery_message' => 'Tool mất kết nối; đang chờ đối soát.']);
                 if ($changed && $old->type === 'snapshot') NroAccount::whereKey($old->account_id)->where('auto_publish', true)->update(['publish_status' => 'scan_failed', 'publish_error' => 'Tool mất kết nối khi lấy dữ liệu. Kiểm tra công việc rồi lấy lại snapshot.']);
-                if ($changed) app(\App\Services\NroReceivingService::class)->finish($old, 'review');
+                if ($changed) app(\App\Services\NroReceivingService::class)->finish($old, $expiredStatus);
             }
             // Refresh unconfirmed stock only; a complete snapshot does not expire with age.
             if (in_array('snapshot', $r->input('types'))) {
                 $stale = NroAccount::where('usage_type', 'warehouse')->where('status', 'active')
+                    ->where(fn ($q) => $q->whereNull('publish_status')->orWhere('publish_status', '!=', 'login_blocked'))
                     ->whereNull('last_synced_at')
                     ->whereNotIn('id', DB::table('nro_worker_jobs')->select('account_id')->whereIn('status', ['queued', 'processing', 'review']))
                     ->whereNotIn('id', DB::table('nro_worker_jobs')->select('account_id')->where('updated_at', '>', now()->subMinutes(2)))
@@ -51,15 +57,34 @@ class NroWorkerController extends Controller
             $candidates = DB::table('nro_worker_jobs')->where('status', 'queued')->whereIn('type', $r->input('types'))->orderByRaw("CASE WHEN type = 'delivery' THEN 0 ELSE 1 END")->orderBy('id')->limit(50)->get();
             foreach ($candidates as $candidate) {
                 $account = NroAccount::whereKey($candidate->account_id)->lockForUpdate()->first();
-                if (!$account || $account->status !== 'active' || !$account->game_password || !$account->server_game_id) continue;
-                $endpoint = DB::table('server_game_login')->where('id', $account->server_game_id)->first();
-                if (!$endpoint) continue;
-                if (DB::table('nro_worker_jobs')->where('account_id', $account->id)->whereIn('status', ['processing', 'review'])->exists()) continue;
                 $job = DB::table('nro_worker_jobs')->where('id', $candidate->id)->lockForUpdate()->first();
-                if ($job->status !== 'queued') continue;
+                if (!$job || $job->status !== 'queued') continue;
+                $blockedReason = !$account ? 'Acc của job không còn tồn tại.'
+                    : ($account->status !== 'active' ? 'Acc đã ngừng hoạt động.'
+                    : ($account->publish_status === 'login_blocked' ? ($account->publish_error ?: 'Acc đang bị chặn đăng nhập.')
+                    : (!$account->game_password ? 'Acc chưa có mật khẩu.'
+                    : (!$account->server_game_id ? 'Acc chưa cấu hình server đăng nhập.' : null))));
+                if ($blockedReason) {
+                    if (!app(\App\Services\NroReceivingService::class)->retryInterrupted($job, $blockedReason)) {
+                        DB::table('nro_worker_jobs')->where('id', $job->id)->update(['status' => 'failed', 'result_json' => json_encode(['message' => $blockedReason]), 'updated_at' => now()]);
+                        if ($account?->auto_publish) $account->update(['publish_status' => $account->publish_status === 'login_blocked' ? 'login_blocked' : 'scan_failed', 'publish_error' => $blockedReason]);
+                    }
+                    continue;
+                }
+                $endpoint = DB::table('server_game_login')->where('id', $account->server_game_id)->first();
+                if (!$endpoint) {
+                    $reason = 'Server đăng nhập của acc không còn tồn tại.';
+                    if (!app(\App\Services\NroReceivingService::class)->retryInterrupted($job, $reason)) DB::table('nro_worker_jobs')->where('id', $job->id)->update(['status' => 'failed', 'result_json' => json_encode(['message' => $reason]), 'updated_at' => now()]);
+                    continue;
+                }
+                if (DB::table('nro_worker_jobs')->where('account_id', $account->id)->whereIn('status', ['processing', 'review'])->exists()) continue;
                 $session = $job->delivery_session_id ? DB::table('nro_delivery_sessions')->where('id', $job->delivery_session_id)->first() : null;
                 // Legacy delivery jobs must be reconciled, never executed under the new protocol.
-                if ($job->type === 'delivery' && !$session) continue;
+                if ($job->type === 'delivery' && !$session) {
+                    DB::table('nro_worker_jobs')->where('id', $job->id)->update(['status' => 'review', 'result_json' => json_encode(['message' => 'Job giao đồ cũ thiếu phiên nhận; cần đối soát.']), 'updated_at' => now()]);
+                    if ($job->order_id) DB::table('item_orders')->where('id', $job->order_id)->whereNotIn('status', ['completed', 'refunded'])->update(['status' => 'review', 'delivery_message' => 'Job giao đồ cũ thiếu phiên nhận; shop đang đối soát.', 'updated_at' => now()]);
+                    continue;
+                }
                 if ($job->type === 'delivery' && $account->delivery_zone_mode === 'auto' && $r->integer('protocolVersion') < 3) continue;
                 $token = (string) Str::uuid();
                 DB::table('nro_worker_jobs')->where('id', $job->id)->update(['status' => 'processing', 'worker_key_id' => $r->attributes->get('nro_worker_key_id'), 'lease_token' => $token, 'lease_until' => now()->addMinutes(3), 'updated_at' => now()]);
@@ -77,10 +102,11 @@ class NroWorkerController extends Controller
         }, 3);
     }
 
-    private function job(Request $r, int $id): object
+    private function job(Request $r, int $id, bool $allowKeyRotation = false): object
     {
         $job = DB::table('nro_worker_jobs')->where('id', $id)->lockForUpdate()->first();
-        abort_unless($job && $job->worker_key_id == $r->attributes->get('nro_worker_key_id') && hash_equals($job->lease_token ?? '', (string) $r->input('leaseToken')), 403);
+        abort_unless($job && ($allowKeyRotation || $job->worker_key_id == $r->attributes->get('nro_worker_key_id'))
+            && hash_equals($job->lease_token ?? '', (string) $r->input('leaseToken')), 403);
         return $job;
     }
 
@@ -107,8 +133,10 @@ class NroWorkerController extends Controller
             // Account lock serializes stock ingestion with purchases and listing changes.
             $accountId = DB::table('nro_worker_jobs')->where('id', $id)->value('account_id'); abort_unless($accountId, 404);
             $account = NroAccount::whereKey($accountId)->lockForUpdate()->firstOrFail();
-            $job = $this->job($r, $id);
-            if (in_array($job->status, ['completed', 'failed', 'expired'])) return response()->json(['ok' => true]);
+            $terminal = DB::table('nro_worker_jobs')->where('id', $id)->lockForUpdate()->first();
+            if ($terminal && in_array($terminal->status, ['completed', 'failed', 'expired'])) return response()->json(['ok' => true, 'alreadyFinalized' => true]);
+            // A restarted tool may use a newly issued key; the unguessable lease token still binds the journal to this job.
+            $job = $this->job($r, $id, true);
             abort_unless(in_array($job->status, ['processing', 'review']), 409);
             if ($r->input('outcome') === 'missing_items') {
                 // A journal replay after a long outage must not refund from stale stock or block the worker forever.
@@ -166,7 +194,7 @@ class NroWorkerController extends Controller
                     DB::table('item_orders')->where('id', $job->order_id)->update(['status' => 'review', 'delivery_message' => 'Phiên giao bị gián đoạn khi kết quả chưa được xác nhận. Shop đang đối soát; bạn không cần mua hoặc thanh toán lại.', 'updated_at' => now()]);
                 }
             }
-            $status = $success ? 'completed' : ($expired ? 'expired' : ($job->order_id || $r->input('outcome') === 'review' ? 'review' : 'failed'));
+            $status = $success ? 'completed' : ($expired ? 'expired' : ($job->order_id ? 'review' : 'failed'));
             app(\App\Services\NroReceivingService::class)->finish($job, $status);
             DB::table('nro_worker_jobs')->where('id', $id)->update(['status' => $status, 'result_json' => json_encode(['message' => $r->input('message'), 'snapshotId' => $snapshot?->id]), 'updated_at' => now()]);
             if ($job->type === 'snapshot' && $account->auto_publish) {
