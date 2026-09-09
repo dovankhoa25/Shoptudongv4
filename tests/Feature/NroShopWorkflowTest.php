@@ -312,13 +312,15 @@ class NroShopWorkflowTest extends TestCase
         $this->actingAs($other, 'web')->postJson('/admin/nro-shop/accounts/'.$foreign->id.'/scan')->assertOk();
         $foreignJob = DB::table('nro_worker_jobs')->where('account_id', $foreign->id)->first();
         $this->actingAs($seller, 'web')->get('/admin/nro-shop')->assertInertia(fn (\Inertia\Testing\AssertableInertia $page) => $page
-            ->where('capabilities.salePolicy', false)->has('accounts', 1)->where('accounts.0.id', $own->id)
-            ->has('listings', 1)->where('listings.0.id', $ownListing)->has('orders', 1)->where('orders.0.id', $ownOrder)
-            ->has('jobs', 1)->where('jobs.0.account_id', $own->id));
+            ->where('capabilities.salePolicy', false)->has('accounts', 1)->where('accounts.0.id', $own->id));
+        // Each tab endpoint scopes to the caller's own accounts, same as the props used to.
+        $this->getJson('/admin/nro-shop/listings')->assertOk()->assertJsonPath('total', 1)->assertJsonPath('data.0.id', $ownListing);
+        $this->getJson('/admin/nro-shop/orders')->assertOk()->assertJsonPath('total', 1)->assertJsonPath('data.0.id', $ownOrder);
+        $this->getJson('/admin/nro-shop/jobs')->assertOk()->assertJsonPath('total', 1)->assertJsonPath('data.0.account_id', $own->id);
         $this->patchJson('/admin/nro-shop/sale-policy', ['enabled' => false, 'ids' => []])->assertForbidden();
         $seller->givePermissionTo('nro-sale-policy.manage');
         $this->get('/admin/nro-shop')->assertInertia(fn (\Inertia\Testing\AssertableInertia $page) => $page
-            ->where('capabilities.salePolicy', true)->has('accounts', 1)->has('listings', 1)->has('orders', 1)->has('jobs', 1));
+            ->where('capabilities.salePolicy', true)->has('accounts', 1));
         $this->patchJson('/admin/nro-shop/sale-policy', ['enabled' => true, 'ids' => [0]])->assertOk();
         $this->getJson('/admin/nro-shop/accounts/'.$foreign->id)->assertNotFound();
         $this->getJson('/admin/nro-shop/accounts/'.$foreign->id.'/listings')->assertNotFound();
@@ -329,13 +331,18 @@ class NroShopWorkflowTest extends TestCase
             Role::findOrCreate($role, 'web'); $manager = User::factory()->create(); $manager->assignRole($role);
             $manager->givePermissionTo(['nro-accounts.view', 'nro-accounts.manage', 'item-listings.view', 'item-orders.view']);
             $this->actingAs($manager, 'web')->get('/admin/nro-shop')->assertInertia(fn (\Inertia\Testing\AssertableInertia $page) => $page
-                ->where('capabilities.salePolicy', true)->has('accounts', 2)->has('listings', 2)->has('orders', 2)->has('jobs', 2));
+                ->where('capabilities.salePolicy', true)->has('accounts', 2));
+            $this->getJson('/admin/nro-shop/listings')->assertOk()->assertJsonPath('total', 2);
+            $this->getJson('/admin/nro-shop/orders')->assertOk()->assertJsonPath('total', 2);
             $this->patchJson('/admin/nro-shop/sale-policy', ['enabled' => false, 'ids' => []])->assertOk();
             $this->getJson('/admin/nro-shop/accounts/'.$foreign->id)->assertOk();
         }
         $delegate = User::factory()->create(); $delegate->givePermissionTo('nro-sale-policy.manage');
         $this->actingAs($delegate, 'web')->get('/admin/nro-shop')->assertInertia(fn (\Inertia\Testing\AssertableInertia $page) => $page
-            ->where('capabilities.salePolicy', true)->has('accounts', 0)->has('listings', 0)->has('orders', 0)->has('jobs', 0));
+            ->where('capabilities.salePolicy', true)->has('accounts', 0));
+        // A sale-policy delegate has no listing/order permission, so the tabs stay closed to them.
+        $this->getJson('/admin/nro-shop/listings')->assertForbidden();
+        $this->getJson('/admin/nro-shop/orders')->assertForbidden();
         $this->patchJson('/admin/nro-shop/sale-policy', ['enabled' => false, 'ids' => []])->assertOk();
         $delegate->revokePermissionTo('nro-sale-policy.manage');
         $this->patchJson('/admin/nro-shop/sale-policy', ['enabled' => true, 'ids' => []])->assertForbidden();
@@ -777,7 +784,8 @@ class NroShopWorkflowTest extends TestCase
         $this->getJson('/admin/nro-shop/accounts/'.$other->id.'/listings')->assertNotFound();
         $seller->syncPermissions(['nro-accounts.view']);
         $this->getJson($url)->assertForbidden();
-        $this->get('/admin/nro-shop')->assertOk()->assertInertia(fn ($page) => $page->where('accounts.0.listingCounts', null)->has('listings', 0));
+        $this->get('/admin/nro-shop')->assertOk()->assertInertia(fn ($page) => $page->where('accounts.0.listingCounts', null));
+        $this->getJson('/admin/nro-shop/listings')->assertForbidden();
     }
 
     public function test_only_admin_can_create_and_revoke_worker_keys(): void
@@ -824,7 +832,7 @@ class NroShopWorkflowTest extends TestCase
         $ready = [...$lease, 'characterId' => 10, 'name' => 'bot', 'mapId' => 5, 'mapName' => 'Đảo Kame', 'zone' => 7, 'recipientName' => 'khach'];
         $first = $this->postJson($url.'/ready', $ready)->assertOk()->json('expiresAt');
         $this->assertEquals(7, app(NroShopService::class)->order($order)['session']['position']['zone']);
-        $this->assertEqualsWithDelta(600, now()->diffInSeconds(\Carbon\Carbon::parse($first), false), 2);
+        $this->assertEqualsWithDelta(1800, now()->diffInSeconds(\Carbon\Carbon::parse($first), false), 2);
         $this->postJson($url.'/begin-round', $lease)->assertOk();
         $this->postJson($url.'/complete', [...$lease, 'outcome' => 'expired'])->assertConflict();
         $line = DB::table('item_order_items')->where('order_id', $order)->first();
@@ -834,7 +842,7 @@ class NroShopWorkflowTest extends TestCase
         $this->travel(1)->minutes();
         $this->postJson($url.'/ready', $ready)->assertOk()->assertJsonPath('expiresAt', $first);
         $this->postJson($url.'/complete', [...$lease, 'outcome' => 'success', 'payload' => $this->payload()])->assertConflict();
-        $this->travel(10)->minutes();
+        $this->travel(30)->minutes();
         $this->postJson($url.'/complete', [...$lease, 'outcome' => 'expired'])->assertOk();
         $this->postJson($url.'/complete', [...$lease, 'outcome' => 'expired'])->assertOk();
         $this->assertDatabaseHas('item_orders', ['id' => $order, 'status' => 'awaiting_receipt']);
@@ -870,7 +878,10 @@ class NroShopWorkflowTest extends TestCase
         $this->postJson('/admin/nro-shop/accounts/'.$a->id.'/scan')->assertForbidden();
         $this->postJson('/admin/nro-shop/accounts/'.$a->id.'/listings')->assertForbidden();
         $this->postJson('/admin/nro-shop/worker-keys', ['name' => 'x'])->assertForbidden();
-        $this->get('/admin/nro-shop')->assertOk()->assertInertia(fn ($page) => $page->has('accounts', 0)->has('listings', 0)->has('workerKeys', 0)->where('capabilities.orders', true));
+        $this->get('/admin/nro-shop')->assertOk()->assertInertia(fn ($page) => $page->has('accounts', 0)->where('capabilities.orders', true));
+        $this->getJson('/admin/nro-shop/listings')->assertForbidden();
+        $this->getJson('/admin/nro-shop/worker-keys')->assertForbidden();
+        $this->getJson('/admin/nro-shop/orders')->assertOk()->assertJsonPath('total', 0);
     }
 
     public function test_other_buyer_cannot_start_receiving_and_old_worker_is_rejected(): void
@@ -1130,4 +1141,184 @@ class NroShopWorkflowTest extends TestCase
         $nick->refresh()->update(['status' => 'sold']);
         $this->actingAs($seller, 'web')->patchJson('/admin/nro-shop/accounts/'.$id, $body)->assertUnprocessable();
     }
+
+    /** Count the queries one callable issues. */
+    private function queriesFor(callable $fn): int
+    {
+        DB::flushQueryLog(); DB::enableQueryLog();
+        try { $fn(); return count(DB::getQueryLog()); } finally { DB::disableQueryLog(); }
+    }
+
+    public function test_listing_and_order_batches_do_not_grow_queries_with_row_count(): void
+    {
+        $seller = $this->seller(); $a = $this->warehouse($seller);
+        $inventory = DB::table('nro_inventory_items')->where('account_id', $a->id)->orderBy('id')->get();
+        foreach (range(1, 24) as $n) {
+            $id = DB::table('item_listings')->insertGetId(['user_id' => $seller->id, 'account_id' => $a->id,
+                'title' => 'Gói '.$n, 'description' => '', 'price' => $n * 100, 'status' => 'active', 'created_at' => now(), 'updated_at' => now()]);
+            DB::table('item_listing_items')->insert(['listing_id' => $id, 'inventory_item_id' => $inventory[0]->id, 'quantity' => 1]);
+        }
+        $rows = DB::table('item_listings')->where('account_id', $a->id)->orderBy('id')->get();
+        $shop = app(NroShopService::class);
+        \App\Services\NroListingStock::policy(); // Warm the settings cache so it is not counted once.
+
+        $few = $this->queriesFor(fn () => $shop->listings($rows->take(3)));
+        $many = $this->queriesFor(fn () => $shop->listings($rows));
+        $this->assertSame($few, $many, 'listings() must issue the same number of queries for 3 rows as for 24.');
+        $this->assertLessThanOrEqual(12, $many);
+        $this->assertCount($rows->count(), $shop->listings($rows));
+    }
+
+    public function test_admin_index_does_not_build_the_other_tabs(): void
+    {
+        $seller = $this->seller(); $seller->givePermissionTo(['item-orders.view', 'item-orders.reconcile', 'nro-workers.manage']);
+        $a = $this->warehouse($seller);
+        $inventory = DB::table('nro_inventory_items')->where('account_id', $a->id)->orderBy('id')->get();
+        foreach (range(1, 24) as $n) {
+            $id = DB::table('item_listings')->insertGetId(['user_id' => $seller->id, 'account_id' => $a->id,
+                'title' => 'Gói '.$n, 'description' => '', 'price' => $n * 100, 'status' => 'active', 'created_at' => now(), 'updated_at' => now()]);
+            DB::table('item_listing_items')->insert(['listing_id' => $id, 'inventory_item_id' => $inventory[0]->id, 'quantity' => 1]);
+        }
+
+        $response = null;
+        $queries = $this->queriesFor(function () use ($seller, &$response) {
+            $response = $this->actingAs($seller, 'web')->get('/admin/nro-shop');
+        });
+        $response->assertOk();
+        $props = $response->viewData('page')['props'];
+        foreach (['listings', 'orders', 'jobs', 'workerKeys'] as $tab) {
+            $this->assertArrayNotHasKey($tab, $props, "The page must not build the '$tab' tab; it has its own endpoint.");
+        }
+        $this->assertLessThanOrEqual(40, $queries, 'The accounts page grew a per-row query.');
+
+        // Each tab is reachable on its own and paginates.
+        $this->actingAs($seller, 'web')->getJson('/admin/nro-shop/listings')->assertOk()
+            ->assertJsonPath('total', 24)->assertJsonCount(20, 'data');
+        $this->actingAs($seller, 'web')->getJson('/admin/nro-shop/listings?page=2')->assertOk()->assertJsonCount(4, 'data');
+        $this->actingAs($seller, 'web')->getJson('/admin/nro-shop/listings?status=paused')->assertOk()->assertJsonPath('total', 0);
+        $this->actingAs($seller, 'web')->getJson('/admin/nro-shop/orders')->assertOk()->assertJsonPath('total', 0);
+        $this->actingAs($seller, 'web')->getJson('/admin/nro-shop/jobs')->assertOk();
+        $this->actingAs($seller, 'web')->getJson('/admin/nro-shop/worker-keys')->assertOk()->assertJsonCount(1, 'data');
+        $this->actingAs($seller, 'web')->getJson('/admin/nro-shop/status')->assertOk()
+            ->assertJsonPath('warehouse', 1)->assertJsonPath('reviewJobs', 0);
+    }
+    public function test_shared_worker_claims_many_orders_and_suspends_only_timed_out_customer(): void
+    {
+        $seller = $this->seller(); $account = $this->warehouse($seller);
+        $listing1 = $this->listing($seller, $account); $listing2 = $this->listing($seller, $account);
+        $buyer = User::factory()->create(['balance' => 2000]); $shop = app(NroShopService::class);
+        $receive = app(\App\Services\NroReceivingService::class);
+        $orders = [];
+        foreach ([$listing1, $listing2] as $n => $listing) {
+            $orders[] = $id = $shop->purchase($buyer, $listing, 'customer'.$n, 10, (string) Str::uuid());
+            $receive->start($buyer, $id, ['mode' => 'manual', 'recipientName' => 'customer'.$n, 'requestKey' => (string) Str::uuid()]);
+        }
+        $instance = (string) Str::uuid();
+        $claim = ['protocolVersion' => 4, 'workerInstance' => $instance, 'types' => ['delivery']];
+        $first = $this->withToken($this->token)->postJson('/app/nro-worker/claim', $claim)->assertOk()->json('data');
+        $this->postJson('/app/nro-worker/claim', [...$claim, 'workerInstance' => (string) Str::uuid()])->assertOk()->assertJsonPath('data', null);
+        $this->postJson('/app/nro-worker/claim', ['protocolVersion' => 3, 'types' => ['delivery']])->assertOk()->assertJsonPath('data', null);
+        $second = $this->postJson('/app/nro-worker/claim', [...$claim, 'allowNewAccount' => false, 'activeAccountIds' => [$account->id]])->assertOk()->json('data');
+        $this->assertNotEquals($first['id'], $second['id']);
+        $this->assertEquals($first['account']['id'], $second['account']['id']);
+        foreach ([$first, $second] as $n => $job) $this->postJson('/app/nro-worker/jobs/'.$job['id'].'/ready', [
+            'leaseToken' => $job['leaseToken'], 'characterId' => 10, 'name' => 'shared-bot', 'mapId' => 5, 'zone' => 7, 'recipientName' => 'customer'.$n,
+        ])->assertOk();
+        $url1 = '/app/nro-worker/jobs/'.$first['id']; $url2 = '/app/nro-worker/jobs/'.$second['id'];
+        $this->postJson($url1.'/begin-round', ['leaseToken' => $first['leaseToken']])->assertOk();
+        $this->postJson($url2.'/begin-round', ['leaseToken' => $second['leaseToken']])->assertConflict();
+        $this->assertTrue($shop->order($orders[1])['botActivity']['servingOther']);
+        $this->assertArrayNotHasKey('buyerUsername', $shop->order($orders[1]));
+        $this->postJson($url1.'/trade-phase', ['leaseToken' => $first['leaseToken'], 'phase' => 'confirming'])->assertOk();
+        $this->postJson($url1.'/complete', ['leaseToken' => $first['leaseToken'], 'outcome' => 'trade_paused', 'message' => 'Timeout', 'payload' => $this->payload()])->assertOk();
+        $this->assertDatabaseHas('item_orders', ['id' => $orders[0], 'status' => 'awaiting_receipt']);
+        $this->assertEquals('suspended', $shop->order($orders[0])['session']['status']);
+        try {
+            $receive->start($buyer, $orders[0], ['mode' => 'manual', 'recipientName' => 'customer0', 'requestKey' => (string) Str::uuid()]);
+            $this->fail('Cooldown should prevent another receiving session');
+        } catch (\Illuminate\Validation\ValidationException $e) { $this->assertStringContainsString('tạm dừng', $e->getMessage()); }
+        $this->postJson($url2.'/begin-round', ['leaseToken' => $second['leaseToken']])->assertOk();
+        $progress = ['leaseToken' => $second['leaseToken'], 'items' => array_map(fn ($i) => ['id' => $i['id'], 'delivered' => 1], $second['order']['items'])];
+        $this->postJson($url2.'/progress', [...$progress, 'payload' => $this->payload(1)])->assertOk();
+        $this->assertEquals([1, 1], DB::table('nro_inventory_items')->where('account_id', $account->id)->orderBy('id')->pluck('quantity')->all());
+        // A repeated progress body carrying old stock must not resurrect the delivered items.
+        $this->postJson($url2.'/progress', [...$progress, 'payload' => $this->payload(2)])->assertOk();
+        $this->assertEquals([1, 1], DB::table('nro_inventory_items')->where('account_id', $account->id)->orderBy('id')->pluck('quantity')->all());
+        $this->postJson($url2.'/complete', ['leaseToken' => $second['leaseToken'], 'outcome' => 'success', 'payload' => $this->payload(1)])->assertOk();
+        $this->assertEquals(1600, $buyer->fresh()->balance);
+        $this->assertEquals(200, $seller->fresh()->balance);
+        $this->travel(6)->minutes();
+        $receive->start($buyer, $orders[0], ['mode' => 'manual', 'recipientName' => 'customer0', 'requestKey' => (string) Str::uuid()]);
+        $this->assertEquals(1600, $buyer->fresh()->balance);
+    }
+
+    public function test_listing_price_edit_is_owned_and_does_not_change_purchased_order(): void
+    {
+        $seller = $this->seller(); $account = $this->warehouse($seller); $listing = $this->listing($seller, $account);
+        $this->actingAs($seller, 'web')->patchJson('/admin/nro-shop/listings/'.$listing, ['price' => 350])->assertOk();
+        $this->assertDatabaseHas('item_listings', ['id' => $listing, 'price' => 350, 'status' => 'active']);
+        $foreign = $this->seller();
+        $this->actingAs($foreign, 'web')->patchJson('/admin/nro-shop/listings/'.$listing, ['price' => 1])->assertNotFound();
+        $buyer = User::factory()->create(['balance' => 1000]);
+        $order = app(NroShopService::class)->purchase($buyer, $listing, 'customer', 10, (string) Str::uuid());
+        $this->actingAs($seller, 'web')->patchJson('/admin/nro-shop/listings/'.$listing, ['price' => 999])->assertUnprocessable();
+        $this->assertDatabaseHas('item_orders', ['id' => $order, 'price' => 350]);
+    }
+
+
+    public function test_warehouse_trip_freezes_all_waiters_and_updates_zone_without_changing_recipients(): void
+    {
+        $seller = $this->seller(); $account = $this->warehouse($seller);
+        $buyer = User::factory()->create(['balance' => 2000]); $shop = app(NroShopService::class);
+        $instance = (string) Str::uuid(); $jobs = []; $expires = []; $orders = [];
+        foreach (['first', 'second'] as $name) {
+            $listing = $this->listing($seller, $account);
+            $orders[] = $order = $shop->purchase($buyer, $listing, $name, 10, (string) Str::uuid());
+            app(\App\Services\NroReceivingService::class)->start($buyer, $order, ['mode'=>'manual','recipientName'=>$name,'requestKey'=>(string) Str::uuid()]);
+            $job = $this->withToken($this->token)->postJson('/app/nro-worker/claim', ['protocolVersion'=>4,'workerInstance'=>$instance,'types'=>['delivery']])->assertOk()->json('data');
+            $jobs[] = $job;
+            $expires[] = $this->postJson('/app/nro-worker/jobs/'.$job['id'].'/ready', ['leaseToken'=>$job['leaseToken'],'characterId'=>10,'name'=>'bot','mapId'=>5,'zone'=>7,'recipientName'=>$name])->assertOk()->json('expiresAt');
+        }
+        $url = '/app/nro-worker/jobs/'.$jobs[0]['id']; $lease = ['leaseToken'=>$jobs[0]['leaseToken']];
+        $this->postJson($url.'/warehouse-state', [...$lease,'phase'=>'home'])->assertOk();
+        $this->travel(60)->seconds();
+        $this->postJson($url.'/warehouse-state', [...$lease,'phase'=>'collecting'])->assertOk();
+        $public = $shop->order($orders[1])['botActivity'];
+        $this->assertTrue($public['preparing']); $this->assertEquals('collecting', $public['phase']);
+        $this->assertArrayNotHasKey('workerInstance', $public);
+        $this->postJson($url.'/begin-round', $lease)->assertConflict();
+        $this->postJson($url.'/ready', [...$lease,'characterId'=>10,'name'=>'bot','mapId'=>5,'zone'=>7,'recipientName'=>'first'])->assertOk()->assertJson(fn ($json) => $json->where('remainingSeconds', fn ($v) => $v > 1798)->etc());
+        $this->postJson($url.'/warehouse-state', [...$lease,'phase'=>'ready','position'=>['characterId'=>10,'name'=>'bot','mapId'=>5,'mapName'=>'Đảo Kame','zone'=>12,'x'=>285,'y'=>288]])->assertOk();
+        foreach ($orders as $n=>$order) {
+            $data = $shop->order($order);
+            $this->assertFalse($data['botActivity']['preparing']);
+            $this->assertEquals(12, $data['session']['position']['zone']);
+            $this->assertEquals(['first','second'][$n], $data['session']['position']['recipientName']);
+            $this->assertEqualsWithDelta(60, \Carbon\Carbon::parse($expires[$n])->diffInSeconds(\Carbon\Carbon::parse($data['session']['expiresAt']), false), 2);
+        }
+        $this->postJson($url.'/begin-round', $lease)->assertOk();
+        $this->postJson($url.'/warehouse-state', [...$lease,'phase'=>'home'])->assertConflict();
+        $deadline = DB::table('nro_delivery_sessions')->where('id',$jobs[0]['receiving']['id'])->value('phase_deadline');
+        $this->assertEqualsWithDelta(20, now()->diffInSeconds(\Carbon\Carbon::parse($deadline),false), 2);
+        DB::table('nro_worker_jobs')->update(['lease_until'=>now()->subSecond()]);
+        $this->assertNull($shop->order($orders[1])['botActivity']['phase']);
+    }
+
+    public function test_manual_same_recipient_waits_for_previous_order_without_starting_clock(): void
+    {
+        $seller=$this->seller(); $a=$this->warehouse($seller); $buyer=User::factory()->create(['balance'=>2000]);
+        $jobs=[]; $instance=(string) Str::uuid();
+        foreach (range(1,2) as $n) {
+            $order=app(NroShopService::class)->purchase($buyer,$this->listing($seller,$a),'same',10,(string) Str::uuid());
+            app(\App\Services\NroReceivingService::class)->start($buyer,$order,['mode'=>'manual','recipientName'=>'same','requestKey'=>(string) Str::uuid()]);
+            $jobs[]=$this->withToken($this->token)->postJson('/app/nro-worker/claim',['protocolVersion'=>4,'workerInstance'=>$instance,'types'=>['delivery']])->assertOk()->json('data');
+        }
+        $body=['characterId'=>10,'name'=>'bot','mapId'=>5,'zone'=>7,'recipientName'=>'same'];
+        $this->postJson('/app/nro-worker/jobs/'.$jobs[0]['id'].'/ready',[...$body,'leaseToken'=>$jobs[0]['leaseToken']])->assertOk();
+        $this->postJson('/app/nro-worker/jobs/'.$jobs[1]['id'].'/ready',[...$body,'leaseToken'=>$jobs[1]['leaseToken']])->assertStatus(202)->assertJsonPath('waitingForRecipient',true);
+        $this->assertNull(DB::table('nro_delivery_sessions')->where('id',$jobs[1]['receiving']['id'])->value('expires_at'));
+        $this->postJson('/app/nro-worker/jobs/'.$jobs[0]['id'].'/complete',['leaseToken'=>$jobs[0]['leaseToken'],'outcome'=>'login_failed','message'=>'Recipient left'])->assertOk();
+        $this->postJson('/app/nro-worker/jobs/'.$jobs[1]['id'].'/ready',[...$body,'leaseToken'=>$jobs[1]['leaseToken']])->assertOk()->assertJson(fn ($json)=>$json->where('remainingSeconds',fn($v)=>$v>1798)->etc());
+    }
+
 }

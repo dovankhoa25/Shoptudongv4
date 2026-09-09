@@ -24,6 +24,8 @@ class NroReceivingService
             NroShopService::require($a->status === 'active' && $a->server_id && $a->server_game_id, 'Kho cần được cấu hình server hiển thị và server đăng nhập.');
             NroShopService::require($a->publish_status !== 'login_blocked', $a->publish_error ?: 'Acc kho đang bị chặn đăng nhập. Shop cần sửa thông tin acc trước khi giao tiếp.');
             NroShopService::require(!DB::table('nro_delivery_sessions')->where('order_id', $id)->whereIn('status', ['queued', 'preparing', 'ready', 'trading', 'review'])->exists(), 'Đơn đã có phiên nhận.');
+            $cooldown = DB::table('nro_delivery_sessions')->where('order_id', $id)->where('retry_at', '>', now())->max('retry_at');
+            NroShopService::require(!$cooldown, 'Phiên nhận bị tạm dừng do quá thời gian giao dịch. Vui lòng đợi hết thời gian chờ rồi nhận lại.');
             $credentials = null;
             $lock = null;
             if ($v['mode'] === 'auto') {

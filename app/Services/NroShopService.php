@@ -5,6 +5,7 @@ use App\Models\NroAccount;
 use App\Models\NroAccountSnapshot;
 use App\Models\User;
 use App\Support\ApiCache;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -16,20 +17,57 @@ class NroShopService
     }
     public function listing(object $listing): array
     {
-        $account = NroAccount::find($listing->account_id);
-        $items = DB::table('item_listing_items as li')->join('nro_inventory_items as i', 'i.id', '=', 'li.inventory_item_id')
-            ->where('li.listing_id', $listing->id)->select('i.item_json', 'i.quantity as stock', 'i.reserved', 'li.quantity', 'i.id')->get();
-        $allocated = NroListingStock::allocated($listing->account_id, $listing->id);
+        return $this->listings([$listing])[$listing->id];
+    }
+
+    /**
+     * Describe many listings with a fixed number of queries instead of ~8 per row.
+     * Returns payloads keyed by listing id, in the order the rows were given.
+     */
+    public function listings(iterable $rows): array
+    {
+        $rows = collect($rows)->keyBy('id');
+        if ($rows->isEmpty()) return [];
+
+        $accountIds = $rows->pluck('account_id')->filter()->unique()->values();
+        $accounts = NroAccount::whereIn('id', $accountIds)->get()->keyBy('id');
+        $snapshots = NroAccountSnapshot::whereIn('id', $accounts->pluck('latest_snapshot_id')->filter()->unique())->get()->keyBy('id');
+        $servers = DB::table('servers')->whereIn('id', $accounts->pluck('server_id')->filter()->unique())->pluck('name_view', 'id');
+        $itemsByListing = DB::table('item_listing_items as li')->join('nro_inventory_items as i', 'i.id', '=', 'li.inventory_item_id')
+            ->whereIn('li.listing_id', $rows->keys())
+            ->select('li.listing_id', 'i.item_json', 'i.quantity as stock', 'i.reserved', 'li.quantity', 'i.id')->get()->groupBy('listing_id');
+        [$allocatedTotals, $ownShares] = NroListingStock::allocationMaps($accountIds);
+        // One global fact, not one lookup per listing.
+        $workerOnline = DB::table('nro_worker_keys')->where('accepts_delivery', true)->whereNull('revoked_at')
+            ->where('last_used_at', '>', now()->subSeconds(90))->exists();
+        $busyByAccount = DB::table('nro_worker_jobs')->whereIn('account_id', $accountIds)->whereIn('status', ['processing', 'review'])
+            ->get(['account_id', 'status', 'type'])->groupBy('account_id')->map(fn ($jobs) => $jobs->filter(fn ($j) => $j->status === 'review' || $j->type === 'snapshot')->pluck('status'));
+        // Ascending id so the highest id overwrites earlier ones: the latest order per listing.
+        $lastOrderStatus = DB::table('item_orders')->whereIn('listing_id', $rows->keys())->orderBy('id')->pluck('status', 'listing_id');
+        $policy = NroListingStock::policy();
+
+        return $rows->map(function ($listing) use ($accounts, $snapshots, $servers, $itemsByListing, $allocatedTotals, $ownShares, $busyByAccount, $lastOrderStatus, $workerOnline, $policy) {
+            $account = $accounts->get($listing->account_id);
+
+            return $this->listingPayload($listing, $account,
+                $account?->latest_snapshot_id ? $snapshots->get($account->latest_snapshot_id) : null,
+                $itemsByListing->get($listing->id) ?? collect(),
+                NroListingStock::allocationExcept($allocatedTotals[(int) $listing->account_id] ?? [], $ownShares[(int) $listing->id] ?? []),
+                $busyByAccount->get($listing->account_id) ?? collect(),
+                $lastOrderStatus[$listing->id] ?? null,
+                $account?->server_id ? ($servers[$account->server_id] ?? null) : null,
+                $workerOnline, $policy);
+        })->all();
+    }
+
+    private function listingPayload(object $listing, ?NroAccount $account, ?NroAccountSnapshot $snapshot, Collection $items,
+        array $allocated, Collection $busy, ?string $lastOrderStatus, ?string $serverName, bool $workerOnline, array $policy): array
+    {
         $available = $items->isEmpty() ? 0 : $items->min(fn ($i) => intdiv(max(0, $i->stock - $i->reserved - ($allocated[$i->id] ?? 0)), $i->quantity));
-        $snapshot = $account ? NroAccountSnapshot::find($account->latest_snapshot_id) : null;
         $fresh = $account?->server_id && $account?->server_game_id && $snapshot && ($snapshot->completeness_json['bag'] ?? false) && ($snapshot->completeness_json['chest'] ?? false)
             && $account->last_synced_at !== null
             && $snapshot->captured_at->lte(now()->addMinutes(5)) && $account->status === 'active' && $account->usage_type === 'warehouse';
-        $workerOnline = DB::table('nro_worker_keys')->where('accepts_delivery', true)->whereNull('revoked_at')->where('last_used_at', '>', now()->subSeconds(90))->exists();
-        $busy = DB::table('nro_worker_jobs')->where('account_id', $listing->account_id)->whereIn('status', ['processing', 'review'])->pluck('status');
-        $lastOrderStatus = DB::table('item_orders')->where('listing_id', $listing->id)->orderByDesc('id')->value('status');
         $reasons = [];
-        $policy = NroListingStock::policy();
         if ($items->contains(fn ($i) => !NroListingStock::allows((int) json_decode($i->item_json, true)['templateId'], $policy))) $reasons[] = 'Gói chứa vật phẩm ngoài danh sách được phép bán';
         if ($listing->status !== 'active') $reasons[] = $listing->status === 'sold' ? 'Gói đã có người mua' : 'Gói đang tạm dừng';
         if ($busy->contains('review')) $reasons[] = 'Kho đang chờ đối soát';
@@ -47,8 +85,10 @@ class NroShopService
             $physical = $items->isEmpty() ? 0 : $items->min(fn ($i) => intdiv(max(0, $i->stock), $i->quantity));
             $reasons[] = $physical > 0 ? (array_sum($allocated) > 0 ? 'Đồ đã được phân cho gói khác hoặc đơn chưa nhận' : 'Đồ đã được giữ cho đơn chưa nhận') : 'Không đủ đồ cho một gói';
         }
+
         return ['id' => $listing->id, 'title' => $listing->title, 'description' => $listing->description,
-            'price' => (string) $listing->price, 'status' => $listing->status, 'lastOrderStatus' => $lastOrderStatus, 'serverIndex' => $account?->server_index, 'serverId' => $account?->server_id, 'serverName' => $account ? DB::table('servers')->where('id', $account->server_id)->value('name_view') : null,
+            'price' => (string) $listing->price, 'status' => $listing->status, 'lastOrderStatus' => $lastOrderStatus,
+            'serverIndex' => $account?->server_index, 'serverId' => $account?->server_id, 'serverName' => $serverName,
             'available' => !$reasons ? min(1, $available) : 0, 'stockAvailable' => $available, 'unavailableReasons' => $reasons, 'workerOnline' => $workerOnline,
             'needsSync' => !$fresh, 'items' => $items->map(fn ($i) => ['inventoryItemId' => $i->id, 'quantity' => $i->quantity, 'item' => json_decode($i->item_json, true)])->all()];
     }
@@ -69,7 +109,7 @@ class NroShopService
             self::require($listing->user_id != $buyer->id, 'Không thể mua gói đồ của chính bạn.');
             self::require($account->server_id == $server, 'Nhân vật nhận phải ở cùng server với gói đồ.');
             self::require($this->listing($listing)['available'] > 0, 'Gói đồ hết hàng hoặc cần đồng bộ kho.');
-            self::require(!DB::table('nro_worker_jobs')->where('account_id', $account->id)->whereIn('status', ['processing', 'review'])->exists(), 'Acc đang xử lý giao dịch hoặc chờ đối soát. Vui lòng thử lại sau.');
+            self::require(!DB::table('nro_worker_jobs')->where('account_id', $account->id)->where(function ($q) { $q->where('status', 'review')->orWhere(fn ($j) => $j->where('status', 'processing')->where('type', 'snapshot')); })->exists(), 'Acc đang lấy dữ liệu hoặc chờ đối soát. Vui lòng thử lại sau.');
             self::require((int) $buyer->balance >= $listing->price, 'Số dư không đủ.');
             $order = DB::table('item_orders')->insertGetId(['buyer_id' => $buyer->id, 'seller_id' => $listing->user_id, 'listing_id' => $listingId,
                 'account_id' => $account->id, 'recipient_name' => $name, 'server_index' => $account->server_index ?? 0, 'server_id' => $server, 'price' => $listing->price,
@@ -91,23 +131,57 @@ class NroShopService
 
     public function order(int $id): array
     {
-        $o = DB::table('item_orders')->where('id', $id)->first(); abort_unless($o, 404);
-        $session = $this->session($id);
-        $location = NroAccount::find($o->account_id);
-        return ['id' => $o->id, 'title' => $o->title, 'price' => (string) $o->price, 'status' => $o->status,
-            'recipientName' => $session['recipientName'] ?? $o->recipient_name, 'serverIndex' => $o->server_index, 'serverId' => $o->server_id, 'serverName' => DB::table('servers')->where('id', $o->server_id)->value('name_view'), 'message' => $o->delivery_message,
-            'session' => $session,
-            'deliveryLocation' => $location ? ['mapId' => $location->delivery_map, 'mapName' => $location->delivery_map == 5 ? 'Đảo Kame' : null, 'zoneMode' => $location->delivery_zone_mode, 'zone' => $location->delivery_zone] : null,
-            'createdAt' => $o->created_at, 'items' => DB::table('item_order_items')->where('order_id', $id)->get()->map(fn ($i) => [
-                'id' => $i->id, 'item' => json_decode($i->item_json, true), 'quantity' => $i->quantity, 'delivered' => $i->delivered])->all()];
+        $orders = $this->orders([$id]); abort_unless(isset($orders[$id]), 404);
+
+        return $orders[$id];
     }
 
-    private function session(int $orderId): ?array
+    /**
+     * Describe many orders with a fixed number of queries instead of ~5 per row.
+     * Returns payloads keyed by order id; ids with no matching row are simply absent.
+     */
+    public function orders(iterable $ids): array
     {
-        $s = DB::table('nro_delivery_sessions')->where('order_id', $orderId)->orderByDesc('id')->first();
+        $ids = collect($ids)->map(fn ($id) => (int) $id)->unique()->values();
+        if ($ids->isEmpty()) return [];
+
+        $rows = DB::table('item_orders')->whereIn('id', $ids)->get()->keyBy('id');
+        if ($rows->isEmpty()) return [];
+        // Ascending id so the highest id overwrites earlier ones: the latest session per order.
+        $sessions = DB::table('nro_delivery_sessions')->whereIn('order_id', $rows->keys())->orderBy('id')->get()->keyBy('order_id');
+        $accounts = NroAccount::whereIn('id', $rows->pluck('account_id')->filter()->unique())->get()->keyBy('id');
+        $servers = DB::table('servers')->whereIn('id', $rows->pluck('server_id')->filter()->unique())->pluck('name_view', 'id');
+        $itemsByOrder = DB::table('item_order_items')->whereIn('order_id', $rows->keys())->get()->groupBy('order_id');
+
+        $activity = DB::table('nro_worker_jobs as j')->join('nro_delivery_sessions as s', 's.id', '=', 'j.delivery_session_id')
+            ->whereIn('j.account_id', $rows->pluck('account_id')->unique())->where('j.status', 'processing')
+            ->get(['j.account_id', 'j.order_id', 's.status', 's.position_json', 'j.worker_instance', 'j.lease_until'])->groupBy('account_id');
+        return $rows->map(function ($o) use ($sessions, $accounts, $servers, $itemsByOrder, $activity) {
+            $session = $this->sessionPayload($sessions->get($o->id));
+            $location = $accounts->get($o->account_id);
+
+            return ['id' => $o->id, 'title' => $o->title, 'price' => (string) $o->price, 'status' => $o->status,
+                'recipientName' => $session['recipientName'] ?? $o->recipient_name, 'serverIndex' => $o->server_index, 'serverId' => $o->server_id,
+                'serverName' => $servers[$o->server_id] ?? null, 'message' => $o->delivery_message,
+                'session' => $session,
+                // Counts and bot identity are public; other buyers' names/order IDs are never exposed.
+                'botActivity' => array_merge($location ? NroWarehouseActivity::publicPayload($location, $activity->get($o->account_id) ?? collect()) : [], [
+                    'waitingCount' => ($activity->get($o->account_id) ?? collect())->whereIn('status', ['preparing', 'ready'])->count(),
+                    'servingOther' => ($activity->get($o->account_id) ?? collect())->contains(fn ($a) => $a->status === 'trading' && $a->order_id != $o->id),
+                ]),
+                'deliveryLocation' => $location ? ['mapId' => $location->delivery_map, 'mapName' => $location->delivery_map == 5 ? 'Đảo Kame' : null, 'zoneMode' => $location->delivery_zone_mode, 'zone' => $location->delivery_zone] : null,
+                'createdAt' => $o->created_at, 'items' => ($itemsByOrder->get($o->id) ?? collect())->map(fn ($i) => [
+                    'id' => $i->id, 'item' => json_decode($i->item_json, true), 'quantity' => $i->quantity, 'delivered' => $i->delivered])->values()->all()];
+        })->all();
+    }
+
+    private function sessionPayload(?object $s): ?array
+    {
         return $s ? ['id' => $s->id, 'mode' => $s->mode, 'status' => $s->status,
             'recipientName' => $s->recipient_name, 'readyAt' => $s->ready_at ? \Carbon\Carbon::parse($s->ready_at)->toIso8601String() : null,
             'expiresAt' => $s->expires_at ? \Carbon\Carbon::parse($s->expires_at)->toIso8601String() : null,
+            'retryAt' => $s->retry_at ? \Carbon\Carbon::parse($s->retry_at)->toIso8601String() : null,
+            'tradePhase' => $s->trade_phase, 'phaseDeadline' => $s->phase_deadline ? \Carbon\Carbon::parse($s->phase_deadline)->toIso8601String() : null,
             'position' => json_decode($s->position_json ?? 'null', true)] : null;
     }
 

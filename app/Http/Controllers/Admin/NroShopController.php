@@ -39,20 +39,35 @@ class NroShopController extends Controller
         abort_unless($r->user()->canViewAllAdminData() || $a->user_id === $r->user()->id, 404);
         return $a;
     }
-    public function index(Request $r, NroShopService $shop)
+    /** What the signed-in user may see; drives both the props and every tab endpoint below. */
+    private function capabilities(Request $r): array
     {
         $can = fn (...$p) => collect($p)->contains(fn ($permission) => $r->user()->can($permission));
-        $caps = ['accounts' => $can('nro-accounts.view','nro-accounts.manage','nicks.create','nicks.manage','item-listings.manage','nro-settings.manage'),
-            'manageAccounts' => $can('nro-accounts.manage'), 'readAccountSnapshots' => $can('nro-accounts.view','nro-accounts.manage'), 'publishNick' => $can('nicks.create','nicks.manage'), 'editNick' => $can('nicks.manage'),
+
+        return ['accounts' => $can('nro-accounts.view','nro-accounts.manage','nicks.create','nicks.manage','item-listings.manage','nro-settings.manage'),
+            'manageAccounts' => $can('nro-accounts.manage'), 'readAccountSnapshots' => $can('nro-accounts.view','nro-accounts.manage'),
+            'publishNick' => $can('nicks.create','nicks.manage'), 'editNick' => $can('nicks.manage'),
             'listings' => $can('item-listings.view','item-listings.manage'), 'manageListings' => $can('item-listings.manage'),
             'orders' => $can('item-orders.view','item-orders.reconcile'), 'reconcile' => $can('item-orders.reconcile'),
-            'workers' => $can('nro-workers.manage'), 'settings' => $can('nro-settings.manage')];
+            'workers' => $can('nro-workers.manage'), 'settings' => $can('nro-settings.manage'),
+            'salePolicy' => $r->user()->canViewAllAdminData() || $can('nro-sale-policy.manage')];
+    }
+
+    /** Subquery of the account ids this user is allowed to touch. */
+    private function ownedAccountIds(Request $r)
+    {
+        $q = NroAccount::whereNotNull('usage_type');
+        if (!$r->user()->canViewAllAdminData()) $q->where('user_id', $r->user()->id);
+
+        return $q->select('id');
+    }
+
+    public function index(Request $r)
+    {
+        $caps = $this->capabilities($r);
         $q = NroAccount::whereNotNull('usage_type');
         if (!$r->user()->canViewAllAdminData()) $q->where('user_id', $r->user()->id);
         $ownedIds = (clone $q)->select('id');
-        $stats = ['total' => (clone $q)->count(), 'nick' => (clone $q)->where('usage_type', 'nick')->count(),
-            'warehouse' => (clone $q)->where('usage_type', 'warehouse')->count(),
-            'attention' => (clone $q)->whereIn('publish_status', ['needs_attention', 'scan_failed', 'publish_failed'])->count()];
         $filters = $r->validate(['q' => 'nullable|string|max:100', 'usage' => 'nullable|in:nick,warehouse', 'server' => 'nullable|integer',
             'state' => 'nullable|in:waiting,published,attention,sold', 'page' => 'nullable|integer|min:1']);
         if (!empty($filters['server'])) $filters['server'] = (int) $filters['server'];
@@ -65,35 +80,159 @@ class NroShopController extends Controller
         if (($filters['state'] ?? '') === 'sold') $q->where('status', 'sold');
         $page = $q->orderByDesc('id')->paginate(30);
         $accounts = $page->getCollection();
+        $warehouseJobs = DB::table('nro_worker_jobs')->whereIn('account_id', $accounts->pluck('id'))->where('status', 'processing')->get(['account_id','worker_instance','lease_until'])->groupBy('account_id');
         $nicks = Nick::withoutUserOwnedScope()->with('category:id,name,slug,status')->whereIn('game_account_id', $accounts->pluck('id'))
             ->get(['id','game_account_id','category_id','status','price','description','snapshot_id'])->keyBy('game_account_id');
-        $listingCounts = DB::table('item_listings')->whereIn('account_id', clone $ownedIds)
+        $listingCounts = DB::table('item_listings')->whereIn('account_id', $accounts->pluck('id'))
             ->selectRaw("account_id, COUNT(*) as total, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active")
             ->groupBy('account_id')->get()->keyBy('account_id');
-        $owners = DB::table('users')->whereIn('id', NroAccount::whereIn('id', clone $ownedIds)->select('user_id'))->pluck('username', 'id');
+        $owners = DB::table('users')->whereIn('id', $accounts->pluck('user_id')->filter()->unique())->pluck('username', 'id');
         $categories = $r->user()->canViewAllAdminData() ? Category::query() : $r->user()->categories()->wherePivot('can_post', true);
-        $listings = DB::table('item_listings')->whereIn('account_id', clone $ownedIds)->orderByDesc('id')->limit(100)->get();
-        $orders = DB::table('item_orders')->whereIn('account_id', clone $ownedIds)->orderByDesc('id')->limit(50)->get();
-        $caps['salePolicy'] = $r->user()->canViewAllAdminData() || $can('nro-sale-policy.manage');
-        return Inertia::render('Admin/NroShop/Index', ['accountStats' => $caps['accounts'] ? $stats : null, 'accountFilters' => $filters,
+
+        // Only the accounts tab is rendered server-side. Every other tab pulls its own paginated
+        // endpoint when opened, so a page load (and the status poll) never builds all five at once.
+        return Inertia::render('Admin/NroShop/Index', [
+            // Always sent: every count is scoped to the caller's own accounts, and the tab labels
+            // need real totals even for a user who can only see one tab.
+            'accountStats' => $this->stats($r, $ownedIds), 'accountFilters' => $filters,
             'accountPagination' => ['total' => $caps['accounts'] ? $page->total() : 0, 'current' => $page->currentPage(), 'pageSize' => $page->perPage()],
-            'capabilities' => $caps, 'salePolicy' => NroListingStock::policy(),
+            'capabilities' => $caps, 'salePolicy' => [...NroListingStock::policy(), 'groupOverrides' => \App\Services\NroItemFilters::overrides(), 'groups' => app(\App\Services\NroItemFilters::class)->metadata()['groups']],
             'shopUrl' => preg_match('~^https?://~i', config('nro-shop.frontend_url') ?? '') ? rtrim(config('nro-shop.frontend_url'), '/') : null,
             'servers' => DB::table('servers')->where('status', true)->get(['id','name','name_view']),
             'loginServers' => $caps['manageAccounts'] || $caps['settings'] ? DB::table('server_game_login')->get(['id','name']) : [],
             'accounts' => $caps['accounts'] ? $accounts->map(fn ($a) => [
-            'ownerUsername' => $owners->get($a->user_id), 'id' => $a->id, 'account_name' => $a->account_name, 'server_index' => $a->server_index, 'usage_type' => $a->usage_type,
-            'character_name' => $a->character_name, 'last_synced_at' => $a->last_synced_at, 'latest_snapshot_id' => $a->latest_snapshot_id,
-            'server_id' => $a->server_id, 'server_game_id' => $a->server_game_id, 'delivery_map' => $a->delivery_map, 'delivery_zone' => $a->delivery_zone, 'wait_minutes' => $a->wait_minutes,
-            'delivery_zone_mode' => $a->delivery_zone_mode,
-            'publishStatus' => $a->publish_status, 'publishError' => $a->publish_error, 'publishConfig' => $a->publish_config,
-            'status' => $a->status, 'nick' => $this->nickSummary($nicks->get($a->id)),
-            'listingCounts' => $caps['listings'] ? ['total' => (int) ($listingCounts->get($a->id)?->total ?? 0), 'active' => (int) ($listingCounts->get($a->id)?->active ?? 0)] : null,
-        ]) : [], 'categories' => $categories->where('template', 'default')->where('status', 'active')->get(['categories.id', 'categories.name']),
-            'listings' => $caps['listings'] ? $listings->map(fn ($l) => [...$shop->listing($l), 'accountId' => $l->account_id, 'ownerUsername' => $owners->get($l->user_id)]) : [], 'orders' => $caps['orders'] ? $orders->map(fn ($o) => $shop->order($o->id)) : [],
-            'jobs' => $caps['manageAccounts'] || $caps['reconcile'] ? DB::table('nro_worker_jobs')->whereIn('account_id', clone $ownedIds)->orderByDesc('id')->limit(50)->get(['id', 'account_id', 'order_id', 'type', 'status', 'updated_at', 'result_json']) : [],
+                'deliveryActivity' => \App\Services\NroWarehouseActivity::publicPayload($a, $warehouseJobs->get($a->id) ?? collect()), 'ownerUsername' => $owners->get($a->user_id), 'id' => $a->id, 'account_name' => $a->account_name, 'server_index' => $a->server_index, 'usage_type' => $a->usage_type,
+                'character_name' => $a->character_name, 'last_synced_at' => $a->last_synced_at, 'latest_snapshot_id' => $a->latest_snapshot_id,
+                'server_id' => $a->server_id, 'server_game_id' => $a->server_game_id, 'delivery_map' => $a->delivery_map, 'delivery_zone' => $a->delivery_zone, 'wait_minutes' => $a->wait_minutes,
+                'delivery_zone_mode' => $a->delivery_zone_mode,
+                'publishStatus' => $a->publish_status, 'publishError' => $a->publish_error, 'publishConfig' => $a->publish_config,
+                'status' => $a->status, 'nick' => $this->nickSummary($nicks->get($a->id)),
+                'listingCounts' => $caps['listings'] ? ['total' => (int) ($listingCounts->get($a->id)?->total ?? 0), 'active' => (int) ($listingCounts->get($a->id)?->active ?? 0)] : null,
+            ]) : [],
+            'categories' => $categories->where('template', 'default')->where('status', 'active')->get(['categories.id', 'categories.name']),
             'canReconcile' => $caps['reconcile'],
-            'workerKeys' => $caps['workers'] ? DB::table('nro_worker_keys')->orderByDesc('id')->get(['id', 'name', 'last_used_at', 'revoked_at', 'accepts_delivery']) : []]);
+        ]);
+    }
+
+    /** Counts for the header cards; also the payload the page polls instead of reloading everything. */
+    private function stats(Request $r, $ownedIds): array
+    {
+        $accounts = NroAccount::whereNotNull('usage_type');
+        if (!$r->user()->canViewAllAdminData()) $accounts->where('user_id', $r->user()->id);
+        $byUsage = (clone $accounts)->selectRaw('usage_type, COUNT(*) as total')->groupBy('usage_type')->pluck('total', 'usage_type');
+        $jobs = DB::table('nro_worker_jobs')->whereIn('account_id', clone $ownedIds)
+            ->whereIn('status', ['queued', 'processing', 'review'])->selectRaw('status, COUNT(*) as total')->groupBy('status')->pluck('total', 'status');
+
+        return ['total' => (int) $byUsage->sum(), 'nick' => (int) ($byUsage['nick'] ?? 0), 'warehouse' => (int) ($byUsage['warehouse'] ?? 0),
+            'attention' => (clone $accounts)->whereIn('publish_status', ['needs_attention', 'scan_failed', 'publish_failed'])->count(),
+            'reviewJobs' => (int) ($jobs['review'] ?? 0), 'activeJobs' => (int) (($jobs['queued'] ?? 0) + ($jobs['processing'] ?? 0)),
+            'openOrders' => DB::table('item_orders')->whereIn('account_id', clone $ownedIds)->whereNotIn('status', ['completed', 'refunded'])->count(),
+            // Real totals for the tab labels; the old page showed the size of a truncated list instead.
+            'listings' => DB::table('item_listings')->whereIn('account_id', clone $ownedIds)->count(),
+            'orders' => DB::table('item_orders')->whereIn('account_id', clone $ownedIds)->count(),
+            'jobs' => DB::table('nro_worker_jobs')->whereIn('account_id', clone $ownedIds)->count(),
+            'workerOnline' => DB::table('nro_worker_keys')->where('accepts_delivery', true)->whereNull('revoked_at')
+                ->where('last_used_at', '>', now()->subSeconds(90))->exists()];
+    }
+
+    /**
+     * Lightweight poll target: the header counts only, never the tab bodies.
+     * The route's permission middleware already gates this to staff who can open the page,
+     * and every count is scoped to the caller's own accounts.
+     */
+    public function status(Request $r)
+    {
+        return response()->json($this->stats($r, $this->ownedAccountIds($r)))->header('Cache-Control', 'no-store');
+    }
+
+    private function paged(\Illuminate\Contracts\Pagination\LengthAwarePaginator $page, $data)
+    {
+        return response()->json(['data' => $data, 'total' => $page->total(), 'page' => $page->currentPage(), 'perPage' => $page->perPage()])
+            ->header('Cache-Control', 'no-store');
+    }
+
+    public function listingsIndex(Request $r, NroShopService $shop)
+    {
+        abort_unless($this->capabilities($r)['listings'], 403);
+        $v = $r->validate(['q' => 'nullable|string|max:100', 'status' => 'nullable|in:active,paused,sold,draft',
+            'accountId' => 'nullable|integer', 'page' => 'nullable|integer|min:1']);
+        $q = DB::table('item_listings')->whereIn('account_id', $this->ownedAccountIds($r));
+        if (!empty($v['status'])) $q->where('status', $v['status']);
+        if (!empty($v['accountId'])) $q->where('account_id', (int) $v['accountId']);
+        if (!empty(trim($v['q'] ?? ''))) {
+            $term = trim($v['q']);
+            $q->where(function ($s) use ($term) {
+                $s->where('title', 'like', '%'.$term.'%');
+                if (ctype_digit($term) && strlen($term) <= 18) $s->orWhere('id', (int) $term);
+            });
+        }
+        $page = $q->orderByDesc('id')->paginate(20);
+        $rows = $page->getCollection();
+        $payloads = $shop->listings($rows);
+        $owners = DB::table('users')->whereIn('id', $rows->pluck('user_id')->filter()->unique())->pluck('username', 'id');
+        $accountNames = DB::table('nro_accounts')->whereIn('id', $rows->pluck('account_id')->filter()->unique())->pluck('account_name', 'id');
+
+        return $this->paged($page, $rows->map(fn ($l) => [...$payloads[$l->id], 'accountId' => $l->account_id,
+            'accountName' => $accountNames[$l->account_id] ?? null, 'ownerUsername' => $owners[$l->user_id] ?? null])->values());
+    }
+
+    public function ordersIndex(Request $r, NroShopService $shop)
+    {
+        abort_unless($this->capabilities($r)['orders'], 403);
+        $v = $r->validate(['q' => 'nullable|string|max:100', 'accountId' => 'nullable|integer', 'page' => 'nullable|integer|min:1',
+            'status' => 'nullable|in:queued,awaiting_receipt,processing,review,completed,refunded,failed,expired']);
+        $q = DB::table('item_orders')->whereIn('account_id', $this->ownedAccountIds($r));
+        if (!empty($v['status'])) $q->where('status', $v['status']);
+        if (!empty($v['accountId'])) $q->where('account_id', (int) $v['accountId']);
+        if (!empty(trim($v['q'] ?? ''))) {
+            $term = trim($v['q']);
+            $q->where(function ($s) use ($term) {
+                $s->where('title', 'like', '%'.$term.'%')->orWhere('recipient_name', 'like', '%'.$term.'%')
+                    ->orWhereIn('buyer_id', DB::table('users')->select('id')->where('username', 'like', '%'.$term.'%'))
+                    ->orWhereIn('seller_id', DB::table('users')->select('id')->where('username', 'like', '%'.$term.'%'))
+                    ->orWhereIn('account_id', DB::table('nro_accounts')->select('id')->where('account_name', 'like', '%'.$term.'%')->orWhere('character_name', 'like', '%'.$term.'%'));
+                if (ctype_digit($term) && strlen($term) <= 18) $s->orWhere('id', (int) $term);
+            });
+        }
+        $page = $q->orderByDesc('id')->paginate(20);
+        $payloads = $shop->orders($page->getCollection()->pluck('id'));
+
+        $people = DB::table('users')->whereIn('id', $page->getCollection()->pluck('buyer_id')->merge($page->getCollection()->pluck('seller_id'))->unique())->pluck('username', 'id');
+        $warehouses = DB::table('nro_accounts')->whereIn('id', $page->getCollection()->pluck('account_id')->unique())->get(['id', 'account_name', 'character_name'])->keyBy('id');
+        return $this->paged($page, $page->getCollection()->map(fn ($o) => [...$payloads[$o->id], 'accountId' => $o->account_id,
+            'buyerUsername' => $people[$o->buyer_id] ?? null, 'ownerUsername' => $people[$o->seller_id] ?? null,
+            'accountName' => $warehouses->get($o->account_id)?->account_name,
+            'botName' => $warehouses->get($o->account_id)?->character_name])->values());
+    }
+
+    public function jobsIndex(Request $r, NroShopService $shop)
+    {
+        $caps = $this->capabilities($r);
+        abort_unless($caps['manageAccounts'] || $caps['reconcile'], 403);
+        $v = $r->validate(['status' => 'nullable|in:queued,processing,review,completed,failed,expired',
+            'type' => 'nullable|in:snapshot,delivery', 'accountId' => 'nullable|integer', 'page' => 'nullable|integer|min:1']);
+        $q = DB::table('nro_worker_jobs')->whereIn('account_id', $this->ownedAccountIds($r));
+        if (!empty($v['status'])) $q->where('status', $v['status']);
+        if (!empty($v['type'])) $q->where('type', $v['type']);
+        if (!empty($v['accountId'])) $q->where('account_id', (int) $v['accountId']);
+        $page = $q->orderByDesc('id')->paginate(20);
+        $rows = $page->getCollection();
+        // The reconcile form needs the order behind each job awaiting review, and only those.
+        $reviewOrderIds = $rows->where('status', 'review')->pluck('order_id')->filter()->unique();
+        $orders = $caps['reconcile'] && $reviewOrderIds->isNotEmpty() ? $shop->orders($reviewOrderIds) : [];
+        $accountNames = DB::table('nro_accounts')->whereIn('id', $rows->pluck('account_id')->filter()->unique())->pluck('account_name', 'id');
+
+        return $this->paged($page, $rows->map(fn ($j) => ['id' => $j->id, 'account_id' => $j->account_id, 'order_id' => $j->order_id,
+            'type' => $j->type, 'status' => $j->status, 'updated_at' => $j->updated_at, 'result_json' => $j->result_json,
+            'accountName' => $accountNames[$j->account_id] ?? null, 'order' => $orders[$j->order_id] ?? null])->values());
+    }
+
+    public function workerKeys(Request $r)
+    {
+        abort_unless($this->capabilities($r)['workers'], 403);
+
+        return response()->json(['data' => DB::table('nro_worker_keys')->orderByDesc('id')
+            ->get(['id', 'name', 'last_used_at', 'revoked_at', 'accepts_delivery'])])->header('Cache-Control', 'no-store');
     }
     public function createKey(Request $r)
     {
@@ -176,7 +315,14 @@ class NroShopController extends Controller
     public function salePolicy(Request $r)
     {
         abort_unless($r->user()->canViewAllAdminData() || $r->user()->can('nro-sale-policy.manage'), 403);
-        $v = $r->validate(['enabled' => 'required|boolean', 'ids' => 'present|array|max:10000', 'ids.*' => 'required|integer|min:0|max:100000|distinct']);
+        $v = $r->validate(['enabled' => 'required|boolean', 'ids' => 'present|array|max:10000', 'ids.*' => 'required|integer|min:0|max:100000|distinct',
+            'groupOverrides'=>'sometimes|array|max:3000', 'groupOverrides.*.id'=>'required|integer|min:0|max:100000|distinct',
+            'groupOverrides.*.group'=>'required|in:'.implode(',',array_keys(\App\Services\NroItemFilters::GROUPS))]);
+        if (array_key_exists('groupOverrides',$v)) {
+            $known = app(\App\Services\NroItemFilters::class)->knownIds();
+            foreach ($v['groupOverrides'] as $row) NroShopService::require(in_array((int)$row['id'],$known,true),'ID phân nhóm không có trong catalog: '.$row['id']);
+            Setting::set('nro_item_group_overrides',json_encode(array_map(fn($row)=>['id'=>(int)$row['id'],'group'=>$row['group']],$v['groupOverrides'])));
+        }
         Setting::set('nro_sale_item_policy', json_encode(['enabled' => $v['enabled'], 'ids' => array_map('intval', $v['ids'])]));
         ApiCache::clearGroups(['public:nick', 'public:nro-shop:listings']);
         return response()->json(['ok' => true]);
@@ -281,7 +427,9 @@ class NroShopController extends Controller
         $a = $this->account($r, $id);
         $r->validate(['page' => 'sometimes|integer|min:1']);
         $listings = DB::table('item_listings')->where('account_id', $a->id)->orderByDesc('id')->paginate(20);
-        return response()->json(['data' => $listings->getCollection()->map(fn ($l) => [...$shop->listing($l), 'accountId' => $a->id]),
+        $payloads = $shop->listings($listings->getCollection());
+        $ownerUsername = \App\Models\User::whereKey($a->user_id)->value('username');
+        return response()->json(['data' => $listings->getCollection()->map(fn ($l) => [...$payloads[$l->id], 'accountId' => $a->id, 'accountName' => $a->account_name, 'ownerUsername' => $ownerUsername])->values(),
             'total' => $listings->total(), 'page' => $listings->currentPage(), 'perPage' => $listings->perPage()]);
     }
 
@@ -311,13 +459,14 @@ class NroShopController extends Controller
     }
     public function toggle(Request $r, int $id)
     {
-        $v = $r->validate(['status' => 'required|in:active,paused']);
+        $v = $r->validate(['status' => 'sometimes|required|in:active,paused', 'price' => 'sometimes|required|integer|min:1|max:9999999999']);
+        NroShopService::require(count($v) > 0, 'Chọn giá hoặc trạng thái cần sửa.');
         $l = DB::table('item_listings')->where('id', $id)->first(); abort_unless($l, 404); $this->account($r, $l->account_id);
         DB::transaction(function () use ($l, $id, $v) {
             NroAccount::whereKey($l->account_id)->lockForUpdate()->firstOrFail();
             DB::table('item_listings')->where('id', $id)->lockForUpdate()->first();
             NroShopService::require(!DB::table('item_orders')->where('listing_id', $id)->exists(), 'Gói đã có người mua. Hãy tạo gói mới nếu muốn bán tiếp.');
-            if ($v['status'] === 'active') {
+            if (($v['status'] ?? null) === 'active') {
                 $allocated = NroListingStock::allocated($l->account_id, $id);
                 foreach (DB::table('item_listing_items')->where('listing_id', $id)->get() as $line) {
                     $item = DB::table('nro_inventory_items')->where('id', $line->inventory_item_id)->lockForUpdate()->first();
@@ -325,7 +474,7 @@ class NroShopController extends Controller
                     NroShopService::require(NroListingStock::allows((int) $item->template_id), 'Gói chứa ID vật phẩm không được phép bán.');
                 }
             }
-            DB::table('item_listings')->where('id', $id)->update(['status' => $v['status'], 'updated_at' => now()]);
+            DB::table('item_listings')->where('id', $id)->update([...$v, 'updated_at' => now()]);
         }, 3);
         ApiCache::clearGroups(['public:nick', 'public:nro-shop:listings']);
         return response()->json(['ok' => true]);

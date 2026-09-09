@@ -3,6 +3,12 @@ use App\Http\Controllers\Admin\NroShopController;
 use Illuminate\Support\Facades\Route;
 Route::prefix('admin/nro-shop')->name('admin.nro-shop.')->middleware(['auth', 'unlocked.user', 'throttle:120,1'])->group(function () {
     Route::get('/', [NroShopController::class, 'index'])->middleware('permission:nro-accounts.view,nro-accounts.manage,nicks.create,nicks.manage,item-listings.view,item-listings.manage,item-orders.view,item-orders.reconcile,nro-workers.manage,nro-settings.manage,nro-sale-policy.manage')->name('index');
+    // Per-tab endpoints: each tab loads only when opened, so one page view never builds all five.
+    Route::get('status', [NroShopController::class, 'status'])->middleware('permission:nro-accounts.view,nro-accounts.manage,nicks.create,nicks.manage,item-listings.view,item-listings.manage,item-orders.view,item-orders.reconcile,nro-workers.manage,nro-settings.manage,nro-sale-policy.manage')->name('status');
+    Route::get('listings', [NroShopController::class, 'listingsIndex'])->middleware('permission:item-listings.view,item-listings.manage')->name('listings.index');
+    Route::get('orders', [NroShopController::class, 'ordersIndex'])->middleware('permission:item-orders.view,item-orders.reconcile')->name('orders.index');
+    Route::get('jobs', [NroShopController::class, 'jobsIndex'])->middleware('permission:nro-accounts.manage,item-orders.reconcile')->name('jobs.index');
+    Route::get('worker-keys', [NroShopController::class, 'workerKeys'])->middleware('permission:nro-workers.manage')->name('worker-keys.index');
     Route::post('worker-keys', [NroShopController::class, 'createKey'])->middleware('permission:nro-workers.manage')->name('worker-keys.store');
     Route::delete('worker-keys/{id}', [NroShopController::class, 'revokeKey'])->middleware('permission:nro-workers.manage')->name('worker-keys.revoke');
     Route::patch('accounts/{id}/settings', [NroShopController::class, 'settings'])->middleware('permission:nro-settings.manage')->name('accounts.settings');

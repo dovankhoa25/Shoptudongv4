@@ -8,20 +8,26 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Arr;
 class NroShopController extends Controller
 {
-    public function index(Request $r, NroShopService $s)
+    public function index(Request $r, NroShopService $s, \App\Services\NroItemFilters $itemFilters)
     {
         $filters = $r->validate(['page' => 'sometimes|integer|min:1', 'server' => 'nullable|integer|min:1',
             'q' => 'nullable|string|max:100', 'bundle' => 'nullable|in:single,combo',
             'minPrice' => 'nullable|numeric|min:0|max:1000000000000',
             'maxPrice' => ['nullable','numeric','min:0','max:1000000000000', ...($r->filled('minPrice') ? ['gte:minPrice'] : [])],
-            'sort' => 'nullable|in:newest,price_asc,price_desc']);
+            'sort' => 'nullable|in:newest,price_asc,price_desc',
+            'group'=>'nullable|in:'.implode(',',array_keys(\App\Services\NroItemFilters::GROUPS)),
+            'equipmentType'=>'nullable|in:'.implode(',',array_keys(\App\Services\NroItemFilters::EQUIPMENT)),
+            'gender'=>'nullable|integer|in:0,1,2', 'minStars'=>'nullable|integer|min:1|max:9', 'stat'=>'nullable|in:damage,hp,ki']);
+        foreach (['equipmentType','gender','minStars','stat'] as $key) if (isset($filters[$key])) {
+            if (($filters['group'] ?? '') !== 'equipment') throw \Illuminate\Validation\ValidationException::withMessages([$key=>'Chọn nhóm Trang bị để dùng bộ lọc này.']);
+        }
         $cachePayload = $filters;
         $cachePayload['q'] = trim((string) ($cachePayload['q'] ?? ''));
         if (($cachePayload['q'] ?? '') === '') unset($cachePayload['q']);
         ksort($cachePayload);
-        $cacheKey = ApiCache::key('nro-shop:listings', 'v1', json_encode($cachePayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        $cacheKey = ApiCache::key('nro-shop:listings', 'filters-v2', json_encode($cachePayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 
-        $payload = ApiCache::remember('public:nro-shop:listings', $cacheKey, 60, function () use ($filters, $s) {
+        $payload = ApiCache::remember('public:nro-shop:listings', $cacheKey, 60, function () use ($filters, $s, $itemFilters) {
             $q = DB::table('item_listings')->where('status', 'active')->whereNotExists(fn ($orders) => $orders->selectRaw('1')->from('item_orders')->whereColumn('item_orders.listing_id', 'item_listings.id'));
             if (! empty($filters['server'])) $q->whereIn('account_id', DB::table('nro_accounts')->select('id')->where('server_id', (int) $filters['server']));
             $search = trim((string) ($filters['q'] ?? ''));
@@ -37,6 +43,20 @@ class NroShopController extends Controller
                         });
                 });
             }
+            if (!empty($filters['group'])) {
+                $ids = $itemFilters->templateIds($filters);
+                $q->whereExists(function ($items) use ($filters, $ids, $itemFilters) {
+                    $items->selectRaw('1')->from('item_listing_items as li')->join('nro_inventory_items as i','i.id','=','li.inventory_item_id')
+                        ->whereColumn('li.listing_id','item_listings.id');
+                    $items->where(function($templates) use ($ids,$filters,$itemFilters) {
+                        $templates->whereIn('i.template_id',$ids);
+                        if ($filters['group'] === 'other') $templates->orWhereNotIn('i.template_id',$itemFilters->knownIds());
+                    });
+                    // Every item-specific condition must match the SAME item in a combo.
+                    if (isset($filters['minStars'])) $items->where('i.filter_stars','>=',(int)$filters['minStars']);
+                    if (!empty($filters['stat'])) $items->where('i.filter_'.$filters['stat'],true);
+                });
+            }
             if (! empty($filters['bundle'])) $q->where(function ($count) use ($filters) {
                 $count->from('item_listing_items')->selectRaw('COUNT(*)')->whereColumn('listing_id', 'item_listings.id');
             }, $filters['bundle'] === 'single' ? '=' : '>', 1);
@@ -46,8 +66,10 @@ class NroShopController extends Controller
             elseif (($filters['sort'] ?? null) === 'price_desc') $q->orderByDesc('price');
 
             $page = $q->orderByDesc('id')->paginate(20);
+            $payloads = $s->listings($page->items());
             return [
-                'data' => collect($page->items())->map(fn ($i) => Arr::except($s->listing($i), ['description'])),
+                'data' => collect($page->items())->map(fn ($i) => Arr::except($payloads[$i->id], ['description']))->values(),
+                'from' => $page->firstItem(), 'to' => $page->lastItem(), 'filters' => $itemFilters->metadata(),
                 'lastPage' => $page->lastPage(), 'total' => $page->total(), 'currentPage' => $page->currentPage(),
                 'servers' => DB::table('servers')->where('status', true)->get(['id','name','name_view'])
             ];
@@ -79,7 +101,8 @@ class NroShopController extends Controller
     public function orders(Request $r, NroShopService $s)
     {
         $ids = DB::table('item_orders')->where('buyer_id', $r->user()->id)->orderByDesc('id')->paginate(20);
-        return response()->json(['data' => collect($ids->items())->map(fn ($i) => $s->order($i->id)), 'lastPage' => $ids->lastPage()]);
+        $payloads = $s->orders(collect($ids->items())->pluck('id'));
+        return response()->json(['data' => collect($ids->items())->map(fn ($i) => $payloads[$i->id])->values(), 'lastPage' => $ids->lastPage()]);
     }
     public function receive(Request $r, int $id, \App\Services\NroReceivingService $receiving, NroShopService $shop)
     {

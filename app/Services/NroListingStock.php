@@ -29,6 +29,36 @@ class NroListingStock
             ->pluck('allocated', 'inventory_item_id')->all();
     }
 
+    /**
+     * Batch counterpart of allocated(): totals per account, plus each listing's own share so a
+     * caller can subtract the listing it is describing instead of running one query per listing.
+     *
+     * @return array{0: array<int, array<int, int>>, 1: array<int, array<int, int>>}
+     */
+    public static function allocationMaps(iterable $accountIds): array
+    {
+        $rows = DB::table('item_listing_items as li')->join('item_listings as l', 'l.id', '=', 'li.listing_id')
+            ->whereIn('l.account_id', $accountIds)->where('l.status', 'active')
+            ->whereNotExists(fn ($q) => $q->selectRaw('1')->from('item_orders')->whereColumn('item_orders.listing_id', 'l.id'))
+            ->get(['l.account_id', 'li.listing_id', 'li.inventory_item_id', 'li.quantity']);
+
+        $totals = []; $own = [];
+        foreach ($rows as $row) {
+            $totals[(int) $row->account_id][(int) $row->inventory_item_id] = ($totals[(int) $row->account_id][(int) $row->inventory_item_id] ?? 0) + (int) $row->quantity;
+            $own[(int) $row->listing_id][(int) $row->inventory_item_id] = ($own[(int) $row->listing_id][(int) $row->inventory_item_id] ?? 0) + (int) $row->quantity;
+        }
+
+        return [$totals, $own];
+    }
+
+    /** Allocation seen by one listing: everything its account holds, minus that listing's own share. */
+    public static function allocationExcept(array $accountTotals, array $ownShare): array
+    {
+        foreach ($ownShare as $itemId => $quantity) $accountTotals[$itemId] = ($accountTotals[$itemId] ?? 0) - $quantity;
+
+        return $accountTotals;
+    }
+
     public static function selectable(object $item, array $allocated): int
     {
         return max(0, (int) $item->quantity - (int) $item->reserved - (int) ($allocated[$item->id] ?? 0));

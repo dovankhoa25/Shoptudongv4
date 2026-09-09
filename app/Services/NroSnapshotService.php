@@ -127,6 +127,7 @@ class NroSnapshotService
                 DB::table('nro_inventory_items')->where('account_id', $account->id)->update(['quantity' => 0, 'updated_at' => now()]);
                 foreach ($groups as $hash => $group) {
                     DB::table('nro_inventory_items')->updateOrInsert(['account_id' => $account->id, 'fingerprint' => $hash], [
+                        ...NroItemFilters::inventoryColumns($group['item']),
                         'template_id' => $group['item']['templateId'], 'item_json' => json_encode($group['item']),
                         'locations_json' => json_encode($group['locations']), 'quantity' => $group['quantity'], 'updated_at' => now(),
                     ]);

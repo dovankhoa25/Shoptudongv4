@@ -14,6 +14,6 @@ class NroAccount extends Model implements \Spatie\MediaLibrary\HasMedia
 
     protected function casts(): array
     {
-        return ['auto_publish' => 'boolean', 'publish_config' => 'array', 'locked_until' => 'datetime', 'game_password' => 'encrypted', 'last_synced_at' => 'datetime'];
+        return ['delivery_activity' => 'array', 'auto_publish' => 'boolean', 'publish_config' => 'array', 'locked_until' => 'datetime', 'game_password' => 'encrypted', 'last_synced_at' => 'datetime'];
     }
 }
