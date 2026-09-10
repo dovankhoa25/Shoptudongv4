@@ -243,7 +243,7 @@ class NroShopController extends Controller
         $accountNames = DB::table('nro_accounts')->whereIn('id', $rows->pluck('account_id')->filter()->unique())->pluck('account_name', 'id');
 
         return $this->paged($page, $rows->map(fn ($j) => ['id' => $j->id, 'account_id' => $j->account_id, 'order_id' => $j->order_id,
-            'type' => $j->type, 'status' => $j->status, 'updated_at' => $j->updated_at, 'result_json' => $j->result_json,
+            'auditOrderId' => $j->audit_order_id, 'type' => $j->type, 'status' => $j->status, 'updated_at' => $j->updated_at, 'result_json' => $j->result_json,
             'lateResults' => ($late->get($j->id) ?? collect())->take(5)->map(fn($x)=>['kind'=>$x->kind,'at'=>$x->created_at,'data'=>json_decode($x->payload_json,true)])->values(),
             'accountName' => $accountNames[$j->account_id] ?? null, 'order' => $orders[$j->order_id] ?? null])->values());
     }
@@ -521,6 +521,21 @@ class NroShopController extends Controller
         ApiCache::clearGroups(['public:nick', 'public:nro-shop:listings']);
         return response()->json(['ok' => true]);
     }
+    public function stockCheck(Request $r, int $id, \App\Services\NroOrderStockCheck $checks)
+    {
+        abort_unless($r->user()->can('item-orders.reconcile') || ($r->user()->can('nro-accounts.manage') && $r->user()->can('item-orders.view')),403);
+        $o=DB::table('item_orders')->find($id); abort_unless($o,404);
+        $this->account($r,$o->account_id);
+        if($r->isMethod('post')) {
+            $r->validate(['confirmedStopped'=>'required|accepted']);
+            $checks->request($id,$r->user());
+        } elseif($r->isMethod('delete')) {
+            $r->validate(['confirmedStopped'=>'required|accepted']);
+            $checks->cancel($id,$r->user());
+        }
+        return response()->json($checks->report($id))->header('Cache-Control','no-store');
+    }
+
     public function refund(Request $r, int $id, \App\Services\NroOrderRefund $refund)
     {
         abort_unless($r->user()->hasAnyRole(['admin','super-admin']), 403);
@@ -539,6 +554,7 @@ class NroShopController extends Controller
             $this->account($r, $aId);
             NroAccount::whereKey($aId)->lockForUpdate()->firstOrFail();
             $job = DB::table('nro_worker_jobs')->where('id', $id)->lockForUpdate()->first();
+            NroShopService::require(!DB::table('nro_worker_jobs')->where('account_id',$aId)->whereNotNull('audit_order_id')->whereIn('status',['queued','processing'])->exists(), 'Chờ tool kiểm tra kho xong trước khi chốt đối soát.');
             NroShopService::require($job->status === 'review', 'Chỉ đối soát công việc đang chờ kiểm tra.');
             NroShopService::require(!$job->lease_until || $job->lease_until < now()->toDateTimeString(), 'Chờ lease tool hết hạn và dừng tool trước khi đối soát.');
             foreach ($v['items'] ?? [] as $line) {

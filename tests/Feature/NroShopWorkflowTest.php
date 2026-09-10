@@ -1645,4 +1645,135 @@ class NroShopWorkflowTest extends TestCase
         $this->travelBack();
     }
 
+
+    public function test_order_stock_check_requires_permission_and_stopped_session_and_is_idempotent(): void
+    {
+        [$seller,$a,$buyer,$order,$job]=$this->controlsFixture(); $seller->givePermissionTo('item-orders.view');
+        $url='/admin/nro-shop/orders/'.$order.'/stock-check';
+        $seller->revokePermissionTo('item-orders.view');
+        $this->actingAs($seller,'web')->getJson($url)->assertForbidden();
+        $seller->givePermissionTo('item-orders.view');
+        $viewer=User::factory()->create(); $viewer->givePermissionTo('item-orders.view');
+        $this->actingAs($viewer,'web')->postJson($url,['confirmedStopped'=>true])->assertForbidden();
+        $other=$this->seller(); $other->givePermissionTo('item-orders.view');
+        $this->actingAs($other,'web')->getJson($url)->assertNotFound();
+        DB::table('item_orders')->where('id',$order)->update(['status'=>'review']);
+        DB::table('nro_worker_jobs')->where('id',$job['id'])->update(['status'=>'review']);
+        $this->actingAs($seller,'web')->postJson($url,['confirmedStopped'=>true])->assertUnprocessable();
+        $this->travel(4)->minutes();
+        $this->postJson($url,[])->assertUnprocessable();
+        $check=$this->postJson($url,['confirmedStopped'=>true])->assertOk()->json('check.id');
+        $this->postJson($url,['confirmedStopped'=>true])->assertOk()->assertJsonPath('check.id',$check);
+        $this->assertDatabaseHas('nro_worker_jobs',['id'=>$check,'type'=>'snapshot','order_id'=>null,'audit_order_id'=>$order,'audit_requested_by'=>$seller->id]);
+        $this->assertDatabaseHas('item_orders',['id'=>$order,'status'=>'review']);
+        $this->assertEquals(800,$buyer->fresh()->balance);
+        $this->travelBack();
+    }
+
+    public function test_stock_check_can_scan_expired_review_and_compare_stats_without_releasing_order(): void
+    {
+        [$seller,$a,$buyer,$order,$job]=$this->controlsFixture(); $seller->givePermissionTo('item-orders.view');
+        $url='/app/nro-worker/jobs/'.$job['id']; $lease=['leaseToken'=>$job['leaseToken']];
+        $this->postJson($url.'/ready',[...$lease,'characterId'=>10,'name'=>'bot','mapId'=>5,'zone'=>7,'recipientName'=>'khach'])->assertOk();
+        $this->postJson($url.'/begin-round',$lease)->assertOk();
+        $this->travel(4)->minutes();
+        $this->postJson('/app/nro-worker/claim',['protocolVersion'=>3,'types'=>['delivery']])->assertOk();
+        $admin=User::factory()->create(); $admin->assignRole('admin'); $admin->givePermissionTo('item-orders.reconcile');
+        $checkUrl='/admin/nro-shop/orders/'.$order.'/stock-check';
+        $check=$this->actingAs($admin,'web')->postJson($checkUrl,['confirmedStopped'=>true])->assertOk()->json('check.id');
+        $scan=$this->withToken($this->token)->postJson('/app/nro-worker/claim',['protocolVersion'=>3,'types'=>['snapshot']])->assertOk()->json('data');
+        $this->assertSame($check,$scan['id']); $this->assertSame('snapshot',$scan['type']);
+        $this->assertDatabaseHas('item_orders',['id'=>$order,'status'=>'review']);
+        $this->actingAs($admin,'web')->postJson('/admin/nro-shop/jobs/'.$job['id'].'/reconcile',['resolution'=>'not_delivered','note'=>'Kiểm tra chưa kết thúc.'])->assertUnprocessable();
+        $payload=$this->payload(1); $payload['completeness']['equipped']=true;
+        $payload['snapshot']['chest']=[$payload['snapshot']['bag'][0]];
+        $payload['snapshot']['chest'][0]['slot']=24;
+        // One exact item moved into chest; plenty of wrong-stat items cannot replace the other.
+        $payload['snapshot']['bag']=[$payload['snapshot']['bag'][1]];
+        $payload['snapshot']['bag'][0]['options'][0]['param']=999;
+        $this->withToken($this->token)->postJson('/app/nro-worker/jobs/'.$check.'/complete',['leaseToken'=>$scan['leaseToken'],'outcome'=>'success','payload'=>$payload])->assertOk();
+        $report=$this->actingAs($admin,'web')->getJson($checkUrl)->assertOk()->assertJsonPath('complete',true)->json();
+        $this->assertSame(1,$report['items'][0]['inStock']); $this->assertSame(0,$report['items'][0]['missing']);
+        $this->assertSame(0,$report['items'][1]['inStock']); $this->assertSame(1,$report['items'][1]['missing']);
+        $this->assertEquals(800,$buyer->fresh()->balance); $this->assertEquals(0,$seller->fresh()->balance);
+        $this->assertEquals(0,DB::table('item_order_items')->where('order_id',$order)->sum('delivered'));
+        $this->assertDatabaseHas('nro_worker_jobs',['id'=>$job['id'],'status'=>'review']);
+        $this->postJson('/admin/nro-shop/jobs/'.$job['id'].'/reconcile',['resolution'=>'not_delivered','note'=>'Đã xem log, xác minh chưa giao thêm.'])->assertOk();
+        $this->assertDatabaseHas('item_orders',['id'=>$order,'status'=>'awaiting_receipt']);
+        $this->travelBack();
+    }
+
+    public function test_incomplete_or_failed_stock_check_does_not_report_zero_stock(): void
+    {
+        [$seller,$a,$buyer,$order,$job]=$this->controlsFixture(); $seller->givePermissionTo('item-orders.view');
+        $this->postJson('/app/nro-worker/jobs/'.$job['id'].'/complete',['leaseToken'=>$job['leaseToken'],'outcome'=>'review'])->assertOk();
+        $this->travel(4)->minutes();
+        $url='/admin/nro-shop/orders/'.$order.'/stock-check';
+        $id=$this->actingAs($seller,'web')->postJson($url,['confirmedStopped'=>true])->assertOk()->json('check.id');
+        $scan=$this->withToken($this->token)->postJson('/app/nro-worker/claim',['protocolVersion'=>3,'types'=>['snapshot']])->assertOk()->json('data');
+        $this->postJson('/app/nro-worker/jobs/'.$id.'/complete',['leaseToken'=>$scan['leaseToken'],'outcome'=>'success','payload'=>$this->payload(0,false)])->assertOk();
+        $this->actingAs($seller,'web')->getJson($url)->assertOk()->assertJsonPath('complete',false)->assertJsonPath('items.0.inStock',null)->assertJsonPath('items.0.missing',null);
+        $id=$this->postJson($url,['confirmedStopped'=>true])->assertOk()->json('check.id');
+        $scan=$this->withToken($this->token)->postJson('/app/nro-worker/claim',['protocolVersion'=>3,'types'=>['snapshot']])->assertOk()->json('data');
+        $this->postJson('/app/nro-worker/jobs/'.$id.'/complete',['leaseToken'=>$scan['leaseToken'],'outcome'=>'failed','message'=>'Không đăng nhập được kho.'])->assertOk();
+        $this->actingAs($seller,'web')->getJson($url)->assertOk()->assertJsonPath('complete',false)->assertJsonPath('check.status','failed')->assertJsonPath('items.0.missing',null);
+        $this->travelBack();
+    }
+
+    public function test_stock_check_blocks_receiving_and_refund_and_does_not_starve_behind_queued_deliveries(): void
+    {
+        [$seller,$a,$buyer,$order,$job]=$this->controlsFixture(); $seller->givePermissionTo('item-orders.view');
+        $this->postJson('/app/nro-worker/jobs/'.$job['id'].'/complete',['leaseToken'=>$job['leaseToken'],'outcome'=>'review'])->assertOk();
+        $this->travel(4)->minutes();
+        // Existing waiting jobs must not monopolize the 50-candidate claim window.
+        for($i=0;$i<55;$i++) DB::table('nro_worker_jobs')->insert(['account_id'=>$a->id,'type'=>'delivery','status'=>'queued','created_at'=>now(),'updated_at'=>now()]);
+        $admin=User::factory()->create(); $admin->assignRole('admin'); $admin->givePermissionTo('item-orders.reconcile');
+        $id=$this->actingAs($admin,'web')->postJson('/admin/nro-shop/orders/'.$order.'/stock-check',['confirmedStopped'=>true])->assertOk()->json('check.id');
+        try { app(\App\Services\NroReceivingService::class)->start($buyer,$order,['mode'=>'manual','recipientName'=>'khach','requestKey'=>(string)Str::uuid()]); $this->fail('Must wait for stock check'); }
+        catch(\Illuminate\Validation\ValidationException $e) { $this->assertStringContainsString('kiểm tra tồn kho',$e->getMessage()); }
+        $this->postJson('/admin/nro-shop/orders/'.$order.'/refund',['amount'=>200,'note'=>'Đang kiểm tra tồn kho.'])->assertUnprocessable();
+        $scan=$this->withToken($this->token)->postJson('/app/nro-worker/claim',['protocolVersion'=>3,'types'=>['snapshot','delivery']])->assertOk()->json('data');
+        $this->assertSame($id,$scan['id']); $this->assertSame('snapshot',$scan['type']);
+        $this->assertEquals(800,$buyer->fresh()->balance);
+        $this->travelBack();
+    }
+
+
+    public function test_cancel_stock_check_is_safe_and_does_not_cancel_delivery_or_accept_late_stock(): void
+    {
+        [$seller,$a,$buyer,$order,$job]=$this->controlsFixture(); $seller->givePermissionTo('item-orders.view');
+        $this->postJson('/app/nro-worker/jobs/'.$job['id'].'/complete',['leaseToken'=>$job['leaseToken'],'outcome'=>'review'])->assertOk();
+        $this->travel(4)->minutes();
+        $url='/admin/nro-shop/orders/'.$order.'/stock-check';
+        $id=$this->actingAs($seller,'web')->postJson($url,['confirmedStopped'=>true])->assertOk()->json('check.id');
+        $this->deleteJson($url,['confirmedStopped'=>true])->assertOk()->assertJsonPath('check.status','failed');
+        $this->assertDatabaseHas('item_orders',['id'=>$order,'status'=>'awaiting_receipt']);
+        $id=$this->postJson($url,['confirmedStopped'=>true])->assertOk()->json('check.id');
+        $scan=$this->withToken($this->token)->postJson('/app/nro-worker/claim',['protocolVersion'=>3,'types'=>['snapshot']])->assertOk()->json('data');
+        $this->actingAs($seller,'web')->deleteJson($url,['confirmedStopped'=>true])->assertUnprocessable();
+        $this->travel(4)->minutes();
+        $this->deleteJson($url,['confirmedStopped'=>true])->assertOk();
+        $previous=$a->fresh()->latest_snapshot_id;
+        $this->withToken($this->token)->postJson('/app/nro-worker/jobs/'.$id.'/complete',['leaseToken'=>$scan['leaseToken'],'outcome'=>'success','payload'=>$this->payload(0)])->assertOk()->assertJsonPath('alreadyFinalized',true);
+        $this->assertSame($previous,$a->fresh()->latest_snapshot_id);
+        $this->assertEquals(800,$buyer->fresh()->balance);
+        $this->travelBack();
+    }
+
+    public function test_stock_check_deducts_stock_held_for_other_orders(): void
+    {
+        $seller=$this->seller(); $seller->givePermissionTo('item-orders.view'); $a=$this->warehouse($seller);
+        $shop=app(NroShopService::class); $buyer=User::factory()->create(['balance'=>1000]); $secondBuyer=User::factory()->create(['balance'=>1000]);
+        $order=$shop->purchase($buyer,$this->listing($seller,$a),'first',10,(string)Str::uuid());
+        $second=$shop->purchase($secondBuyer,$this->listing($seller,$a),'second',10,(string)Str::uuid());
+        DB::table('item_orders')->where('id',$order)->update(['status'=>'review']);
+        $checkUrl='/admin/nro-shop/orders/'.$order.'/stock-check';
+        $id=$this->actingAs($seller,'web')->postJson($checkUrl,['confirmedStopped'=>true])->assertOk()->json('check.id');
+        $scan=$this->withToken($this->token)->postJson('/app/nro-worker/claim',['protocolVersion'=>3,'types'=>['snapshot']])->assertOk()->json('data');
+        $payload=$this->payload(1); $payload['completeness']['equipped']=true;
+        $this->postJson('/app/nro-worker/jobs/'.$id.'/complete',['leaseToken'=>$scan['leaseToken'],'outcome'=>'success','payload'=>$payload])->assertOk();
+        $this->actingAs($seller,'web')->getJson($checkUrl)->assertOk()->assertJsonPath('items.0.inStock',1)->assertJsonPath('items.0.heldForOthers',1)->assertJsonPath('items.0.available',0)->assertJsonPath('items.0.missing',1);
+        $this->assertDatabaseHas('item_orders',['id'=>$order,'status'=>'review']);
+        $this->assertDatabaseHas('item_orders',['id'=>$second,'status'=>'awaiting_receipt']);
+    }
 }

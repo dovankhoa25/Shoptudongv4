@@ -20,6 +20,7 @@ class NroReceivingService
             $o = DB::table('item_orders')->where('id', $id)->lockForUpdate()->first();
             $old = DB::table('nro_delivery_sessions')->where(['order_id' => $id, 'request_key' => $v['requestKey']])->first();
             if ($old) return $old->id;
+            NroShopService::require(!DB::table('nro_worker_jobs')->where('account_id',$a->id)->whereNotNull('audit_order_id')->whereIn('status',['queued','processing'])->exists(), 'Shop đang kiểm tra tồn kho; vui lòng chờ kiểm tra xong rồi nhận đồ.');
             NroShopService::require($o->status === 'awaiting_receipt', 'Đơn đang nhận đồ hoặc cần đối soát.');
             NroShopService::require($a->status === 'active' && $a->server_id && $a->server_game_id, 'Kho cần được cấu hình server hiển thị và server đăng nhập.');
             NroShopService::require($a->publish_status !== 'login_blocked', $a->publish_error ?: 'Acc kho đang bị chặn đăng nhập. Shop cần sửa thông tin acc trước khi giao tiếp.');

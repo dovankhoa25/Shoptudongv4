@@ -4,6 +4,7 @@ import axios from 'axios';
 import { dateTime, ItemStrip, money, statusName } from '../shared';
 import { usePagedTab } from '../usePagedTab';
 import type { Order } from '../types';
+import OrderStockCheckModal from './OrderStockCheckModal';
 
 const OPEN = ['queued', 'awaiting_receipt', 'processing', 'review'];
 
@@ -18,13 +19,14 @@ const ORDER_STATUSES = [
     'expired',
 ];
 
-export default function OrdersTab({ dataVersion, canRefund }: { dataVersion: number; canRefund: boolean }) {
+export default function OrdersTab({ dataVersion, canRefund, canCheck, canReconcile }: { dataVersion: number; canRefund: boolean; canCheck: boolean; canReconcile: boolean }) {
     const { rows, loading, filters, setFilters, apply, reload } = usePagedTab<Order>(
         '/orders',
         'Không tải được danh sách đơn giao đồ',
         dataVersion,
     );
 
+    const [stockCheck, setStockCheck] = useState<Order | null>(null);
     const [refund, setRefund] = useState<Order | null>(null);
     const [saving, setSaving] = useState(false);
     const [form] = Form.useForm();
@@ -160,16 +162,18 @@ export default function OrdersTab({ dataVersion, canRefund }: { dataVersion: num
                             );
                         },
                     },
-                    ...(canRefund ? [{
-                        title: 'Xử lý', width: 140,
+                    ...(canRefund || canCheck ? [{
+                        title: 'Xử lý', width: 190,
                         render: (_: unknown, o: Order) => ['awaiting_receipt', 'review', 'processing', 'queued'].includes(o.status) ? <div>
-                            <Button size="small" danger disabled={o.status !== 'awaiting_receipt' || (!!o.session && ['queued','preparing','ready','trading','review'].includes(o.session.status))}
-                                onClick={() => { form.resetFields(); form.setFieldsValue({ amount: o.items.some(i => i.delivered > 0) ? undefined : Number(o.price) }); setRefund(o); }}>Hoàn tiền</Button>
+                            {canCheck && <Button size="small" className="mb-2" onClick={() => setStockCheck(o)}>Đối soát / Kiểm tra kho</Button>}
+                            {canRefund && <Button size="small" danger disabled={o.status !== 'awaiting_receipt' || (!!o.session && ['queued','preparing','ready','trading','review'].includes(o.session.status))}
+                                onClick={() => { form.resetFields(); form.setFieldsValue({ amount: o.items.some(i => i.delivered > 0) ? undefined : Number(o.price) }); setRefund(o); }}>Hoàn tiền</Button>}
                             {(o.status !== 'awaiting_receipt' || (!!o.session && ['queued','preparing','ready','trading','review'].includes(o.session.status))) && <div className="mt-1 text-xs text-slate-500">Kết thúc phiên / đối soát trước</div>}
                         </div> : null,
                     }] : []),
                 ]}
             />
+            {stockCheck && <OrderStockCheckModal key={stockCheck.id} order={stockCheck} canReconcile={canReconcile} onClose={() => setStockCheck(null)} onChanged={reload} />}
             <Modal title={`Hoàn tiền đơn #${refund?.id || ''}`} open={!!refund} onCancel={() => !saving && setRefund(null)}
                 okText="Xác nhận hoàn tiền" cancelText="Đóng" confirmLoading={saving} onOk={() => form.submit()}>
                 <p className="mb-3">Người mua: <strong>{refund?.buyerUsername}</strong> · Tiền đơn: {money(refund?.price || 0)}</p>

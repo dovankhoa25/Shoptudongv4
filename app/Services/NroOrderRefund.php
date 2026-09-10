@@ -21,6 +21,7 @@ class NroOrderRefund
                 NroShopService::require((int)$o->refund_amount === $amount, 'Đơn đã hoàn tiền; không thể hoàn thêm.');
                 return;
             }
+            NroShopService::require(!DB::table('nro_worker_jobs')->where('account_id',$o->account_id)->whereNotNull('audit_order_id')->whereIn('status',['queued','processing'])->exists(), 'Chờ tool kiểm tra kho xong trước khi hoàn tiền.');
             NroShopService::require($o->status === 'awaiting_receipt', 'Dừng phiên và đối soát kết quả trước khi hoàn tiền.');
             NroShopService::require(!DB::table('nro_worker_jobs')->where('order_id', $id)->whereIn('status', ['queued','processing','review'])->exists(), 'Đơn còn công việc đang chạy hoặc chờ đối soát.');
             NroShopService::require(!DB::table('nro_delivery_sessions')->where('order_id', $id)->whereIn('status', ['queued','preparing','ready','trading','review'])->exists(), 'Phiên nhận đồ chưa kết thúc hoặc chưa rõ kết quả.');

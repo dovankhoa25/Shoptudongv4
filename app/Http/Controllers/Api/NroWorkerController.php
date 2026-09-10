@@ -56,11 +56,12 @@ class NroWorkerController extends Controller
                         DB::table('nro_worker_jobs')->insert(['account_id' => $a->id, 'type' => 'snapshot', 'status' => 'queued', 'created_at' => now(), 'updated_at' => now()]);
                 }
             }
-            $candidates = DB::table('nro_worker_jobs')->where('status', 'queued')->whereIn('type', $r->input('types'))->when($r->integer('protocolVersion') >= 4 && !$r->boolean('allowNewAccount', true), fn ($q) => $q->whereIn('account_id', $r->input('activeAccountIds', [])))->orderByRaw("CASE WHEN type = 'delivery' THEN 0 ELSE 1 END")->orderBy('id')->limit(50)->get();
+            $candidates = DB::table('nro_worker_jobs')->where('status', 'queued')->whereIn('type', $r->input('types'))->when($r->integer('protocolVersion') >= 4 && !$r->boolean('allowNewAccount', true), fn ($q) => $q->whereIn('account_id', $r->input('activeAccountIds', [])))->orderByRaw("CASE WHEN audit_order_id IS NOT NULL THEN 0 WHEN type = 'delivery' THEN 1 ELSE 2 END")->orderBy('id')->limit(50)->get();
             foreach ($candidates as $candidate) {
                 $account = NroAccount::whereKey($candidate->account_id)->lockForUpdate()->first();
                 $job = DB::table('nro_worker_jobs')->where('id', $candidate->id)->lockForUpdate()->first();
                 if (!$job || $job->status !== 'queued') continue;
+                if (!$job->audit_order_id && DB::table('nro_worker_jobs')->where('account_id',$job->account_id)->whereNotNull('audit_order_id')->whereIn('status',['queued','processing'])->exists()) continue;
                 $blockedReason = !$account ? 'Acc của job không còn tồn tại.'
                     : ($account->status !== 'active' ? 'Acc đã ngừng hoạt động.'
                     : ($account->publish_status === 'login_blocked' ? ($account->publish_error ?: 'Acc đang bị chặn đăng nhập.')
@@ -85,6 +86,8 @@ class NroWorkerController extends Controller
                 // Only deliveries in the SAME running worker process may share a game session.
                 // Legacy workers, snapshot jobs and uncertain trades retain exclusive ownership.
                 if ($active->contains(function ($running) use ($r, $job) {
+                    // Explicit admin inspection only: expired review stays unresolved, but a read-only snapshot may run.
+                    if ($job->type === 'snapshot' && $job->audit_order_id && $running->status === 'review' && (!$running->lease_until || $running->lease_until < now()->toDateTimeString())) return false;
                     return $r->integer('protocolVersion') < 4 || $job->type !== 'delivery'
                         || $running->type !== 'delivery' || $running->status === 'review'
                         || $running->worker_key_id != $r->attributes->get('nro_worker_key_id')

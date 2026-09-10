@@ -99,6 +99,7 @@ export type Order = {
 };
 
 export type Job = {
+    auditOrderId?: number;
     lateResults?: { kind: string; at: string; data: unknown }[];
     id: number;
     account_id: number;

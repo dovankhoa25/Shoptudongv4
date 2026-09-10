@@ -173,7 +173,7 @@ export default function NroShop({
             key: 'orders',
             label: `Đơn giao đồ (${stats.orders})`,
             show: caps.orders,
-            children: <OrdersTab dataVersion={dataVersion} canRefund={caps.refund} />,
+            children: <OrdersTab dataVersion={dataVersion} canRefund={caps.refund} canCheck={caps.reconcile || caps.manageAccounts} canReconcile={caps.reconcile} />,
         },
         {
             key: 'jobs',

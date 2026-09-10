@@ -107,7 +107,7 @@ export default function JobsTab({
                             </>
                         ),
                     },
-                    { title: 'Loại', dataIndex: 'type', width: 120, render: jobType },
+                    { title: 'Loại', dataIndex: 'type', width: 140, render: (type, j: Job) => j.auditOrderId ? `Kiểm tra kho · Đơn #${j.auditOrderId}` : jobType(type) },
                     {
                         title: 'Trạng thái',
                         dataIndex: 'status',
