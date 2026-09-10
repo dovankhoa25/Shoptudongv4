@@ -46,26 +46,37 @@ class UserRealtimeNotifier
         string $message,
         ?int $remainingDailyLimit = null,
     ): void {
-        $payload = [
-            'amount' => $amount,
-            'balance' => $balance,
-        ];
+        if(\Illuminate\Support\Facades\DB::transactionLevel()>0) {
+            \Illuminate\Support\Facades\DB::afterCommit(fn()=>$this->publishBalance($userId,$amount,$balance,$message,$remainingDailyLimit));return;
+        }
+        $this->publishBalance($userId,$amount,$balance,$message,$remainingDailyLimit);
+    }
+    private function publishBalance(int $userId,int $amount,int $balance,string $message,?int $remainingDailyLimit): void {
+        try {
+        $snapshot=UserBalanceSnapshot::read($userId);
+        if(!$snapshot)return;
+        $key='balance:notified:'.$userId.':'.$snapshot['balance_revision'];
+        if(!\Illuminate\Support\Facades\Cache::add($key,true,3600))return;
+        $payload = ['amount'=>$amount,...$snapshot];
         if ($remainingDailyLimit !== null) {
             $payload['remaining_daily_limit'] = max(0, $remainingDailyLimit);
         }
 
-        $this->send(new UserEvent(
+        $sent=$this->send(new UserEvent(
             userId: $userId,
             type: 'update_balance',
             message: $message,
             payload: $payload,
         ));
+        if(!$sent) \Illuminate\Support\Facades\Cache::forget($key);
+        } catch(Throwable $exception) {Log::warning('Balance realtime failed',['user_id'=>$userId,'error'=>$exception->getMessage()]);}
     }
 
-    private function send(UserEvent $event): void
+    private function send(UserEvent $event): bool
     {
         try {
             broadcast($event);
+            return true;
         } catch (Throwable $exception) {
             // Realtime không được làm hỏng giao dịch chính.
             Log::warning('User realtime broadcast failed', [
@@ -73,6 +84,7 @@ class UserRealtimeNotifier
                 'type' => $event->type,
                 'error' => $exception->getMessage(),
             ]);
+            return false;
         }
     }
 }

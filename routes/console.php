@@ -16,6 +16,7 @@ Schedule::command('stats:compute')->everyThirtyMinutes();
 
 // Schedule command xóa nick cũ chạy hàng ngày lúc 3:00 AM
 Schedule::command('nicks:clean-old')->dailyAt('03:00');
+Schedule::command('nro:recover-receipts')->everyMinute()->withoutOverlapping();
 Schedule::command('gold:cancel-stale')->everyMinute()->withoutOverlapping();
 Schedule::command('chat:purge-attachments')->dailyAt('04:30')->withoutOverlapping();
 Schedule::call(function (): void {

@@ -35,3 +35,7 @@ Broadcast::channel('authenticated', function ($user) {
 Broadcast::channel('Admin.realtime', function (User $user): bool {
     return $user->canViewAllAdminData();
 });
+
+Broadcast::channel('Admin.View.{id}', function (User $user,string $id): bool {
+    return !$user->isLocked() && \Illuminate\Support\Facades\DB::table('admin_live_views')->where('id',$id)->where('user_id',$user->id)->where('credential_hash',app(ChatRealtimeChannel::class)->webCredentialHash(request()))->where('expires_at','>',now())->exists();
+});

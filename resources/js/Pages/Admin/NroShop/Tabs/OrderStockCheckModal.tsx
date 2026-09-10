@@ -1,5 +1,7 @@
+import { useLiveView } from '@/Realtime/useLiveView';
 import { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
+import { echo } from '@laravel/echo-react';
 import { Alert, Button, Checkbox, Form, Input, InputNumber, Modal, Select, Spin, Table, Tag, message } from 'antd';
 import { NroIcon } from '@/Components/Nro/NroSnapshot';
 import type { Order } from '../types';
@@ -30,17 +32,7 @@ export default function OrderStockCheckModal({ order, canReconcile, onClose, onC
             form.setFieldsValue({ jobId: data.reviewJobs[0].id, items: data.items.map(i => ({ id: i.id, delivered: i.delivered })) });
         }
     };
-    useEffect(() => {
-        const controller = new AbortController(); let timer: ReturnType<typeof setTimeout>;
-        const load = async () => {
-            const id = ++requestId.current;
-            try { const { data } = await axios.get<Report>(url, { signal: controller.signal }); if (id === requestId.current) apply(data); }
-            catch (e: any) { if (!controller.signal.aborted && id === requestId.current) setError(e.response?.data?.message || 'Không tải được kết quả kiểm tra.'); }
-            finally { if (!controller.signal.aborted) timer = setTimeout(load, 5000); }
-        };
-        void load();
-        return () => { controller.abort(); clearTimeout(timer); };
-    }, [url]);
+    const live = useLiveView<Report>(url,apply);
     const check = async () => {
         setBusy(true); const id = ++requestId.current;
         try { const { data } = await axios.post<Report>(url, { confirmedStopped: stopped }); if (id === requestId.current) apply(data); message.success('Đã yêu cầu tool kiểm tra kho'); onChanged(); }
@@ -63,7 +55,7 @@ export default function OrderStockCheckModal({ order, canReconcile, onClose, onC
         {report && <>
             <div className="my-3 rounded-lg border border-slate-300 p-3 dark:border-slate-700">
                 {report.check && <p className="mb-2 text-xs">Kiểm tra #{report.check.id} · <Tag>{statusName[report.check.status] || report.check.status}</Tag> · {report.check.requestedBy} · {dateTime(report.check.requestedAt)}</p>}
-                {report.checking ? <p className="text-sm text-sky-600">Đang chờ tool / đang kiểm tra kho. Cửa sổ tự cập nhật mỗi 5 giây. Nếu tool đang tắt, hãy bật để nhận công việc quét.</p> : <>
+                {report.checking ? <p className="text-sm text-sky-600">Đang chờ tool / đang kiểm tra kho. Cửa sổ cập nhật khi tool gửi kết quả. Nếu tool đang tắt, hãy bật để nhận công việc quét.</p> : <>
                     {['review', 'awaiting_receipt'].includes(report.order.status) && <>
                         <Checkbox checked={stopped} onChange={e => setStopped(e.target.checked)}>Tôi đã dừng phiên game cũ của acc kho, không có lượt giao đang diễn ra.</Checkbox>
                         <div className="mt-2"><Button type="primary" loading={busy} disabled={!stopped} onClick={check}>{report.check ? 'Kiểm tra kho lại bằng tool' : 'Kiểm tra acc bằng tool'}</Button></div>
@@ -91,7 +83,7 @@ export default function OrderStockCheckModal({ order, canReconcile, onClose, onC
                 setBusy(true); ++requestId.current;
                 try {
                     const { jobId, ...body } = v; await axios.post(`${base}/jobs/${jobId}/reconcile`, body);
-                    message.success('Đã chốt đối soát. Có thể nhận lại hoặc hoàn tiền nếu còn phần chưa giao.');
+                    message.success('Đã chốt đối soát. Đã nhận một phần thì tiếp tục nhận phần còn lại; chỉ đơn chưa giao món nào mới có thể hoàn tiền.');
                     onChanged(); onClose();
                 } catch (e: any) { message.error(e.response?.data?.message || 'Chưa chốt được đối soát.'); }
                 finally { setBusy(false); }
@@ -109,7 +101,7 @@ export default function OrderStockCheckModal({ order, canReconcile, onClose, onC
                 <p className="mb-3 text-xs text-amber-600">Chỉ chốt khi đã xác minh số đồ khách thực nhận. Kiểm tra tồn kho không thay thế lịch sử giao. Nếu chưa rõ, giữ trạng thái đối soát.</p>
                 <Button type="primary" htmlType="submit" disabled={report.checking} loading={busy}>Xác nhận đối soát</Button>
             </Form>}
-            {!report.reviewJobs.length && report.order.status === 'awaiting_receipt' && <p className="mt-3 text-sm">Đơn đang chờ nhận. Khách có thể yêu cầu nhận lại; admin có thể đóng cửa sổ và chọn Hoàn tiền sau khi đã kiểm tra.</p>}
+            {!report.reviewJobs.length && report.order.status === 'awaiting_receipt' && <p className="mt-3 text-sm">Đơn đang chờ nhận. Khách có thể yêu cầu nhận lại; chỉ đơn chưa giao món nào mới có thể được admin hoàn tiền sau khi kiểm tra.</p>}
         </>}
     </Modal>;
 }

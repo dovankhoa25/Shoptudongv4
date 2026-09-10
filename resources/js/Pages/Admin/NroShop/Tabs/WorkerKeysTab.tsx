@@ -1,3 +1,4 @@
+import { useLiveView } from '@/Realtime/useLiveView';
 import { useEffect, useState } from 'react';
 import axios from 'axios';
 import { Alert, Button, Input, Modal, Space, Table, Tag, message } from 'antd';
@@ -16,22 +17,8 @@ export default function WorkerKeysTab({
     const [keyName, setKeyName] = useState('Máy NRO');
     const [newKey, setNewKey] = useState('');
 
-    const load = async () => {
-        setLoading(true);
-        try {
-            const { data } = await axios.get(`${base}/worker-keys`);
-            setKeys(data.data);
-        } catch {
-            message.error('Không tải được danh sách API key');
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    useEffect(() => {
-        void load();
-    }, []);
-
+    const live=useLiveView<{data:WorkerKey[]}>(`${base}/worker-keys`,data=>{setKeys(data.data);setLoading(false);});
+    const load=live.sync;
     return (
         <div className="space-y-4">
             <Alert
@@ -54,7 +41,7 @@ export default function WorkerKeysTab({
                         run(async () => {
                             const { data } = await axios.post(`${base}/worker-keys`, { name: keyName });
                             setNewKey(data.token);
-                            await load();
+
                         }, 'Đã tạo API key')
                     }
                 >
@@ -101,7 +88,7 @@ export default function WorkerKeysTab({
                                             onOk: () =>
                                                 run(async () => {
                                                     await axios.delete(`${base}/worker-keys/${k.id}`);
-                                                    await load();
+                        
                                                 }, 'Đã thu hồi key'),
                                         })
                                     }

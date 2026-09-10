@@ -22,3 +22,6 @@
 
 0.0.9
 -- tối ưu dữ liệu
+
+0.1.0
+- big update

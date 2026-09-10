@@ -1,6 +1,8 @@
+import { useLiveView } from '@/Realtime/useLiveView';
+import { balanceEventPatch, mergeBalanceProfile } from '@/Realtime/balanceSnapshot';
 // resources/js/Layouts/Admin/Header.tsx - Simple version
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { usePage } from '@inertiajs/react';
+import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { router, usePage } from '@inertiajs/react';
 import { useEcho } from '@laravel/echo-react';
 import { PageProps } from '@/types';
 import NotificationDropdown from './components/NotificationDropdown';
@@ -18,6 +20,7 @@ interface UserBalanceEvent {
     type: string;
     payload?: {
         balance?: number | string;
+        balance_revision?: number;
         remaining_daily_limit?: number | string;
     };
 }
@@ -25,6 +28,7 @@ interface UserBalanceEvent {
 interface LocalBalanceEventDetail {
     user_id?: number | string;
     balance?: number | string;
+    balance_revision?: number;
     remaining_daily_limit?: number | string;
 }
 
@@ -43,16 +47,21 @@ export default function Header({ title, onMenuClick, isMenuCollapsed = false }: 
     const roles = props.auth.roles;
     const [liveBalance, setLiveBalance] = useState(() => Number(user?.balance ?? 0));
 
-    useEffect(() => {
-        setLiveBalance(Number(user?.balance ?? 0));
-    }, [user?.balance, user?.id]);
+    const liveUser=useRef<{id:number|string;balance:number;balance_revision?:number}>({id:user.id,balance:Number(user.balance)});
+    useEffect(()=> {
+        const incoming=user as typeof user & {balance_revision?:number};
+        liveUser.current=String(liveUser.current.id)===String(user.id) ? mergeBalanceProfile(liveUser.current,{id:user.id,balance:Number(user.balance),balance_revision:incoming.balance_revision}) : {id:user.id,balance:Number(user.balance),balance_revision:incoming.balance_revision};
+        setLiveBalance(Number(liveUser.current.balance));
+    },[user]);
 
     const handleUserEvent = useCallback((event: UserBalanceEvent) => {
         if (event.type !== 'update_balance'
             || (event.userId && Number(event.userId) !== Number(user?.id))) return;
 
-        const balance = Number(event.payload?.balance);
-        if (Number.isFinite(balance)) setLiveBalance(balance);
+        const patch=balanceEventPatch(liveUser.current,event.userId,event.payload || {});
+        if(!patch)return;
+        liveUser.current={...liveUser.current,...patch};setLiveBalance(patch.balance);
+        router.replace({props:current=>({...current,auth:{...(current.auth as any),user:{...(current.auth as any).user,...patch}}}),preserveState:true,preserveScroll:true});
         dispatchTipPayerState(event.payload);
     }, [user?.id]);
 
@@ -61,15 +70,15 @@ export default function Header({ title, onMenuClick, isMenuCollapsed = false }: 
             const detail = (event as CustomEvent<LocalBalanceEventDetail>).detail;
             if (detail?.user_id && Number(detail.user_id) !== Number(user?.id)) return;
 
-            const balance = Number(detail?.balance);
-            if (Number.isFinite(balance)) setLiveBalance(balance);
+            const patch=balanceEventPatch(liveUser.current,detail?.user_id ?? user.id,detail || {});
+            if(patch){liveUser.current={...liveUser.current,...patch};setLiveBalance(patch.balance);}
         };
 
         window.addEventListener('user:balance-updated', handleLocalBalance);
         return () => window.removeEventListener('user:balance-updated', handleLocalBalance);
     }, [user?.id]);
 
-    useEcho<UserBalanceEvent>(`User.${user.id}`, '.UserEvent', handleUserEvent, [handleUserEvent]);
+    useLiveView<{balance:number;balance_revision:number}>(user?.id?'/admin/live-balance':null,payload=>handleUserEvent({userId:user.id,type:'update_balance',payload}));
 
     const userWithLiveBalance = useMemo(
         () => ({ ...user, balance: liveBalance }),

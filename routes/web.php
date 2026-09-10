@@ -883,3 +883,12 @@ Route::middleware(['guest', 'throttle:10,1'])->group(function (): void {
 });
 
 require __DIR__.'/auth.php';
+
+Route::prefix('admin/live-views')->middleware(['auth','unlocked.user','throttle:120,1'])->group(function () {
+    Route::post('/', [\App\Http\Controllers\Admin\LiveViewController::class,'store']);
+    Route::post('{id}/sync', [\App\Http\Controllers\Admin\LiveViewController::class,'sync'])->whereUuid('id');
+    Route::patch('{id}', [\App\Http\Controllers\Admin\LiveViewController::class,'renew'])->whereUuid('id');
+    Route::delete('{id}', [\App\Http\Controllers\Admin\LiveViewController::class,'destroy'])->whereUuid('id');
+});
+
+Route::get('/admin/live-balance',fn(\Illuminate\Http\Request $r)=>response()->json(\App\Services\UserBalanceSnapshot::read((int)$r->user()->id))->header('Cache-Control','no-store'))->middleware(['auth','unlocked.user']);

@@ -215,7 +215,7 @@ class CardRechargeApiTest extends TestCase
         $this->assertDatabaseCount('transactions', 0);
     }
 
-    public function test_callback_ingress_is_logged_before_request_validation(): void
+    public function test_invalid_callback_is_rejected_without_the_disabled_temporary_ingress_probe(): void
     {
         Log::spy();
 
@@ -224,16 +224,7 @@ class CardRechargeApiTest extends TestCase
             'status' => 99,
         ])->assertUnprocessable();
 
-        Log::shouldHaveReceived('info')
-            ->once()
-            ->with(
-                'TEMP card partner callback reached Laravel before validation',
-                \Mockery::on(fn (array $context): bool => $context['request_id'] === 123
-                    && $context['partner_status'] === 99
-                    && in_array('request_id', $context['present_fields'], true)
-                    && in_array('status', $context['present_fields'], true)
-                    && ! in_array('code', $context['present_fields'], true)
-                    && ! array_key_exists('callback_sign', $context)),
-            );
+        // routes/api.php intentionally disables the temporary production ingress probe.
+        Log::shouldNotHaveReceived('info', ['TEMP card partner callback reached Laravel before validation', \Mockery::any()]);
     }
 }

@@ -80,7 +80,7 @@ class NroShopController extends Controller
                 'data' => collect($page->items())->map(fn ($i) => Arr::except($payloads[$i->id], ['description']))->values(),
                 'from' => $page->firstItem(), 'to' => $page->lastItem(), 'filters' => $itemFilters->metadata(),
                 'lastPage' => $page->lastPage(), 'total' => $page->total(), 'currentPage' => $page->currentPage(),
-                'servers' => DB::table('servers')->where('status', true)->get(['id','name','name_view'])
+                'servers' => ApiCache::remember('public:nro-metadata','server-metadata',60,fn()=>DB::table('servers')->where('status',true)->get(['id','name','name_view']))
             ];
         });
         return response()->json($payload);
@@ -105,7 +105,7 @@ class NroShopController extends Controller
     {
         $v = $r->validate(['listingId' => 'required|integer', 'recipientName' => ['nullable','string','max:50','regex:/^[\pL\pN_]+$/u'],
             'serverId' => 'required|integer|exists:servers,id', 'requestKey' => 'required|uuid']);
-        return response()->json(['data' => $s->order($s->purchase($r->user(), $v['listingId'], $v['recipientName'] ?? '', $v['serverId'], $v['requestKey']))]);
+        return response()->json(['data' => $this->freshOrder($s->purchase($r->user(), $v['listingId'], $v['recipientName'] ?? '', $v['serverId'], $v['requestKey']))]);
     }
     public function orders(Request $r, NroShopService $s)
     {
@@ -113,12 +113,21 @@ class NroShopController extends Controller
         $payloads = $s->orders(collect($ids->items())->pluck('id'));
         return response()->json(['data' => collect($ids->items())->map(fn ($i) => $payloads[$i->id])->values(), 'lastPage' => $ids->lastPage()]);
     }
+    public function cancel(Request $r, int $id, \App\Services\NroOrderRefund $refund, NroShopService $shop) {
+        $refund->request($id,$r->user());
+        return response()->json(['data'=>$this->freshOrder($id)])->header('Cache-Control','no-store');
+    }
     public function receive(Request $r, int $id, \App\Services\NroReceivingService $receiving, NroShopService $shop)
     {
         $v = $r->validate(['requestKey' => 'required|uuid', 'mode' => 'required|in:manual,auto',
             'recipientName' => ['required_if:mode,manual','nullable','string','max:50','regex:/^[\pL\pN_]+$/u'],
             'username' => 'required_if:mode,auto|nullable|string|max:141', 'password' => 'required_if:mode,auto|nullable|string|max:64']);
         $receiving->start($r->user(), $id, $v);
-        return response()->json(['data' => $shop->order($id)])->header('Cache-Control', 'no-store');
+        return response()->json(['data' => $this->freshOrder($id)])->header('Cache-Control', 'no-store');
+    }
+    private function freshOrder(int $id): array
+    {
+        [, $orders]=app(\App\Services\NroRealtimePublisher::class)->snapshot([$id]);
+        return $orders[$id];
     }
 }

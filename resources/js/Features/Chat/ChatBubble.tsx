@@ -1,3 +1,4 @@
+import { useLiveView } from '@/Realtime/useLiveView';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, usePage } from '@inertiajs/react';
 import { echo } from '@laravel/echo-react';
@@ -99,7 +100,9 @@ export default function ChatBubble({ mode, baseUrl }: ChatBubbleProps) {
     const unreadRefreshTimerRef = useRef<number | null>(null);
     const seenMessageIdsRef = useRef<Set<number>>(new Set());
 
+    useLiveView<PaginatedChatConversations>(mode==='agent' && !hidden && !open ? `${baseUrl}/conversations?per_page=1&view=active${canViewAllChats?'':'&assignment=mine'}` : null,data=>{setUnread(data.unread_total);});
     const loadUnread = useCallback(async () => {
+        if(mode==='agent')return;
         const requestGeneration = ++unreadRequestGenerationRef.current;
         const controller = new AbortController();
         unreadAbortRef.current?.abort();
@@ -108,8 +111,8 @@ export default function ChatBubble({ mode, baseUrl }: ChatBubbleProps) {
             const response = await window.axios.get<PaginatedChatConversations>(`${baseUrl}/conversations`, {
                 params: {
                     per_page: 1,
-                    assignment: mode === 'agent' && !canViewAllChats ? 'mine' : undefined,
-                    view: mode === 'agent' ? 'active' : undefined,
+                    assignment: undefined,
+                    view: undefined,
                 },
                 signal: controller.signal,
             });
@@ -134,6 +137,7 @@ export default function ChatBubble({ mode, baseUrl }: ChatBubbleProps) {
     }, [hidden, loadUnread, open]);
 
     const scheduleUnreadRefresh = useCallback(() => {
+        if(mode==='agent')return;
         unreadRequestGenerationRef.current += 1;
         unreadAbortRef.current?.abort();
         unreadAbortRef.current = null;
@@ -142,11 +146,11 @@ export default function ChatBubble({ mode, baseUrl }: ChatBubbleProps) {
             unreadRefreshTimerRef.current = null;
             void loadUnread();
         }, 100);
-    }, [loadUnread]);
+    }, [loadUnread,mode]);
 
     useEffect(() => {
         const refreshUnread = (event: Event) => {
-            if (open || hidden) return;
+            if (mode==='agent' || open || hidden) return;
             const delta = (event as CustomEvent<{ delta?: number }>).detail?.delta;
             if (typeof delta === 'number') {
                 setUnread(previous => Math.max(0, previous + delta));
@@ -157,7 +161,7 @@ export default function ChatBubble({ mode, baseUrl }: ChatBubbleProps) {
         window.addEventListener('chat:unread-changed', refreshUnread);
 
         return () => window.removeEventListener('chat:unread-changed', refreshUnread);
-    }, [hidden, open, scheduleUnreadRefresh]);
+    }, [hidden, open, mode, scheduleUnreadRefresh]);
 
     const handleInbox = useCallback(() => {
         scheduleUnreadRefresh();
@@ -207,7 +211,7 @@ export default function ChatBubble({ mode, baseUrl }: ChatBubbleProps) {
         };
         connection.bind('state_change', handleStateChange);
         return () => connection.unbind('state_change', handleStateChange);
-    }, [hidden, open, scheduleUnreadRefresh]);
+    }, [hidden, open, mode, scheduleUnreadRefresh]);
 
     useEffect(() => {
         const handleVisibilityChange = () => {
@@ -215,7 +219,7 @@ export default function ChatBubble({ mode, baseUrl }: ChatBubbleProps) {
         };
         document.addEventListener('visibilitychange', handleVisibilityChange);
         return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-    }, [hidden, open, scheduleUnreadRefresh]);
+    }, [hidden, open, mode, scheduleUnreadRefresh]);
 
     if (hidden || !currentUserId || (mode === 'agent' && !props.auth.is_super_admin && !permissions.includes('chats.view'))) {
         return null;
@@ -223,7 +227,7 @@ export default function ChatBubble({ mode, baseUrl }: ChatBubbleProps) {
 
     return (
         <div className="fixed bottom-4 right-4 z-[70] sm:bottom-6 sm:right-6">
-            {!open && channel && (
+            {mode==='customer' && !open && channel && (
                 <BubbleSubscription
                     channel={channel}
                     onInbox={handleInbox}

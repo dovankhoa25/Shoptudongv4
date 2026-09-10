@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import axios from 'axios';
-import { Alert, Button, Form, Input, InputNumber, Modal, Select } from 'antd';
+import { Alert, Button, Checkbox, Form, Input, InputNumber, Modal, Select } from 'antd';
 import type { FormInstance } from 'antd';
 import { base } from '../shared';
 import type { Account, LoginServer, Server } from '../types';
@@ -75,6 +75,8 @@ export function PasswordModal({
     run: Run;
 }) {
     const [password, setPassword] = useState('');
+    const [confirmedStopped,setConfirmedStopped]=useState(false);
+    useEffect(() => { setPassword(''); setConfirmedStopped(false); }, [account?.id]);
 
     return (
         <Modal
@@ -88,7 +90,7 @@ export function PasswordModal({
             okButtonProps={{ disabled: !password }}
             onOk={() =>
                 run(async () => {
-                    await axios.patch(`${base}/accounts/${account?.id}/password`, { password });
+                    await axios.patch(`${base}/accounts/${account?.id}/password`, { password, confirmedStopped });
                     onClose();
                     setPassword('');
                 }, 'Đã cập nhật mật khẩu')
@@ -98,6 +100,7 @@ export function PasswordModal({
                 Nhập mật khẩu hiện tại trong game. Thao tác này cập nhật thông tin đăng nhập đã lưu trên web, không đổi
                 mật khẩu tại game.
             </p>
+            <Checkbox className="mb-3" checked={confirmedStopped} onChange={e=>setConfirmedStopped(e.target.checked)}>Nếu kho còn đơn đối soát: tôi đã dừng phiên game cũ. Chỉ sửa mật khẩu để kiểm tra kho, giữ nguyên kết quả đơn.</Checkbox>
             <Input.Password
                 value={password}
                 maxLength={64}

@@ -95,3 +95,68 @@ bỏ ô check giao dịch đồ mặc định tool sinh ra để làm thì bật
 sau tất cả chức năng tối ưu hệ thống không làm triền miên gây lag web v.v kể cả client lẫn backend đều không poling chỗ nào cần cache cứ cache 
 tối ưu hệ thống mượt mà 
 
+
+
+# Cập nhật luồng giao đồ NRO — 11/09/2026
+
+Đã áp dụng mã nguồn vào backend `wegamenew-backend`, tool trong `NRO_NATIVE_SLEEP_247/qltk` và client `shophhp.net v4`. Chưa đồng bộ mã ứng dụng sang 123nick hoặc vanghhp.
+
+## Quy tắc đã áp dụng
+
+- Kho bị chặn đăng nhập vẫn cho mua nếu gói và tồn kho hợp lệ. Khi nhận, khách thấy lý do công khai và thời gian chờ; thông tin đăng nhập không đưa ra client.
+- Lỗi đăng nhập tạm thời được chờ và thử lại theo thời gian game trả về. Lịch chờ theo đường kết nối được lưu qua lần tắt/bật tool. Mỗi yêu cầu quét có tối đa ba lần thử đăng nhập; khi thất bại phải bấm lấy dữ liệu lại, không tự tạo tiếp ba job mới.
+- Đơn chưa giao món nào, gặp thiếu đồ hoặc lỗi đăng nhập, có thể yêu cầu hủy. Backend chờ phiên dừng an toàn rồi hoàn đủ tiền, xử lý lặp không hoàn thêm. Tool chỉ báo kết quả, không gọi luồng hoàn tiền.
+- Đã giao một phần thì cả khách lẫn admin đều không được hoàn tiền. Giữ phần chưa giao, shop bổ sung đúng món/chỉ số và cập nhật kho để khách nhận tiếp.
+- Hoàn tiền không tự đưa gói cũ lên bán lại. Số đồ được giải phóng về kho chưa đăng; cần cập nhật kho trước lần bán tiếp.
+- Một acc kho dùng chung nhiều đơn, mỗi lượt giao/mở rương/di chuyển được tuần tự hóa. Nhận hộ và khách tự đến cùng chia lượt; không luôn ưu tiên một chế độ.
+- Lấy đồ từ rương tìm lại theo ID, option/chỉ số và nội dung trên dữ liệu mới. Ô chỉ là vị trí hiện tại để gửi thao tác game. Đồ giống hệt được cộng số lượng hoặc chọn món tương đương.
+- Bot chuẩn bị túi, có thể cất món chưa cần để lấy đồ cho đơn. Gói lớn được giao từng lượt; sau mỗi lượt xác nhận số đã nhận rồi tiếp tục phần còn lại. Khách tự đến cần mời lại khi bot trở về sau chuyến lấy đồ.
+- Thời gian chờ nhận vẫn 30 phút, không tính thời gian bot đi lấy đồ; giới hạn khóa/xác nhận giao dịch vẫn 20 giây mỗi bước.
+- Hết giờ chỉ kết thúc phiên nhận, không xóa đơn, không giải phóng phần đồ khách chưa nhận.
+- Mất kết nối trước lượt giao có thể nối lại cùng phiên, giữ người nhận và thời hạn. Lượt đang giao chưa xác nhận giữ đối soát, không tự giao lại.
+- Game đã xác nhận nhưng API lỗi: lưu journal bền vững và gửi lại kết quả. Lỗi từ chối kết quả được báo lên backend; không biến thành giao lại hay tự hoàn tiền.
+
+## Admin, client và QLTK
+
+- Đơn giao đồ có kiểm tra kho/đối soát và nút hoàn tiền theo điều kiện an toàn. Đơn đã nhận một phần hiển thị cần bổ sung để giao đủ.
+- Có thể sửa mật khẩu kho còn đơn đối soát khi phiên cũ đã hết quyền giữ và người vận hành xác nhận đã dừng game cũ. Việc sửa mật khẩu không tự chốt kết quả hoặc di chuyển tiền.
+- Client Shophhp hiển thị chờ đăng nhập, lý do lỗi, yêu cầu hủy, phần đã nhận và trạng thái bot. Điểm nhận cũ bị ẩn khi chưa xác nhận bot còn online.
+- Realtime làm mới khi có thay đổi, kết nối lại hoặc quay về trang. Có tín hiệu gia hạn online từ backend khi bot chờ lâu; trình duyệt không chạy vòng gọi HTTP định kỳ. Bộ đếm giây chỉ cập nhật giao diện cục bộ.
+- QLTK: một acc online một dòng, bên dưới là từng phiên đang chờ/đang giao. Hoàn tất thì gỡ phiên, không tích thêm dòng acc sau mỗi lần đăng nhập lại.
+- Lưu API key theo cấu hình máy vận hành; luôn bật quét và giao đồ, bỏ checkbox chế độ chỉ quét. Có nút mở thư mục log; nhật ký TXT nằm trong `history`.
+
+## Kết quả kiểm tra
+
+- Laravel: **101 test NRO đạt, 1.416 assertions**, dùng database kiểm thử SQLite, không chạy trên DB production.
+- Tool: **99 kiểm tra offline đạt**, gồm nhận diện món, journal, quản lý phiên, cooldown đăng nhập và lịch sử TXT.
+- QLTK biên dịch thành công: **0 lỗi, 0 cảnh báo**; đã kết xuất và xem bản preview với dữ liệu giả.
+- TypeScript admin và Shophhp đạt.
+- Vite admin build thành công. Có cảnh báo bundle lớn hơn 500 kB.
+- Next.js Shophhp build thành công. Lúc build, API cấu hình cho sitemap không kết nối được (`ECONNREFUSED`), nên chưa xác minh sitemap động đầy đủ.
+
+Các kiểm tra trên chưa chứng minh giao dịch game thật hoặc hoạt động trên hosting production. Trong lượt này không đăng nhập các acc thật, không tạo giao dịch thật, không chạy migration production và không triển khai hosting. Bản EXE debug dùng kiểm tra không phải gói phát hành đã bảo vệ.
+
+## Khi đưa lên hosting
+
+1. Dừng tool cũ, giữ nguyên `journal`, `history`, cấu hình và dữ liệu tài khoản đã lưu.
+2. Upload đầy đủ PHP backend và migrations đang có trong checkout, không chỉ upload thư mục build. Bản này thêm `2026_09_11_000003_add_nro_recovery_state.php`; các migration NRO trước đó cũng phải có.
+3. Tại thư mục backend chạy:
+
+   ```bash
+   composer dump-autoload -o
+   php artisan migrate --force
+   php artisan optimize:clear
+   ```
+
+4. Đảm bảo Laravel scheduler đang chạy mỗi phút. Lệnh mới `php artisan nro:recover-receipts` xử lý phiên hết hạn ngay cả khi tool tắt; đã được khai báo trong `routes/console.php`. Không dùng lệnh này để ép đơn đối soát thành đã giao.
+5. Upload assets admin đã build vào `public/build` kèm `manifest.json`. Assets xác nhận build nằm tại `admin-build` cạnh báo cáo; không ghi đè file `public/build.zip` cũ của bạn.
+6. Deploy client Shophhp và chạy tool bản mới sau backend. Giữ realtime hoạt động để khách nhận cập nhật. Nếu hosting dùng tiến trình PHP/queue chạy lâu, khởi động lại tiến trình đó theo cấu hình triển khai hiện có.
+7. Với đơn cũ đang đối soát: gửi lại journal nếu có; nếu chưa có bằng chứng thì dùng kiểm tra kho và đối chiếu lịch sử trước khi chốt. Chỉ nhìn thấy thiếu đồ trong kho không đủ kết luận khách đã nhận.
+
+## Tệp kiểm tra
+
+- `backend-test.txt`: kết quả kiểm thử Laravel.
+- `admin-build.txt`, `client-build.txt`: kết quả build.
+- `qltk-preview.png`: preview QLTK bằng dữ liệu giả.
+- `synced.json`: danh sách mã nguồn đã đồng bộ trong lần làm này.
+- `before/`: bản sao trước sửa của các tệp đã thay đổi; không tự ghi đè các thay đổi riêng khác trong checkout.

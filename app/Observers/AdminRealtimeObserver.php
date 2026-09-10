@@ -25,18 +25,17 @@ class AdminRealtimeObserver implements ShouldHandleEventsAfterCommit
     public function created(Model $model): void
     {
         $this->notify($model, 'created');
+        // Query-builder balance writes still produce a ledger row, even without a User model event.
+        if($model instanceof Transaction && $model->user_id) {
+            $notify=fn()=>app(\App\Services\UserRealtimeNotifier::class)->balanceChanged((int)$model->user_id,(int)$model->amount,0,'Số dư của bạn đã được cập nhật.');
+            \Illuminate\Support\defer($notify,'ledger-balance:'.$model->user_id);
+            if(app()->runningInConsole())app()->terminating($notify);
+        }
     }
 
     public function updated(Model $model): void
     {
-        $watchedFields = array_values(array_intersect(
-            ['status', 'bot_id', 'receiver_id', 'updated_by', 'refunded_at', 'processed_at', 'paid_at'],
-            array_keys($model->getAttributes()),
-        ));
-
-        if ($watchedFields !== [] && ! $model->wasChanged($watchedFields)) {
-            return;
-        }
+        if(array_diff(array_keys($model->getChanges()),['updated_at'])===[])return;
 
         $this->notify($model, $model->wasChanged('status') ? 'status_updated' : 'updated');
     }

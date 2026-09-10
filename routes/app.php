@@ -74,10 +74,12 @@ Route::prefix('v2')->middleware('app')->group(function () {
 Route::prefix('nro-worker')->middleware([NroWorkerKey::class, 'throttle:600,1', \App\Http\Middleware\PublishNroChanges::class])->group(function () {
     Route::get('accounts', [NroWorkerController::class, 'accounts']);
     Route::post('accounts/{id}/release', [NroWorkerController::class, 'release'])->whereNumber('id');
+    Route::post('heartbeat-batch', [NroWorkerController::class, 'heartbeatBatch']);
     Route::post('claim', [NroWorkerController::class, 'claim']);
     Route::post('jobs/{id}/warehouse-state', [NroWorkerController::class, 'warehouseState'])->whereNumber('id');
     Route::post('jobs/{id}/heartbeat', [NroWorkerController::class, 'heartbeat'])->whereNumber('id');
     Route::post('jobs/{id}/complete', [NroWorkerController::class, 'complete'])->whereNumber('id');
+    Route::post('jobs/{id}/result-issue', [NroWorkerController::class, 'resultIssue'])->whereNumber('id');
     Route::post('jobs/{id}/progress', [NroWorkerController::class, 'progress'])->whereNumber('id');
     Route::post('jobs/{id}/ready', [NroWorkerController::class, 'ready'])->whereNumber('id');
     Route::post('jobs/{id}/trade-phase', [NroWorkerController::class, 'tradePhase'])->whereNumber('id');

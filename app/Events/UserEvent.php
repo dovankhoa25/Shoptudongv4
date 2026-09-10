@@ -6,7 +6,7 @@ use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
 use Illuminate\Queue\SerializesModels;
 
-class UserEvent implements ShouldBroadcastNow
+class UserEvent implements ShouldBroadcastNow, \Illuminate\Contracts\Events\ShouldDispatchAfterCommit
 {
     use SerializesModels;
 
@@ -34,7 +34,7 @@ class UserEvent implements ShouldBroadcastNow
             'userId' => $this->userId,
             'type' => $this->type,
             'message' => $this->message,
-            'payload' => $this->payload,
+            'payload' => $this->type==='update_balance' ? array_merge($this->payload, \App\Services\UserBalanceSnapshot::read($this->userId)) : $this->payload,
         ];
     }
 

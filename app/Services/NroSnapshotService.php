@@ -33,12 +33,13 @@ class NroSnapshotService
 
     public function ingest(NroAccount $account, array $payload): NroAccountSnapshot
     {
+        $payload['completeness']['equipped'] ??= false;
         Validator::make($payload, [
             'schemaVersion' => 'required|integer|in:1', 'catalogVersion' => 'required|string|max:50',
             'snapshot' => 'required|array', 'snapshot.capturedAt' => 'required|date',
             'snapshot.character' => 'required|array', 'snapshot.character.id' => 'required|integer|min:1',
             'snapshot.character.name' => 'required|string|max:100',
-            'completeness' => 'required|array', 'completeness.bag' => 'required|boolean', 'completeness.chest' => 'required|boolean',
+            'completeness' => 'required|array', 'completeness.bag' => 'required|boolean', 'completeness.chest' => 'required|boolean', 'completeness.equipped'=>'required|boolean',
             'snapshot.currentTask' => 'nullable|array',
             'snapshot.currentTask.id' => 'sometimes|integer|min:-1|max:65535',
             'snapshot.currentTask.currentStep' => 'sometimes|integer|min:-1|max:255',
@@ -122,8 +123,10 @@ class NroSnapshotService
             $snapshot = NroAccountSnapshot::create(['account_id' => $account->id, 'schema_version' => 1,
                 'catalog_version' => $payload['catalogVersion'], 'captured_at' => $data['capturedAt'],
                 'data_json' => $data, 'summary_json' => $summary, 'completeness_json' => $payload['completeness']]);
+            $previous=$account->latest_snapshot_id ? NroAccountSnapshot::find($account->latest_snapshot_id) : null;
+            if($previous && $previous->captured_at->gt($snapshot->captured_at)) return $snapshot;
             // A partial chest response must never erase known stock or make partial inventory sellable.
-            if (($payload['completeness']['bag'] ?? false) && ($payload['completeness']['chest'] ?? false)) {
+            if (($payload['completeness']['bag'] ?? false) && ($payload['completeness']['chest'] ?? false) && ($payload['completeness']['equipped'] ?? false)) {
                 DB::table('nro_inventory_items')->where('account_id', $account->id)->update(['quantity' => 0, 'updated_at' => now()]);
                 foreach ($groups as $hash => $group) {
                     DB::table('nro_inventory_items')->updateOrInsert(['account_id' => $account->id, 'fingerprint' => $hash], [
@@ -134,8 +137,19 @@ class NroSnapshotService
                     ]);
                 }
             }
-            if ($payload['completeness']['bag'] && $payload['completeness']['chest'] && $account->publish_status === 'scan_failed') $account->update(['publish_status'=>null,'publish_error'=>null]);
-            $account->update(['snapshot_failures' => ($payload['completeness']['bag'] && $payload['completeness']['chest']) ? 0 : $account->snapshot_failures, 'latest_snapshot_id' => $snapshot->id, 'last_synced_at' => ($payload['completeness']['bag'] && $payload['completeness']['chest']) ? $snapshot->captured_at : null, 'character_name' => $data['character']['name']]);
+            if ($payload['completeness']['bag'] && $payload['completeness']['chest'] && $payload['completeness']['equipped'] && $account->publish_status === 'scan_failed') $account->update(['publish_status'=>null,'publish_error'=>null]);
+            $account->update(['snapshot_failures' => ($payload['completeness']['bag'] && $payload['completeness']['chest'] && $payload['completeness']['equipped']) ? 0 : $account->snapshot_failures, 'latest_snapshot_id' => $snapshot->id, 'last_synced_at' => ($payload['completeness']['bag'] && $payload['completeness']['chest'] && $payload['completeness']['equipped']) ? $snapshot->captured_at : null, 'character_name' => $data['character']['name']]);
+            if ($payload['completeness']['bag'] && $payload['completeness']['chest'] && $payload['completeness']['equipped']) {
+                foreach(DB::table('item_orders')->where('account_id',$account->id)->where('failure_code','missing_items')->where('status','awaiting_receipt')->where('cancel_requested',false)->get() as $order) {
+                    $enough=true;
+                    foreach(DB::table('item_order_items')->where('order_id',$order->id)->get() as $line) {
+                        $inventory=DB::table('nro_inventory_items')->find($line->inventory_item_id);
+                        $others=DB::table('item_inventory_reservations')->where('inventory_item_id',$line->inventory_item_id)->where('order_id','!=',$order->id)->where('status','held')->sum('quantity');
+                        if(!$inventory || $inventory->quantity-$others < $line->quantity-$line->delivered) { $enough=false; break; }
+                    }
+                    if($enough) DB::table('item_orders')->where('id',$order->id)->update(['failure_code'=>null,'public_failure'=>null,'refund_requested'=>false,'delivery_message'=>'Kho đã bổ sung đủ đúng vật phẩm. Bạn có thể nhận tiếp.','updated_at'=>now()]);
+                }
+            }
             return $snapshot;
         });
     }

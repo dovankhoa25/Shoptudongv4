@@ -37,6 +37,11 @@ class NroItemFilters
     }
     public function metadata(): array
     {
+        $version=hash('sha256',json_encode($this->overrides).filemtime(resource_path('nro/item-templates.json')));
+        return \App\Support\ApiCache::remember('public:nro-metadata','filters:'.$version,900,fn()=>$this->buildMetadata());
+    }
+    private function buildMetadata(): array
+    {
         $options = fn ($values) => array_map(fn ($id, $label) => ['value'=>(string)$id, 'label'=>$label], array_keys($values), array_values($values));
         $itemsByGroup = [];
         foreach (self::ITEM_GROUP_IDS as $group=>$defaults) {

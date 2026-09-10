@@ -54,67 +54,15 @@ export default function NroShop({
         if (accountStats) setStats(accountStats);
     }, [accountStats]);
 
-    /** Used after an explicit action. Background updates arrive over WebSocket. */
-    const refreshStats = useCallback(async () => {
-        try {
-            const { data } = await axios.get(`${base}/status`);
-            setStats(data);
-        } catch {
-            /* Keep the previous counts on a temporary request failure. */
-        }
-    }, []);
-
-    const reloadAccounts = () =>
-        router.reload({
-            only: ['accounts', 'accountStats', 'accountPagination', 'salePolicy'],
-            onSuccess: () => void refreshStats(),
-        });
-
-    /** Bumped after every successful write so open tabs refetch instead of showing stale rows. */
-    const [dataVersion, setDataVersion] = useState(0);
-    const realtimeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-    useEffect(() => {
-        const channel = echo().private('Nro.Admin');
-        let active = true;
-        let inFlight = false;
-        let dirty = false;
-        const refresh = () => {
-            dirty = true;
-            if (!active || inFlight || realtimeTimer.current) return;
-            realtimeTimer.current = setTimeout(() => {
-                realtimeTimer.current = null;
-                dirty = false;
-                inFlight = true;
-                router.reload({
-                    only: ['accounts', 'accountStats', 'accountPagination', 'salePolicy'],
-                    onFinish: () => {
-                        inFlight = false;
-                        if (active && dirty) refresh();
-                    },
-                });
-                setDataVersion(value => value + 1);
-            }, 350);
-        };
-        channel.listen('.NroShopUpdated', refresh);
-        channel.on('pusher:subscription_succeeded', refresh);
-        if ((channel as unknown as { subscription?: { subscribed?: boolean } }).subscription?.subscribed) refresh();
-        return () => {
-            active = false;
-            if (realtimeTimer.current) clearTimeout(realtimeTimer.current);
-            realtimeTimer.current = null;
-            channel.stopListening('.NroShopUpdated', refresh);
-            channel.stopListening('.pusher:subscription_succeeded', refresh);
-            echo().leave('Nro.Admin');
-        };
-    }, []);
-
+    const reloadAccounts = () => { window.dispatchEvent(new Event('admin:live-sync')); };
+    const dataVersion = 0;
     const run = async (action: () => Promise<unknown>, success = 'Đã lưu') => {
         setBusy(true);
         try {
             await action();
             message.success(success);
-            reloadAccounts();
-            setDataVersion(v => v + 1);
+
+
         } catch (e) {
             message.error(axios.isAxiosError(e) ? e.response?.data?.message || 'Yêu cầu thất bại' : 'Yêu cầu thất bại');
         } finally {
@@ -327,7 +275,7 @@ export default function NroShop({
                     ]}
                 />
 
-                <Tabs items={tabs} destroyOnHidden={false} />
+                <Tabs items={tabs} destroyOnHidden onChange={key=>window.dispatchEvent(new CustomEvent('admin:nro-tab',{detail:key}))} />
             </div>
         </AdminLayout>
     );

@@ -1,3 +1,4 @@
+import { useLiveView } from '@/Realtime/useLiveView';
 import { useEffect, useState } from 'react';
 import { router } from '@inertiajs/react';
 import axios from 'axios';
@@ -130,13 +131,10 @@ export default function AccountsTab({
         }
     };
 
-    // Any successful write while the detail modal is open can change what it shows — a rescan, or a
-    // change to the sellable-ID policy, which flips the "được phép bán" flags on every row.
-    useEffect(() => {
-        if (!detailOpen || !account) return;
-        void inspect(account);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [dataVersion]);
+    useLiveView<any>(account && (detailOpen || publishOpen) ? `${base}/accounts/${account.id}` : null,data=> {
+        setAccount(current=>current?{...current,status:data.status,nick:data.nick,latest_snapshot_id:data.latestSnapshotId,publishConfig:data.publishConfig,publishStatus:data.publishStatus,publishError:data.publishError}:current);
+        setSnapshot(data.snapshot);setInventory(data.inventory);
+    });
 
     const working = busy || detailLoading;
 

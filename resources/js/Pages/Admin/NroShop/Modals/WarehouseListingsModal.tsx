@@ -1,3 +1,4 @@
+import { useLiveView } from '@/Realtime/useLiveView';
 import EditListingPrice from './EditListingPrice';
 import { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
@@ -25,26 +26,10 @@ export default function WarehouseListingsModal({
     const [loading, setLoading] = useState(false);
     const request = useRef(0);
 
-    const load = async (page = 1) => {
-        if (!account) return;
-        const id = ++request.current;
-        setLoading(true);
-        try {
-            const { data } = await axios.get(`${base}/accounts/${account.id}/listings`, { params: { page } });
-            if (id === request.current) setRows(data);
-        } catch {
-            if (id === request.current) message.error('Không tải được gói đồ của acc');
-        } finally {
-            if (id === request.current) setLoading(false);
-        }
-    };
-
-    useEffect(() => {
-        if (!account) return;
-        setRows({ data: [], total: 0, page: 1, perPage: 20 });
-        void load(1);
-        // Reload whenever a different account's packages are opened.
-    }, [account?.id]);
+    const [page,setPage]=useState(1);
+    const live=useLiveView<Paged<Listing>>(account?`${base}/accounts/${account.id}/listings?page=${page}`:null,data=>{setRows(data);setLoading(false);});
+    const load=(next=1)=>{if(next===page)live.sync();else {setLoading(true);setPage(next);}};
+    useEffect(()=>{setPage(1);},[account?.id]);
 
     return (
         <Modal

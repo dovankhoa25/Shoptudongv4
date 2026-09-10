@@ -21,9 +21,14 @@ class NroReceivingService
             $old = DB::table('nro_delivery_sessions')->where(['order_id' => $id, 'request_key' => $v['requestKey']])->first();
             if ($old) return $old->id;
             NroShopService::require(!DB::table('nro_worker_jobs')->where('account_id',$a->id)->whereNotNull('audit_order_id')->whereIn('status',['queued','processing'])->exists(), 'Shop đang kiểm tra tồn kho; vui lòng chờ kiểm tra xong rồi nhận đồ.');
+            NroShopService::require(!$o->cancel_requested, 'Đơn đang chờ hủy và hoàn tiền.');
+            NroShopService::require($o->failure_code !== 'missing_items', 'Kho thiếu đồ. Chờ shop bổ sung và kiểm tra lại kho.');
             NroShopService::require($o->status === 'awaiting_receipt', 'Đơn đang nhận đồ hoặc cần đối soát.');
             NroShopService::require($a->status === 'active' && $a->server_id && $a->server_game_id, 'Kho cần được cấu hình server hiển thị và server đăng nhập.');
-            NroShopService::require($a->publish_status !== 'login_blocked', $a->publish_error ?: 'Acc kho đang bị chặn đăng nhập. Shop cần sửa thông tin acc trước khi giao tiếp.');
+            if($a->publish_status==='login_blocked') {
+                DB::table('item_orders')->where('id',$id)->update(['failure_code'=>'login_failed','public_failure'=>'Acc kho chưa thể đăng nhập. Chờ shop xử lý hoặc hủy nếu chưa nhận món nào.','delivery_message'=>'Kho chưa thể đăng nhập.','updated_at'=>now()]);
+                return 0;
+            }
             NroShopService::require(!DB::table('nro_delivery_sessions')->where('order_id', $id)->whereIn('status', ['queued', 'preparing', 'ready', 'trading', 'review'])->exists(), 'Đơn đã có phiên nhận.');
             $cooldown = DB::table('nro_delivery_sessions')->where('order_id', $id)->where('retry_at', '>', now())->max('retry_at');
             NroShopService::require(!$cooldown, 'Phiên nhận bị tạm dừng do quá thời gian giao dịch. Vui lòng đợi hết thời gian chờ rồi nhận lại.');
@@ -49,7 +54,7 @@ class NroReceivingService
                 'created_at' => now(),
                 'updated_at' => now(),
             ]);
-            DB::table('item_orders')->where('id', $id)->update(['status' => 'queued', 'delivery_message' => 'Đã yêu cầu nhận đồ; đang chờ tool.', 'updated_at' => now()]);
+            DB::table('item_orders')->where('id', $id)->update(['failure_code'=>null,'public_failure'=>null,'login_retry_at'=>null,'refund_requested'=>false,'status' => 'queued', 'delivery_message' => 'Đã yêu cầu nhận đồ; đang chờ tool.', 'updated_at' => now()]);
             DB::table('nro_worker_jobs')->insert(['account_id' => $a->id, 'order_id' => $id, 'delivery_session_id' => $session, 'type' => 'delivery', 'status' => 'queued', 'created_at' => now(), 'updated_at' => now()]);
             return $session;
         }, 3);

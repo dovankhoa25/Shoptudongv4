@@ -14,7 +14,7 @@ class ProfileResource extends JsonResource
             'username' => $this->username,
             'email' => $this->email,
             'avatar' => $this->avatar,
-            'balance' => $this->balance,
+            ...\App\Services\UserBalanceSnapshot::read((int)$this->id),
             'status' => $this->status,
             'is_locked' => $this->isLocked(),
             'locked_until' => $this->locked_until?->toISOString(),

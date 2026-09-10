@@ -13,6 +13,8 @@ class NroShopUpdated implements ShouldBroadcastNow
         public readonly string $eventId,
         public readonly bool $catalog,
         public readonly array $buyerIds = [],
+        public readonly bool $ordersPushed = false,
+        public readonly array $adminResources = ['nro'],
     ) {}
 
     public function broadcastOn(): array
@@ -31,6 +33,6 @@ class NroShopUpdated implements ShouldBroadcastNow
 
     public function broadcastWith(): array
     {
-        return ['event_id' => $this->eventId, 'catalog' => $this->catalog];
+        return ['event_id' => $this->eventId, 'catalog' => $this->catalog, ...($this->ordersPushed ? ['orders_pushed'=>true] : [])];
     }
 }

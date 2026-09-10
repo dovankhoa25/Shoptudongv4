@@ -1,65 +1,41 @@
 <?php
-
 namespace App\Support;
 
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Str;
 
 final class ApiCache
 {
-    private const GROUP_INDEX_TTL_SECONDS = 3600;
-
     public static function remember(string $group, string $key, int $ttlSeconds, callable $producer): mixed
     {
-        if (Cache::has($key)) {
-            self::recordGroupKey($group, $key, $ttlSeconds);
-
-            return Cache::get($key);
+        // Replace one generation on invalidation; concurrent writers cannot lose keys.
+        $generationKey=self::key('generation',$group);
+        $generation=Cache::get($generationKey);
+        if ($generation===null) {
+            Cache::add($generationKey,(string)Str::uuid(),now()->addYears(10));
+            $generation=Cache::get($generationKey);
         }
-
-        $value = $producer();
-        Cache::put($key, $value, $ttlSeconds);
-        self::recordGroupKey($group, $key, $ttlSeconds);
-
-        return $value;
+        // Reuse the physical key, including on file cache, instead of leaving a file per invalidation.
+        $resolved=self::key('value',$group,hash('sha256',$key));
+        if (($cached=Cache::get($resolved))!==null && ($cached['generation'] ?? null)===$generation) return $cached['value'];
+        $load=function () use ($resolved,$generation,$producer,$ttlSeconds) {
+            if (($cached=Cache::get($resolved))!==null && ($cached['generation'] ?? null)===$generation) return $cached['value'];
+            $value=$producer();Cache::put($resolved,['generation'=>$generation,'value'=>$value],$ttlSeconds);return $value;
+        };
+        try { return Cache::lock($resolved.':build',30)->block(5,$load); }
+        catch (LockTimeoutException $e) { return $producer(); }
     }
-
     public static function clearGroup(string $group): void
     {
-        $indexKey = self::groupIndexKey($group);
-        $keys = (array) Cache::get($indexKey, []);
-
-        foreach ($keys as $key) {
-            Cache::forget($key);
-        }
-
-        Cache::forget($indexKey);
+        Cache::forever(self::key('generation',$group),(string)Str::uuid());
     }
-
     public static function clearGroups(array $groups): void
     {
-        foreach ($groups as $group) {
-            self::clearGroup((string) $group);
-        }
+        foreach (array_unique($groups) as $group) self::clearGroup((string)$group);
     }
-
     public static function key(string ...$parts): string
     {
-        return 'api:v1:'.implode('|', array_map(fn ($part): string => rawurlencode((string) $part), $parts));
-    }
-
-    private static function groupIndexKey(string $group): string
-    {
-        return self::key('group', $group);
-    }
-
-    private static function recordGroupKey(string $group, string $key, int $ttlSeconds): void
-    {
-        $indexKey = self::groupIndexKey($group);
-        $keys = (array) Cache::get($indexKey, []);
-
-        if (! in_array($key, $keys, true)) {
-            $keys[] = $key;
-            Cache::put($indexKey, $keys, max(self::GROUP_INDEX_TTL_SECONDS, $ttlSeconds));
-        }
+        return 'api:v1:'.implode('|',array_map(fn($part): string=>rawurlencode((string)$part),$parts));
     }
 }

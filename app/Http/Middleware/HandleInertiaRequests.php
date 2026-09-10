@@ -22,7 +22,7 @@ class HandleInertiaRequests extends Middleware
         return [
             ...parent::share($request),
             'auth' => [
-                'user' => $user?->only(['id', 'username', 'chat_display_name', 'email', 'balance', 'avatar', 'status']),
+                'user' => ($user ? [...$user->only(['id', 'username', 'chat_display_name', 'email', 'avatar', 'status']), ...\App\Services\UserBalanceSnapshot::read((int)$user->id)] : null),
                 'roles' => $user?->getRoleNames()->values() ?? [],
                 'permissions' => $user?->getAllPermissions()->pluck('name')->values() ?? [],
                 'is_super_admin' => $user?->hasRole('super-admin') ?? false,

@@ -35,6 +35,7 @@ class AppServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->singleton(ChatRealtimeChannel::class);
+        $this->app->singleton(\App\Services\AdminLive\Updates::class);
     }
 
     // public function boot(): void
@@ -45,6 +46,11 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         Schema::defaultStringLength(191);
+        \App\Models\User::observe(\App\Observers\UserBalanceObserver::class);
+        Event::listen(\App\Events\AdminEvent::class,fn($event)=>app(\App\Services\AdminLive\Updates::class)->changed($event->resource));
+        Event::listen(\App\Events\NroShopUpdated::class,function($event){foreach($event->adminResources as $resource)app(\App\Services\AdminLive\Updates::class)->changed($resource);});
+        Event::listen(\App\Events\UserEvent::class,function($event){if($event->type==='update_balance')app(\App\Services\AdminLive\Updates::class)->changed('user_balance:'.$event->userId);});
+        foreach([\App\Events\ChatInboxUpdated::class,\App\Events\ChatMessageSent::class,\App\Events\ChatReadUpdated::class] as $event) Event::listen($event,fn()=>app(\App\Services\AdminLive\Updates::class)->changed('chat'));
 
         Relation::morphMap([
             'service_order' => ServiceOrder::class,

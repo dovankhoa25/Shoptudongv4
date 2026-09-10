@@ -11,7 +11,7 @@ class CardTypeController extends Controller
 {
     public function index(): JsonResponse
     {
-        return ApiCache::remember(
+        return response()->json(ApiCache::remember(
             'public:card-types',
             ApiCache::key('card-types'),
             600,
@@ -31,6 +31,6 @@ class CardTypeController extends Controller
             'data' => $cardTypes,
                 ];
             }
-        );
+        ));
     }
 }

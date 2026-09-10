@@ -235,6 +235,15 @@ class ChatRealtimeChannel
         return hash_hmac('sha256', $value, $key);
     }
 
+    /** Reuse canonical web-session revocation for admin live projections. */
+    public function webCredentialIsActive(int $userId, ?string $credentialHash): bool
+    {
+        if (!$credentialHash) return false;
+        $lease = ChatRealtimeSession::query()->where('user_id',$userId)->where('credential_hash',$credentialHash)
+            ->whereNull('revoked_at')->where('expires_at','>',now())->first();
+        return $lease !== null && $this->webSessionIsAuthenticated($lease);
+    }
+
     private function webSessionIsAuthenticated(ChatRealtimeSession $lease): bool
     {
         try {

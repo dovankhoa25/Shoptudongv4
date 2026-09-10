@@ -84,6 +84,7 @@ class NroShopController extends Controller
         $q = NroAccount::whereNotNull('usage_type');
         if (!$r->user()->canViewAllAdminData()) $q->where('user_id', $r->user()->id);
         $ownedIds = (clone $q)->select('id');
+        if($r->attributes->get('admin_live_props')===['accountStats']) return Inertia::render('Admin/NroShop/Index',['accountStats'=>$this->stats($r,$ownedIds)]);
         $filters = $r->validate(['q' => 'nullable|string|max:100', 'usage' => 'nullable|in:nick,warehouse', 'server' => 'nullable|integer',
             'state' => 'nullable|in:waiting,published,attention,sold,hidden', 'page' => 'nullable|integer|min:1']);
         if (!empty($filters['server'])) $filters['server'] = (int) $filters['server'];
@@ -187,7 +188,6 @@ class NroShopController extends Controller
         $rows = $page->getCollection();
         $payloads = $shop->listings($rows);
         $owners = DB::table('users')->whereIn('id', $rows->pluck('user_id')->filter()->unique())->pluck('username', 'id');
-        $late = DB::table('nro_late_results')->whereIn('job_id',$rows->pluck('id'))->orderByDesc('id')->get()->groupBy('job_id');
         $accountNames = DB::table('nro_accounts')->whereIn('id', $rows->pluck('account_id')->filter()->unique())->pluck('account_name', 'id');
 
         return $this->paged($page, $rows->map(fn ($l) => [...$payloads[$l->id], 'accountId' => $l->account_id,
@@ -350,11 +350,14 @@ class NroShopController extends Controller
     }
     public function password(Request $r, int $id)
     {
-        $a = $this->account($r, $id); $v = $r->validate(['password' => 'required|string|max:64']);
+        $a = $this->account($r, $id); $v = $r->validate(['password' => 'required|string|max:64','confirmedStopped'=>'sometimes|boolean']);
         DB::transaction(function () use ($a, $v) {
             $a = NroAccount::whereKey($a->id)->lockForUpdate()->firstOrFail();
             NroShopService::require($a->status === 'active', 'Không được đổi mật khẩu acc đã bán hoặc ngừng hoạt động.');
-            NroShopService::require(!DB::table('nro_worker_jobs')->where('account_id', $a->id)->whereIn('status', ['queued', 'processing', 'review'])->exists(), 'Chờ công việc tool kết thúc trước khi đổi thông tin đăng nhập.');
+            NroShopService::require(!DB::table('nro_worker_jobs')->where('account_id',$a->id)->where(function($q) use($v) {
+                $q->whereIn('status',['queued','processing'])->orWhere('lease_until','>=',now());
+                if(!($v['confirmedStopped'] ?? false)) $q->orWhere('status','review');
+            })->exists(),'Dừng phiên tool và chờ quyền giữ phiên hết hạn. Nếu còn đối soát, xác nhận đã dừng phiên cũ trước khi sửa mật khẩu.');
             $updates = ['game_password' => $v['password'], 'snapshot_failures'=>0];
             if ($a->publish_status === 'login_blocked') {
                 $updates['publish_status'] = $a->usage_type === 'nick' && $a->auto_publish ? 'waiting_snapshot' : null;
@@ -465,7 +468,7 @@ class NroShopController extends Controller
             NroShopService::require($a->usage_type === 'warehouse', 'Chỉ acc kho được đăng bán đồ.');
             $snapshot = NroAccountSnapshot::find($a->latest_snapshot_id);
             NroShopService::require($a->status === 'active', 'Acc không còn hoạt động, không được tạo gói đồ.');
-            NroShopService::require($snapshot && ($snapshot->completeness_json['bag'] ?? false) && ($snapshot->completeness_json['chest'] ?? false), 'Chưa lấy đủ hành trang và rương. Yêu cầu tool lấy lại dữ liệu trước khi tạo gói đồ.');
+            NroShopService::require($snapshot && ($snapshot->completeness_json['bag'] ?? false) && ($snapshot->completeness_json['chest'] ?? false) && ($snapshot->completeness_json['equipped'] ?? false) && $a->last_synced_at, 'Chưa lấy đủ hành trang, rương và trang bị. Yêu cầu tool lấy lại dữ liệu trước khi tạo gói đồ.');
             $listing = DB::table('item_listings')->insertGetId(['user_id' => $a->user_id, 'account_id' => $a->id, 'title' => $v['title'], 'description' => $v['description'] ?? '', 'price' => $v['price'], 'status' => 'active', 'created_at' => now(), 'updated_at' => now()]);
             $allocated = NroListingStock::allocated($a->id, $listing);
             foreach ($v['items'] as $line) {

@@ -18,7 +18,7 @@ class ApiUserResource extends JsonResource
             'username'         => $this->username,
             'email'            => $this->email,
             'phone'            => $this->phone ?? null,
-            'balance'          => $this->balance ?? null,
+            ...\App\Services\UserBalanceSnapshot::read((int)$this->id),
             'avatar'           => $this->avatar ?? null,
             'isEmailVerified'  => (bool) $this->hasVerifiedEmail(),
             'created_at'       => $this->created_at,

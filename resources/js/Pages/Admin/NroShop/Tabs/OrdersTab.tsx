@@ -30,7 +30,6 @@ export default function OrdersTab({ dataVersion, canRefund, canCheck, canReconci
     const [refund, setRefund] = useState<Order | null>(null);
     const [saving, setSaving] = useState(false);
     const [form] = Form.useForm();
-    const amount = Form.useWatch('amount', form);
     const partial = !!refund?.items.some(i => i.delivered > 0);
 
     return (
@@ -60,7 +59,7 @@ export default function OrdersTab({ dataVersion, canRefund, canCheck, canReconci
                 <Button onClick={() => apply({})}>Xóa lọc</Button>
                 <Button onClick={reload}>Làm mới</Button>
             </div>
-            <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">Tự cập nhật mỗi 5 giây khi đang mở tab. Mỗi bot chỉ giao một lượt; các đơn còn lại tiếp tục chờ.</p>
+            <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">Cập nhật khi có sự kiện từ tool. Mỗi bot chỉ giao một lượt; các đơn còn lại tiếp tục chờ.</p>
             <Table
                 rowKey="id"
                 loading={loading}
@@ -134,7 +133,7 @@ export default function OrdersTab({ dataVersion, canRefund, canCheck, canReconci
                                     >
                                         {statusName[o.status] || o.status}
                                     </Tag>
-                                    {o.refundRequested && <Tag color="volcano">Cần xem xét hoàn tiền</Tag>}
+                                    {o.refundRequested && <Tag color="volcano">{done > 0 ? 'Cần bổ sung để giao đủ' : 'Cần xử lý / có thể hoàn tiền'}</Tag>}
                                     {!!o.refundAmount && <div className="text-xs">Đã hoàn {money(o.refundAmount)} · {o.refundActor || 'Admin'} · {dateTime(o.refundedAt)}<div>{o.refundNote}</div></div>}
                                     <Progress
                                         percent={all ? Math.round((done / all) * 100) : 0}
@@ -166,7 +165,8 @@ export default function OrdersTab({ dataVersion, canRefund, canCheck, canReconci
                         title: 'Xử lý', width: 190,
                         render: (_: unknown, o: Order) => ['awaiting_receipt', 'review', 'processing', 'queued'].includes(o.status) ? <div>
                             {canCheck && <Button size="small" className="mb-2" onClick={() => setStockCheck(o)}>Đối soát / Kiểm tra kho</Button>}
-                            {canRefund && <Button size="small" danger disabled={o.status !== 'awaiting_receipt' || (!!o.session && ['queued','preparing','ready','trading','review'].includes(o.session.status))}
+                            {o.items.some(i=>i.delivered>0) && <div className="mb-2 text-xs text-amber-600">Đã nhận một phần · Cần giao đủ</div>}
+                            {canRefund && <Button size="small" danger disabled={o.items.some(i=>i.delivered>0) || o.status !== 'awaiting_receipt' || (!!o.session && ['queued','preparing','ready','trading','review'].includes(o.session.status))}
                                 onClick={() => { form.resetFields(); form.setFieldsValue({ amount: o.items.some(i => i.delivered > 0) ? undefined : Number(o.price) }); setRefund(o); }}>Hoàn tiền</Button>}
                             {(o.status !== 'awaiting_receipt' || (!!o.session && ['queued','preparing','ready','trading','review'].includes(o.session.status))) && <div className="mt-1 text-xs text-slate-500">Kết thúc phiên / đối soát trước</div>}
                         </div> : null,
@@ -175,9 +175,9 @@ export default function OrdersTab({ dataVersion, canRefund, canCheck, canReconci
             />
             {stockCheck && <OrderStockCheckModal key={stockCheck.id} order={stockCheck} canReconcile={canReconcile} onClose={() => setStockCheck(null)} onChanged={reload} />}
             <Modal title={`Hoàn tiền đơn #${refund?.id || ''}`} open={!!refund} onCancel={() => !saving && setRefund(null)}
-                okText="Xác nhận hoàn tiền" cancelText="Đóng" confirmLoading={saving} onOk={() => form.submit()}>
+                okText="Xác nhận hoàn tiền" cancelText="Đóng" confirmLoading={saving} okButtonProps={{ disabled: partial }} onOk={() => form.submit()}>
                 <p className="mb-3">Người mua: <strong>{refund?.buyerUsername}</strong> · Tiền đơn: {money(refund?.price || 0)}</p>
-                <Alert type="warning" showIcon message={partial ? 'Đơn đã giao một phần: nhập số tiền hoàn sau khi kiểm tra lịch sử giao.' : 'Chưa giao món nào: hoàn đủ tiền đơn.'}
+                <Alert type="warning" showIcon message={partial ? 'Đơn đã giao một phần: phải tiếp tục giao đủ, không được hoàn tiền.' : 'Chưa giao món nào: hoàn đủ tiền đơn.'}
                     description="Hoàn tiền sẽ kết thúc đơn và giải phóng số đồ chưa giao. Tool không tự hoàn tiền." />
                 <Form form={form} layout="vertical" className="mt-4" onFinish={async v => {
                     setSaving(true);
@@ -186,9 +186,8 @@ export default function OrdersTab({ dataVersion, canRefund, canCheck, canReconci
                     finally { setSaving(false); }
                 }}>
                     <Form.Item name="amount" label="Số tiền hoàn (đ)" rules={[{ required: true, message: 'Nhập số tiền cần hoàn' }]}>
-                        <InputNumber className="!w-full" min={1} max={Number(refund?.price || 0)} precision={0} disabled={!partial} />
+                        <InputNumber className="!w-full" min={1} max={Number(refund?.price || 0)} precision={0} disabled />
                     </Form.Item>
-                    {partial && amount > 0 && <p className="mb-3 text-sm">Người bán nhận phần còn lại: <strong>{money(Math.max(0, Number(refund?.price || 0) - amount))}</strong>.</p>}
                     <Form.Item name="note" label="Lý do / kết quả kiểm tra" rules={[{ required: true, min: 10, max: 250, message: 'Nhập lý do từ 10–250 ký tự' }]}>
                         <Input.TextArea rows={3} maxLength={250} showCount />
                     </Form.Item>

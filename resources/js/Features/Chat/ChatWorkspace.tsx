@@ -1,3 +1,4 @@
+import { useLiveView } from '@/Realtime/useLiveView';
 import { ChangeEvent, ClipboardEvent, FormEvent, KeyboardEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, usePage } from '@inertiajs/react';
 import { echo } from '@laravel/echo-react';
@@ -1319,6 +1320,7 @@ export default function ChatWorkspace({
     const messagesRef = useRef<ChatMessage[]>(messages);
     const internalNotesRef = useRef<ChatMessage[]>(internalNotes);
     const unreadTotalRef = useRef(unreadTotal);
+    const chatLiveSyncRef=useRef<()=>void>(()=>{});
     const fetchConversationsRef = useRef<(quiet?: boolean) => Promise<void>>(async () => undefined);
     const realtimeRefreshTimerRef = useRef<number | null>(null);
     const readTimersRef = useRef<Map<number, number>>(new Map());
@@ -1571,6 +1573,7 @@ export default function ChatWorkspace({
     }, [commitSelected, selectedId]);
 
     const fetchConversations = useCallback(async (quiet = false) => {
+        if(mode==='agent'){if(!quiet)chatLiveSyncRef.current();return;}
         if (conversationFilterSignature !== conversationFilterSignatureRef.current) return;
 
         const requestSignature = conversationFilterSignature;
@@ -1588,9 +1591,9 @@ export default function ChatWorkspace({
                 params: {
                     search: search || undefined,
                     status: status || undefined,
-                    assignment: mode === 'agent' ? assignment || undefined : undefined,
-                    view: mode === 'agent' ? inboxView : undefined,
-                    period: mode === 'agent' && inboxView === 'completed' ? completedPeriod : undefined,
+                    assignment: undefined,
+                    view: undefined,
+                    period: undefined,
                     per_page: conversationPerPage,
                 },
                 signal: controller.signal,
@@ -1598,12 +1601,10 @@ export default function ChatWorkspace({
             if (controller.signal.aborted
                 || requestGeneration !== conversationListGenerationRef.current
                 || requestSignature !== conversationFilterSignatureRef.current) return;
-            const visibleConversations = mode === 'agent'
-                ? response.data.data.filter(conversation => statusBelongsToView(conversation.status, inboxView))
-                : response.data.data;
+            const visibleConversations = response.data.data;
             const nextConversations = sortConversations(
                 visibleConversations,
-                mode === 'agent' ? inboxView : undefined,
+                undefined,
             );
             recordConversationListSnapshot(nextConversations);
             setConversations(nextConversations);
@@ -1631,6 +1632,19 @@ export default function ChatWorkspace({
         }
     }, [assignment, baseUrl, completedPeriod, conversationFilterSignature, conversationPerPage, inboxView, initialConversationId, mode, recordConversationListSnapshot, search, status]);
     fetchConversationsRef.current = fetchConversations;
+    const liveParameters=useMemo(()=>new URLSearchParams(Object.entries({search,status,assignment,view:inboxView,period:inboxView==='completed'?completedPeriod:'',per_page:String(conversationPerPage),live_pages:String(conversationPage)}).filter(([,value])=>value!=='' )).toString(),[search,status,assignment,inboxView,completedPeriod,conversationPerPage,conversationPage]);
+    const [liveQuery,setLiveQuery]=useState(liveParameters);
+    useEffect(()=>{const timer=setTimeout(()=>setLiveQuery(liveParameters),250);return ()=>clearTimeout(timer);},[liveParameters]);
+    const chatLive=useLiveView<ChatConversationListResponse>(mode==='agent'?`${baseUrl}/conversations?${liveQuery}`:null,data=> {
+        const next=sortConversations(data.data.filter(conversation=>statusBelongsToView(conversation.status,inboxView)),inboxView);
+        recordConversationListSnapshot(next);conversationsRef.current=next;setConversations(next);
+        unreadTotalRef.current=data.unread_total;setUnreadTotal(data.unread_total);
+        setConversationCounts(data.counts ?? data.meta?.counts ?? {});setConversationTotal(data.meta?.total ?? next.length);
+        setConversationLastPage(data.meta?.last_page ?? 1);setLoadingList(false);setError(null);
+        if(!selectedIdRef.current && initialConversationId)setSelectedId(initialConversationId);
+    });
+    chatLiveSyncRef.current=chatLive.sync;
+
 
     useEffect(() => {
         conversationListGenerationRef.current += 1;
@@ -1641,7 +1655,8 @@ export default function ChatWorkspace({
         conversationMoreAbortRef.current = null;
         setLoadingList(true);
         setLoadingMoreConversations(false);
-        const timer = window.setTimeout(() => void fetchConversations(), search ? 250 : 0);
+        if(mode==='agent')setConversationPage(1);
+        const timer = window.setTimeout(() => {if(mode!=='agent')void fetchConversations();}, search ? 250 : 0);
         return () => {
             window.clearTimeout(timer);
             conversationListGenerationRef.current += 1;
@@ -1847,6 +1862,7 @@ export default function ChatWorkspace({
     }, [scheduleMarkRead]);
 
     const scheduleConversationRefresh = useCallback(() => {
+        if(mode==='agent')return;
         conversationListGenerationRef.current += 1;
         conversationListAbortRef.current?.abort();
         conversationListAbortRef.current = null;

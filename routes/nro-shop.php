@@ -8,6 +8,7 @@ Route::prefix('nro-shop')->middleware(['throttle:120,1', \App\Http\Middleware\Pu
     Route::middleware(['auth:api', 'unlocked.user'])->group(function () {
         Route::post('orders', [NroShopController::class, 'purchase']);
         Route::get('orders', [NroShopController::class, 'orders']);
+        Route::post('orders/{id}/cancel', [NroShopController::class, 'cancel'])->whereNumber('id');
         Route::post('orders/{id}/receive', [NroShopController::class, 'receive'])->whereNumber('id');
     });
 });
