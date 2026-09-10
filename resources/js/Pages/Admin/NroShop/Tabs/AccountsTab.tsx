@@ -391,6 +391,7 @@ export default function AccountsTab({
                 account={account}
                 snapshot={snapshot}
                 selected={selected}
+                inventory={inventory}
                 form={publishForm}
                 servers={servers}
                 categories={categories}

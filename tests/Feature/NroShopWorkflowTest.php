@@ -1994,4 +1994,20 @@ class NroShopWorkflowTest extends TestCase
         $this->assertFalse(collect($queries)->contains(fn($q)=>str_contains($q['query'],'snapshot_failures')));
     }
 
+
+    public function test_listing_title_defaults_to_validated_item_names_but_preserves_custom_title(): void
+    {
+        foreach ([['missing',1,'Áo Thần Linh'], ['   ',2,'Áo Thần Linh, Găng Thần Linh'], ['Gói của tôi',2,'Gói của tôi']] as [$title,$count,$expected]) {
+            $seller=$this->seller();$account=$this->warehouse($seller);
+            $items=DB::table('nro_inventory_items')->where('account_id',$account->id)->orderBy('id')->get();
+            foreach ($items as $index=>$item) {
+                $data=json_decode($item->item_json,true);$data['name']=$index===0?'Áo Thần Linh':'Găng Thần Linh';
+                DB::table('nro_inventory_items')->where('id',$item->id)->update(['item_json'=>json_encode($data)]);
+            }
+            $payload=['price'=>200,'items'=>$items->take($count)->map(fn($item)=>['id'=>$item->id,'quantity'=>1])->all()];
+            if($title!=='missing')$payload['title']=$title;
+            $id=$this->actingAs($seller,'web')->postJson('/admin/nro-shop/accounts/'.$account->id.'/listings',$payload)->assertOk()->json('id');
+            $this->assertDatabaseHas('item_listings',['id'=>$id,'title'=>$expected]);
+        }
+    }
 }

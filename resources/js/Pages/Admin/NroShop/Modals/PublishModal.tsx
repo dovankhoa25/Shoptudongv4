@@ -1,17 +1,19 @@
 import { useEffect, useState } from 'react';
 import axios from 'axios';
+import { Package } from 'lucide-react';
 import { Alert, Button, Collapse, Form, Input, InputNumber, Modal, Select, Space, message } from 'antd';
 import type { FormInstance } from 'antd';
 import NroSnapshotPanel, { type NroSnapshot } from '@/Components/Nro/NroSnapshot';
 import NroNickAttributes from '@/Components/Nro/NroNickAttributes';
 import { base } from '../shared';
-import type { Account, Capabilities, Category, Server } from '../types';
+import type { Account, Capabilities, Category, Inventory, Server } from '../types';
 
 export default function PublishModal({
     open,
     account,
     snapshot,
     selected,
+    inventory,
     form,
     servers,
     categories,
@@ -25,6 +27,7 @@ export default function PublishModal({
     account: Account | null;
     snapshot: NroSnapshot | null;
     selected: Record<number, number>;
+    inventory: Inventory[];
     form: FormInstance;
     servers: Server[];
     categories: Category[];
@@ -36,6 +39,7 @@ export default function PublishModal({
 }) {
     const [attributesReady, setAttributesReady] = useState(false);
     const isNick = account?.usage_type === 'nick';
+    const defaultTitle = [...new Set(Object.keys(selected).map(id => inventory.find(row => row.id === Number(id))).filter((row): row is Inventory => !!row).map(row => row.item.name?.trim() || `Vật phẩm #${row.item.templateId}`))].join(', ').slice(0, 180);
 
     // The modal body is destroyed while hidden but this state is not, so a previous account's
     // "attributes are valid" verdict would otherwise enable the submit button for the next one.
@@ -46,6 +50,7 @@ export default function PublishModal({
     return (
         <Modal
             width={760}
+            rootClassName="nro-account-modal"
             title={isNick ? (account?.nick ? `Sửa tin bán #${account.nick.id}` : 'Đăng nick bằng dữ liệu game') : 'Đăng gói đồ'}
             open={open}
             onCancel={onBack}
@@ -119,8 +124,8 @@ export default function PublishModal({
                         )}
                     </>
                 ) : (
-                    <Form.Item name="title" label="Tên gói đồ" rules={[{ required: true }]}>
-                        <Input maxLength={180} />
+                    <Form.Item name="title" label="Tên gói đồ (tùy chọn)" extra={defaultTitle ? `Để trống sẽ dùng: ${defaultTitle}` : 'Để trống để tự lấy tên vật phẩm.'}>
+                        <Input prefix={<Package size={14} className="text-slate-400" aria-hidden="true" />} maxLength={180} placeholder={defaultTitle || 'Tên vật phẩm'} autoComplete="off" />
                     </Form.Item>
                 )}
                 <Form.Item

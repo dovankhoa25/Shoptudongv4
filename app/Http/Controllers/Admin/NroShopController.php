@@ -461,7 +461,7 @@ class NroShopController extends Controller
     public function publishItems(Request $r, int $id)
     {
         $a = $this->account($r, $id);
-        $v = $r->validate(['title' => 'required|string|max:180', 'description' => 'nullable|string|max:10000', 'price' => 'required|integer|min:1|max:9999999999',
+        $v = $r->validate(['title' => 'nullable|string|max:180', 'description' => 'nullable|string|max:10000', 'price' => 'required|integer|min:1|max:9999999999',
             'items' => 'required|array|min:1|max:20', 'items.*.id' => 'required|integer|distinct', 'items.*.quantity' => 'required|integer|min:1|max:1000000000']);
         $listing = DB::transaction(function () use ($a, $v) {
             $a = NroAccount::whereKey($a->id)->lockForUpdate()->firstOrFail();
@@ -469,13 +469,20 @@ class NroShopController extends Controller
             $snapshot = NroAccountSnapshot::find($a->latest_snapshot_id);
             NroShopService::require($a->status === 'active', 'Acc không còn hoạt động, không được tạo gói đồ.');
             NroShopService::require($snapshot && ($snapshot->completeness_json['bag'] ?? false) && ($snapshot->completeness_json['chest'] ?? false) && ($snapshot->completeness_json['equipped'] ?? false) && $a->last_synced_at, 'Chưa lấy đủ hành trang, rương và trang bị. Yêu cầu tool lấy lại dữ liệu trước khi tạo gói đồ.');
-            $listing = DB::table('item_listings')->insertGetId(['user_id' => $a->user_id, 'account_id' => $a->id, 'title' => $v['title'], 'description' => $v['description'] ?? '', 'price' => $v['price'], 'status' => 'active', 'created_at' => now(), 'updated_at' => now()]);
+            $title = trim((string) ($v['title'] ?? ''));
+            $itemNames = [];
+            $listing = DB::table('item_listings')->insertGetId(['user_id' => $a->user_id, 'account_id' => $a->id, 'title' => $title, 'description' => $v['description'] ?? '', 'price' => $v['price'], 'status' => 'active', 'created_at' => now(), 'updated_at' => now()]);
             $allocated = NroListingStock::allocated($a->id, $listing);
             foreach ($v['items'] as $line) {
                 $item = DB::table('nro_inventory_items')->where('id', $line['id'])->where('account_id', $a->id)->lockForUpdate()->first();
                 NroShopService::require($item && NroListingStock::selectable($item, $allocated) >= $line['quantity'], 'Món không thuộc acc hoặc không đủ số lượng sau khi trừ đồ trong gói đang đăng và đơn chưa nhận.');
                 NroShopService::require(NroListingStock::allows((int) $item->template_id), 'ID vật phẩm không nằm trong danh sách được phép bán.');
+                $itemData = json_decode($item->item_json, true) ?: [];
+                $itemNames[] = trim((string) ($itemData['name'] ?? '')) ?: 'Vật phẩm #'.$item->template_id;
                 DB::table('item_listing_items')->insert(['listing_id' => $listing, 'inventory_item_id' => $item->id, 'quantity' => $line['quantity']]);
+            }
+            if ($title === '') {
+                DB::table('item_listings')->where('id', $listing)->update(['title' => Str::limit(implode(', ', array_unique($itemNames)), 180, '')]);
             }
             return $listing;
         });
