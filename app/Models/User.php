@@ -20,6 +20,10 @@ class User extends Authenticatable implements HasMedia
 {
     use HasApiTokens, HasFactory, HasRoles, InteractsWithMedia, Notifiable, SoftDeletes;
 
+    // Roles and permissions share the web namespace, including when an API
+    // request checks another user's permissions to select realtime recipients.
+    protected $guard_name = 'web';
+
     public const STATUS_ACTIVE = 'active';
 
     public const STATUS_LOCKED = 'locked';

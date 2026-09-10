@@ -44,7 +44,7 @@ class NroShopController extends Controller
     {
         $can = fn (...$p) => collect($p)->contains(fn ($permission) => $r->user()->can($permission));
 
-        return ['accounts' => $can('nro-accounts.view','nro-accounts.manage','nicks.create','nicks.manage','item-listings.manage','nro-settings.manage'),
+        return ['refund' => $r->user()->hasAnyRole(['admin','super-admin']), 'accounts' => $can('nro-accounts.view','nro-accounts.manage','nicks.create','nicks.manage','item-listings.manage','nro-settings.manage'),
             'manageAccounts' => $can('nro-accounts.manage'), 'readAccountSnapshots' => $can('nro-accounts.view','nro-accounts.manage'),
             'publishNick' => $can('nicks.create','nicks.manage'), 'editNick' => $can('nicks.manage'),
             'listings' => $can('item-listings.view','item-listings.manage'), 'manageListings' => $can('item-listings.manage'),
@@ -122,7 +122,7 @@ class NroShopController extends Controller
                 'character_name' => $a->character_name, 'last_synced_at' => $a->last_synced_at, 'latest_snapshot_id' => $a->latest_snapshot_id,
                 'server_id' => $a->server_id, 'server_game_id' => $a->server_game_id, 'delivery_map' => $a->delivery_map, 'delivery_zone' => $a->delivery_zone, 'wait_minutes' => $a->wait_minutes,
                 'delivery_zone_mode' => $a->delivery_zone_mode,
-                'publishStatus' => $a->publish_status, 'publishError' => $a->publish_error, 'publishConfig' => $a->publish_config,
+                'snapshotFailures' => (int)$a->snapshot_failures, 'publishStatus' => $a->publish_status, 'publishError' => $a->publish_error, 'publishConfig' => $a->publish_config,
                 'shop_hidden' => $a->shop_hidden, 'status' => $a->status, 'nick' => $this->nickSummary($nicks->get($a->id)),
                 'listingCounts' => $caps['listings'] ? ['total' => (int) ($listingCounts->get($a->id)?->total ?? 0), 'active' => (int) ($listingCounts->get($a->id)?->active ?? 0)] : null,
             ]) : [],
@@ -187,6 +187,7 @@ class NroShopController extends Controller
         $rows = $page->getCollection();
         $payloads = $shop->listings($rows);
         $owners = DB::table('users')->whereIn('id', $rows->pluck('user_id')->filter()->unique())->pluck('username', 'id');
+        $late = DB::table('nro_late_results')->whereIn('job_id',$rows->pluck('id'))->orderByDesc('id')->get()->groupBy('job_id');
         $accountNames = DB::table('nro_accounts')->whereIn('id', $rows->pluck('account_id')->filter()->unique())->pluck('account_name', 'id');
 
         return $this->paged($page, $rows->map(fn ($l) => [...$payloads[$l->id], 'accountId' => $l->account_id,
@@ -214,9 +215,10 @@ class NroShopController extends Controller
         $page = $q->orderByDesc('id')->paginate(20);
         $payloads = $shop->orders($page->getCollection()->pluck('id'));
 
-        $people = DB::table('users')->whereIn('id', $page->getCollection()->pluck('buyer_id')->merge($page->getCollection()->pluck('seller_id'))->unique())->pluck('username', 'id');
+        $people = DB::table('users')->whereIn('id', $page->getCollection()->pluck('buyer_id')->merge($page->getCollection()->pluck('seller_id'))->merge($page->getCollection()->pluck('refund_actor_id'))->filter()->unique())->pluck('username', 'id');
         $warehouses = DB::table('nro_accounts')->whereIn('id', $page->getCollection()->pluck('account_id')->unique())->get(['id', 'account_name', 'character_name'])->keyBy('id');
         return $this->paged($page, $page->getCollection()->map(fn ($o) => [...$payloads[$o->id], 'accountId' => $o->account_id,
+            'refundActor' => $people[$o->refund_actor_id] ?? null, 'refundNote' => $o->refund_note,
             'buyerUsername' => $people[$o->buyer_id] ?? null, 'ownerUsername' => $people[$o->seller_id] ?? null,
             'accountName' => $warehouses->get($o->account_id)?->account_name,
             'botName' => $warehouses->get($o->account_id)?->character_name])->values());
@@ -237,10 +239,12 @@ class NroShopController extends Controller
         // The reconcile form needs the order behind each job awaiting review, and only those.
         $reviewOrderIds = $rows->where('status', 'review')->pluck('order_id')->filter()->unique();
         $orders = $caps['reconcile'] && $reviewOrderIds->isNotEmpty() ? $shop->orders($reviewOrderIds) : [];
+        $late = DB::table('nro_late_results')->whereIn('job_id',$rows->pluck('id'))->orderByDesc('id')->get()->groupBy('job_id');
         $accountNames = DB::table('nro_accounts')->whereIn('id', $rows->pluck('account_id')->filter()->unique())->pluck('account_name', 'id');
 
         return $this->paged($page, $rows->map(fn ($j) => ['id' => $j->id, 'account_id' => $j->account_id, 'order_id' => $j->order_id,
             'type' => $j->type, 'status' => $j->status, 'updated_at' => $j->updated_at, 'result_json' => $j->result_json,
+            'lateResults' => ($late->get($j->id) ?? collect())->take(5)->map(fn($x)=>['kind'=>$x->kind,'at'=>$x->created_at,'data'=>json_decode($x->payload_json,true)])->values(),
             'accountName' => $accountNames[$j->account_id] ?? null, 'order' => $orders[$j->order_id] ?? null])->values());
     }
 
@@ -322,7 +326,7 @@ class NroShopController extends Controller
             || ($a->usage_type === 'nick' ? ($r->user()->can('nicks.create') || $r->user()->can('nicks.manage')) : $r->user()->can('item-listings.manage')), 403);
         $snapshot = NroAccountSnapshot::find($a->latest_snapshot_id);
         $allocated = NroListingStock::allocated($id); $policy = NroListingStock::policy();
-        return response()->json(['publishConfig' => $a->publish_config, 'publishStatus' => $a->publish_status, 'publishError' => $a->publish_error, 'status' => $a->status, 'latestSnapshotId' => $a->latest_snapshot_id, 'nick' => $this->nickSummary($this->linkedNick($a->id)),
+        return response()->json(['publishConfig' => $a->publish_config, 'snapshotFailures' => (int)$a->snapshot_failures, 'publishStatus' => $a->publish_status, 'publishError' => $a->publish_error, 'status' => $a->status, 'latestSnapshotId' => $a->latest_snapshot_id, 'nick' => $this->nickSummary($this->linkedNick($a->id)),
             'snapshot' => $snapshot ? ['data' => $snapshot->data_json, 'completeness' => $snapshot->completeness_json, 'summary' => $snapshot->summary_json] : null,
             'inventory' => DB::table('nro_inventory_items')->where('account_id', $id)->where('quantity', '>', 0)->orderBy('id')->get()->map(fn ($i) => [
                 'id' => $i->id, 'quantity' => $i->quantity, 'reserved' => $i->reserved, 'listed' => (int) ($allocated[$i->id] ?? 0),
@@ -351,7 +355,7 @@ class NroShopController extends Controller
             $a = NroAccount::whereKey($a->id)->lockForUpdate()->firstOrFail();
             NroShopService::require($a->status === 'active', 'Không được đổi mật khẩu acc đã bán hoặc ngừng hoạt động.');
             NroShopService::require(!DB::table('nro_worker_jobs')->where('account_id', $a->id)->whereIn('status', ['queued', 'processing', 'review'])->exists(), 'Chờ công việc tool kết thúc trước khi đổi thông tin đăng nhập.');
-            $updates = ['game_password' => $v['password']];
+            $updates = ['game_password' => $v['password'], 'snapshot_failures'=>0];
             if ($a->publish_status === 'login_blocked') {
                 $updates['publish_status'] = $a->usage_type === 'nick' && $a->auto_publish ? 'waiting_snapshot' : null;
                 $updates['publish_error'] = null;
@@ -370,7 +374,8 @@ class NroShopController extends Controller
             NroShopService::require($a->status === 'active', 'Acc đã bán hoặc ngừng hoạt động, không được lấy dữ liệu.');
             NroShopService::require(!Nick::withoutUserOwnedScope()->where('game_account_id', $a->id)->where('status', 'sold')->exists(), 'Nick đã bán, không được đăng nhập lại.');
             NroShopService::require(!DB::table('nro_worker_jobs')->where('account_id', $a->id)->whereIn('status', ['queued', 'processing', 'review'])->exists(), 'Acc đã có công việc hoặc đang chờ đối soát.');
-            if ($a->auto_publish) $a->update(['publish_status' => 'waiting_snapshot', 'publish_error' => null]);
+            $a->update(['snapshot_failures' => 0]);
+            if ($a->publish_status !== 'login_blocked') $a->update(['publish_status' => $a->auto_publish ? 'waiting_snapshot' : null, 'publish_error' => null]);
             DB::table('nro_worker_jobs')->insert(['account_id' => $a->id, 'type' => 'snapshot', 'status' => 'queued', 'created_at' => now(), 'updated_at' => now()]);
         });
         ApiCache::clearGroups(['public:nick', 'public:nro-shop:listings']);
@@ -516,6 +521,14 @@ class NroShopController extends Controller
         ApiCache::clearGroups(['public:nick', 'public:nro-shop:listings']);
         return response()->json(['ok' => true]);
     }
+    public function refund(Request $r, int $id, \App\Services\NroOrderRefund $refund)
+    {
+        abort_unless($r->user()->hasAnyRole(['admin','super-admin']), 403);
+        $v=$r->validate(['amount'=>'required|integer|min:1','note'=>'required|string|min:10|max:250']);
+        $refund->run($id, $r->user(), (int)$v['amount'], $v['note']);
+        return response()->json(['ok'=>true]);
+    }
+
     public function reconcile(Request $r, int $id, NroShopService $shop)
     {
         abort_unless($r->user()->can('item-orders.reconcile'), 403);
@@ -544,7 +557,7 @@ class NroShopController extends Controller
                 else DB::table('item_orders')->where('id', $job->order_id)->update(['status' => 'awaiting_receipt', 'delivery_message' => 'Đã đối soát; bạn có thể nhận phần đồ còn lại.', 'updated_at' => now()]);
             }
             app(\App\Services\NroReceivingService::class)->finish($job, $job->order_id && DB::table('item_orders')->where('id', $job->order_id)->value('status') === 'completed' ? 'completed' : 'failed');
-            DB::table('nro_worker_jobs')->where('id', $id)->update(['status' => 'completed', 'lease_token' => null, 'result_json' => json_encode(['resolution' => $v, 'actorId' => $r->user()->id]), 'updated_at' => now()]);
+            DB::table('nro_worker_jobs')->where('id', $id)->update(['status' => 'completed', 'result_json' => json_encode(['resolution' => $v, 'actorId' => $r->user()->id]), 'updated_at' => now()]);
         });
         ApiCache::clearGroups(['public:nick', 'public:nro-shop:listings']);
         return response()->json(['ok' => true]);

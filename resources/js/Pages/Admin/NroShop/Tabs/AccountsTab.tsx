@@ -233,7 +233,7 @@ export default function AccountsTab({
                         title: 'Vai trò',
                         dataIndex: 'usage_type',
                         width: 100,
-                        render: (v, a: Account) => <><Tag>{v === 'nick' ? 'Bán nick' : 'Kho đồ'}</Tag>{a.shop_hidden && <Tooltip title="Gói đồ đã ẩn khỏi shop. Đơn đã mua vẫn được giao."><Tag color="orange">Tạm ẩn shop</Tag></Tooltip>}{a.deliveryActivity?.message && <div className="mt-1 text-xs text-sky-700 dark:text-sky-300">{a.deliveryActivity.message}</div>}</>,
+                        render: (v, a: Account) => <><Tag>{v === 'nick' ? 'Bán nick' : 'Kho đồ'}</Tag>{a.shop_hidden && <Tooltip title="Gói đồ đã ẩn khỏi shop. Đơn đã mua vẫn được giao."><Tag color="orange">Tạm ẩn shop</Tag></Tooltip>}{(a.snapshotFailures ?? 0) >= 3 && <Tag color="red">Dừng tự quét · 3 lần lỗi</Tag>}{a.deliveryActivity?.message && <div className="mt-1 text-xs text-sky-700 dark:text-sky-300">{a.deliveryActivity.message}</div>}</>,
                     },
                     {
                         title: 'Tin bán',

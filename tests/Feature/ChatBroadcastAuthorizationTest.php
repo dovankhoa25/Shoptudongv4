@@ -220,6 +220,65 @@ class ChatBroadcastAuthorizationTest extends TestCase
         });
     }
 
+    public function test_customer_api_message_targets_authorized_staff_and_the_admin_web_channel(): void
+    {
+        Permission::findOrCreate(AppPermission::ChatsViewAll->value, 'web');
+        $customer = User::factory()->create();
+        $admin = User::factory()->create(['status' => User::STATUS_ACTIVE]);
+        $admin->assignRole('admin');
+        $admin->givePermissionTo(AppPermission::ChatsView->value);
+        $assignedAgent = User::factory()->create(['status' => User::STATUS_ACTIVE]);
+        $assignedAgent->assignRole('ctv');
+        Role::findByName('ctv', 'web')->givePermissionTo(AppPermission::ChatsView->value);
+        $directAgent = User::factory()->create(['status' => User::STATUS_ACTIVE]);
+        $directAgent->givePermissionTo([
+            AppPermission::ChatsView->value,
+            AppPermission::ChatsViewAll->value,
+        ]);
+        $unrelatedAgent = User::factory()->create(['status' => User::STATUS_ACTIVE]);
+        $unrelatedAgent->assignRole('ctv');
+        $revokedAdmin = User::factory()->create(['status' => User::STATUS_ACTIVE]);
+        $revokedAdmin->assignRole('admin');
+        $lockedAdmin = User::factory()->create(['status' => User::STATUS_LOCKED]);
+        $lockedAdmin->assignRole('admin');
+        $lockedAdmin->givePermissionTo(AppPermission::ChatsView->value);
+        $conversation = ChatConversation::query()->create([
+            'customer_id' => $customer->id,
+            'assigned_to_id' => $assignedAgent->id,
+            'category' => 'general',
+            'status' => 'waiting_agent',
+            'priority' => 'normal',
+        ]);
+        $adminChannel = $this->webChannel($admin);
+        $client = $this->client();
+        $token = $this->tokenFor($customer, $client, ['chat:read', 'chat:write']);
+        $this->actAsApiToken($customer, $client, $token, resolveChannel: false);
+        config()->set('broadcasting.default', 'null');
+        Event::fake([ChatMessageSent::class]);
+
+        $response = $this->postJson("/api/chat/conversations/{$conversation->id}/messages", [
+            'body' => 'Customer API realtime regression test.',
+            'client_message_id' => (string) Str::uuid(),
+        ])->assertCreated();
+
+        $this->assertSame('api', Auth::getDefaultDriver());
+        Event::assertDispatched(ChatMessageSent::class, function (ChatMessageSent $event) use (
+            $response, $customer, $admin, $assignedAgent, $directAgent, $adminChannel
+        ): bool {
+            $this->assertSame((int) $response->json('data.id'), $event->message['id']);
+            $this->assertEqualsCanonicalizing(
+                [$customer->id, $admin->id, $assignedAgent->id, $directAgent->id],
+                $event->recipientIds,
+            );
+            $this->assertContains('private-'.$adminChannel, array_map(
+                fn ($channel): string => (string) $channel,
+                $event->broadcastOn(),
+            ));
+
+            return true;
+        });
+    }
+
     private function authorizeChannel(User $user, string $channel)
     {
         return $this->actingAs($user)->postJson('/broadcasting/auth', [

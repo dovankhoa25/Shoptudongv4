@@ -134,7 +134,8 @@ class NroSnapshotService
                     ]);
                 }
             }
-            $account->update(['latest_snapshot_id' => $snapshot->id, 'last_synced_at' => ($payload['completeness']['bag'] && $payload['completeness']['chest']) ? $snapshot->captured_at : null, 'character_name' => $data['character']['name']]);
+            if ($payload['completeness']['bag'] && $payload['completeness']['chest'] && $account->publish_status === 'scan_failed') $account->update(['publish_status'=>null,'publish_error'=>null]);
+            $account->update(['snapshot_failures' => ($payload['completeness']['bag'] && $payload['completeness']['chest']) ? 0 : $account->snapshot_failures, 'latest_snapshot_id' => $snapshot->id, 'last_synced_at' => ($payload['completeness']['bag'] && $payload['completeness']['chest']) ? $snapshot->captured_at : null, 'character_name' => $data['character']['name']]);
             return $snapshot;
         });
     }

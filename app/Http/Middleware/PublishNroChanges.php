@@ -50,7 +50,7 @@ class PublishNroChanges
                 }
             } elseif ($request->is('*/nro-shop/accounts/*', 'app/nro-worker/accounts/*')) {
                 $accounts[] = $id;
-            } elseif ($request->is('api/nro-shop/orders*')) {
+            } elseif ($request->is('api/nro-shop/orders*', 'admin/nro-shop/orders/*')) {
                 $orderId = $id ?: (int) ($body['data']['id'] ?? 0);
                 if ($orderId) {
                     $orderIds[] = $orderId;

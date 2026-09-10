@@ -37,6 +37,7 @@ export type Account = {
     last_synced_at?: string;
     latest_snapshot_id?: number;
     status: string;
+    snapshotFailures?: number;
     publishStatus?: string;
     publishError?: string;
     publishConfig?: PublishConfig;
@@ -73,6 +74,11 @@ export type Listing = {
 };
 
 export type Order = {
+    refundRequested?: boolean;
+    refundAmount?: number;
+    refundedAt?: string;
+    refundActor?: string;
+    refundNote?: string;
     id: number;
     accountId?: number;
     buyerUsername?: string;
@@ -93,6 +99,7 @@ export type Order = {
 };
 
 export type Job = {
+    lateResults?: { kind: string; at: string; data: unknown }[];
     id: number;
     account_id: number;
     accountName?: string;

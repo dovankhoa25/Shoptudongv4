@@ -200,17 +200,21 @@ class ChatRealtimeChannel
             'updated_at' => $now,
         ]);
 
-        $active = ChatRealtimeSession::query()
+        $activeLease = ChatRealtimeSession::query()
             ->where('user_id', $user->getKey())
             ->where('credential_hash', $credentialHash)
-            ->whereNull('revoked_at')
-            ->update([
-                'last_seen_at' => $now,
-                'expires_at' => $expiresAt,
-                'updated_at' => $now,
-            ]);
+            ->whereNull('revoked_at');
 
-        if ($active === 0) {
+        $updated = (clone $activeLease)->update([
+            'last_seen_at' => $now,
+            'expires_at' => $expiresAt,
+            'updated_at' => $now,
+        ]);
+
+        // MySQL reports changed rows, not matched rows. Inertia and broadcast
+        // authorization can refresh this lease within the same second, making
+        // the update a no-op even though the authenticated lease is still valid.
+        if ($updated === 0 && ! (clone $activeLease)->where('expires_at', '>', $now)->exists()) {
             return null;
         }
 

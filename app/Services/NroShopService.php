@@ -166,7 +166,7 @@ class NroShopService
             return ['id' => $o->id, 'title' => $o->title, 'price' => (string) $o->price, 'status' => $o->status,
                 'recipientName' => $session['recipientName'] ?? $o->recipient_name, 'serverIndex' => $o->server_index, 'serverId' => $o->server_id,
                 'serverName' => $servers[$o->server_id] ?? null, 'message' => $o->delivery_message,
-                'session' => $session,
+                'refundRequested' => (bool)$o->refund_requested, 'refundAmount' => (int)$o->refund_amount, 'refundedAt' => $o->refunded_at, 'session' => $session,
                 // Counts and bot identity are public; other buyers' names/order IDs are never exposed.
                 'botActivity' => array_merge($location ? NroWarehouseActivity::publicPayload($location, $activity->get($o->account_id) ?? collect()) : [], [
                     'waitingCount' => ($activity->get($o->account_id) ?? collect())->whereIn('status', ['preparing', 'ready'])->count(),
@@ -192,19 +192,19 @@ class NroShopService
     {
         $order = DB::table('item_orders')->where('id', $orderId)->lockForUpdate()->first();
         if (in_array($order->status, ['completed', 'refunded'])) return;
-        if (!$delivered) self::require(!DB::table('item_order_items')->where('order_id', $orderId)->where('delivered', '>', 0)->exists(), 'Đơn đã giao một phần; không thể hoàn toàn bộ tiền bằng thao tác chưa giao.');
+        self::require($delivered, 'Hoàn tiền chỉ được thực hiện qua thao tác admin.');
         // Only called after confirmed worker result or explicit administrator reconciliation.
         foreach (DB::table('item_inventory_reservations')->where('order_id', $orderId)->where('status', 'held')->get() as $r) {
             DB::table('nro_inventory_items')->where('id', $r->inventory_item_id)->decrement('reserved', $r->quantity);
         }
-        DB::table('item_inventory_reservations')->where('order_id', $orderId)->update(['status' => $delivered ? 'consumed' : 'released', 'updated_at' => now()]);
-        $user = User::whereKey($delivered ? $order->seller_id : $order->buyer_id)->lockForUpdate()->firstOrFail();
+        DB::table('item_inventory_reservations')->where('order_id', $orderId)->update(['status' => 'consumed', 'updated_at' => now()]);
+        $user = User::whereKey($order->seller_id)->lockForUpdate()->firstOrFail();
         self::require((int) $user->balance <= TransactionService::MAX_BALANCE - $order->price, 'Số dư vượt giới hạn; cần đối soát.');
         $before = (int) $user->balance; $user->increment('balance', $order->price);
-        TransactionService::log(userId: $user->id, type: $delivered ? 'sell_nro_items' : 'refund_nro_items', amount: $order->price,
-            description: ($delivered ? 'Bán' : 'Hoàn tiền').' gói đồ #'.$orderId, related: 'nro_item_order', relatedId: $orderId,
+        TransactionService::log(userId: $user->id, type: 'sell_nro_items', amount: $order->price,
+            description: 'Bán'.' gói đồ #'.$orderId, related: 'nro_item_order', relatedId: $orderId,
             oldBalance: $before, newBalance: $before + $order->price, idempotencyKey: "nro-order:$orderId:settle");
-        DB::table('item_orders')->where('id', $orderId)->update(['status' => $delivered ? 'completed' : 'refunded', 'updated_at' => now()]);
+        DB::table('item_orders')->where('id', $orderId)->update(['status' => 'completed', 'refund_requested' => false, 'updated_at' => now()]);
         if ($delivered) DB::table('item_order_items')->where('order_id', $orderId)->update(['delivered' => DB::raw('quantity')]);
         // Force a fresh inventory before the next sale after manual settlement.
         NroAccount::whereKey($order->account_id)->update(['last_synced_at' => null]);

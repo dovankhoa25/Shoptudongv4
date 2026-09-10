@@ -119,7 +119,7 @@ export default function JobsTab({
                         ),
                     },
                     { title: 'Cập nhật', dataIndex: 'updated_at', width: 150, render: v => dateTime(v) },
-                    { title: 'Kết quả', render: (_, j: Job) => jobResult(j) },
+                    { title: 'Kết quả', render: (_, j: Job) => <>{jobResult(j)}{!!j.lateResults?.length && <details className="mt-2 text-xs"><summary className="cursor-pointer text-amber-500">Có kết quả tool gửi sau khi chốt · Xem để đối chiếu</summary>{j.lateResults.map((x,i)=><pre key={i} className="max-h-60 max-w-md overflow-auto whitespace-pre-wrap">{x.at} · {x.kind}{'\n'}{JSON.stringify(x.data,null,2)}</pre>)}</details>}</> },
                     {
                         title: '',
                         width: 110,

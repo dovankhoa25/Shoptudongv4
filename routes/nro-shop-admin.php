@@ -27,5 +27,6 @@ Route::prefix('admin/nro-shop')->name('admin.nro-shop.')->middleware(['auth', 'u
     Route::post('accounts/{id}/listings', [NroShopController::class, 'publishItems'])->middleware('permission:item-listings.manage')->name('listings.store');
     Route::get('accounts/{id}/listings', [NroShopController::class, 'accountListings'])->middleware('permission:item-listings.view,item-listings.manage')->name('accounts.listings');
     Route::patch('listings/{id}', [NroShopController::class, 'toggle'])->middleware('permission:item-listings.manage')->name('listings.update');
+    Route::post('orders/{id}/refund', [NroShopController::class, 'refund'])->name('orders.refund');
     Route::post('jobs/{id}/reconcile', [NroShopController::class, 'reconcile'])->middleware('permission:item-orders.reconcile')->name('reconcile');
 });
