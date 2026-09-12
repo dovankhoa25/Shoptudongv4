@@ -29,7 +29,7 @@ class NroShopController extends Controller
         $cacheKey = ApiCache::key('nro-shop:listings', 'filters-v5-visibility', (string) \Illuminate\Support\Facades\Cache::get('nro-shop:visibility-version', '0'), json_encode($cachePayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 
         $payload = ApiCache::remember('public:nro-shop:listings', $cacheKey, 60, function () use ($filters, $s, $itemFilters) {
-            $q = DB::table('item_listings')->where('status', 'active')->whereIn('account_id', DB::table('nro_accounts')->select('id')->whereNull('deleted_at')->where('shop_hidden', false))->whereNotExists(fn ($orders) => $orders->selectRaw('1')->from('item_orders')->whereColumn('item_orders.listing_id', 'item_listings.id'));
+            $q = DB::table('item_listings')->where('status', 'active')->whereIn('account_id', DB::table('nro_accounts')->select('id')->whereNull('deleted_at')->where('shop_hidden', false)->where('login_sale_blocked', false))->whereNotExists(fn ($orders) => $orders->selectRaw('1')->from('item_orders')->whereColumn('item_orders.listing_id', 'item_listings.id'));
             if (! empty($filters['server'])) $q->whereIn('account_id', DB::table('nro_accounts')->select('id')->where('server_id', (int) $filters['server']));
             $search = trim((string) ($filters['q'] ?? ''));
             if ($search !== '' && empty($filters['group'])) {
@@ -92,7 +92,7 @@ class NroShopController extends Controller
             ApiCache::key('nro-shop:listing', $id, (string) \Illuminate\Support\Facades\Cache::get('nro-shop:visibility-version', '0')),
             120,
             function () use ($id, $s) {
-                $l = DB::table('item_listings')->where('id', $id)->where('status', 'active')->whereIn('account_id', DB::table('nro_accounts')->select('id')->whereNull('deleted_at')->where('shop_hidden', false))->whereNotExists(fn ($orders) => $orders->selectRaw('1')->from('item_orders')->whereColumn('item_orders.listing_id', 'item_listings.id'))->first();
+                $l = DB::table('item_listings')->where('id', $id)->where('status', 'active')->whereIn('account_id', DB::table('nro_accounts')->select('id')->whereNull('deleted_at')->where('shop_hidden', false)->where('login_sale_blocked', false))->whereNotExists(fn ($orders) => $orders->selectRaw('1')->from('item_orders')->whereColumn('item_orders.listing_id', 'item_listings.id'))->first();
                 abort_unless($l, 404);
 
                 return ['data' => Arr::except($s->listing($l), ['description'])];

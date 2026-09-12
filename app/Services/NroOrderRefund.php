@@ -8,8 +8,8 @@ use Illuminate\Support\Facades\DB;
 
 class NroOrderRefund
 {
-    public static function eligible(object $o): bool {
-        return (bool)$o->refund_requested || in_array($o->failure_code,['missing_items','login_failed','login_wait']);
+    public static function eligible(object $o, ?bool $pendingRecovery = null): bool {
+        return ((bool)$o->refund_requested || in_array($o->failure_code,['missing_items','login_failed','login_wait'])) && !($pendingRecovery ?? NroRoundRecovery::pending((int)$o->id));
     }
     public function request(int $id, User $actor): void {
         DB::transaction(function() use($id,$actor) {
@@ -53,6 +53,7 @@ class NroOrderRefund
                 return;
             }
             NroShopService::require(!DB::table('nro_worker_jobs')->where('account_id',$o->account_id)->whereNotNull('audit_order_id')->whereIn('status',['queued','processing'])->exists(), 'Chờ tool kiểm tra kho xong trước khi hoàn tiền.');
+            NroShopService::require(!NroRoundRecovery::pending((int)$o->id), 'Bot cần khôi phục kết quả lượt giao trước khi xử lý hoàn tiền.');
             NroShopService::require($o->status === 'awaiting_receipt', 'Dừng phiên và đối soát kết quả trước khi hoàn tiền.');
             NroShopService::require(!DB::table('nro_worker_jobs')->where('order_id', $id)->whereIn('status', ['queued','processing','review'])->exists(), 'Đơn còn công việc đang chạy hoặc chờ đối soát.');
             NroShopService::require(!DB::table('nro_delivery_sessions')->where('order_id', $id)->whereIn('status', ['queued','preparing','ready','trading','review'])->exists(), 'Phiên nhận đồ chưa kết thúc hoặc chưa rõ kết quả.');

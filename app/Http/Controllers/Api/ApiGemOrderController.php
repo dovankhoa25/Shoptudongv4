@@ -192,7 +192,7 @@ class ApiGemOrderController extends Controller
         $validated = $request->validate([
             'server_id' => 'required|exists:servers,id',
             'character_name' => 'required|string|min:3|max:191',
-            'money_amount' => 'required|integer|min:3000',
+            'money_amount' => 'required|integer|min:10000',
         ]);
 
         $user = $request->user();

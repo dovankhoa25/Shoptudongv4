@@ -137,6 +137,11 @@ class NroSnapshotService
                     ]);
                 }
             }
+            if ($payload['completeness']['bag'] && $payload['completeness']['chest'] && $payload['completeness']['equipped']) {
+                if ($account->login_sale_blocked) $account->update(['login_sale_blocked'=>false]);
+                NroRoundRecovery::resumeAccount((int)$account->id);
+                if ($account->publish_status === 'login_blocked') $account->update(['publish_status'=>null,'publish_error'=>null]);
+            }
             if ($payload['completeness']['bag'] && $payload['completeness']['chest'] && $payload['completeness']['equipped'] && $account->publish_status === 'scan_failed') $account->update(['publish_status'=>null,'publish_error'=>null]);
             $account->update(['snapshot_failures' => ($payload['completeness']['bag'] && $payload['completeness']['chest'] && $payload['completeness']['equipped']) ? 0 : $account->snapshot_failures, 'latest_snapshot_id' => $snapshot->id, 'last_synced_at' => ($payload['completeness']['bag'] && $payload['completeness']['chest'] && $payload['completeness']['equipped']) ? $snapshot->captured_at : null, 'character_name' => $data['character']['name']]);
             if ($payload['completeness']['bag'] && $payload['completeness']['chest'] && $payload['completeness']['equipped']) {

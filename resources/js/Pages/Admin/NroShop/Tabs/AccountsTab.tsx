@@ -239,9 +239,9 @@ export default function AccountsTab({
                         render: (_, a: Account) =>
                             a.usage_type === 'nick' ? (
                                 <NickSaleSummary account={a} shopUrl={shopUrl} categories={categories} />
-                            ) : a.publishStatus === 'login_blocked' ? (
+                            ) : (a.loginSaleBlocked || a.publishStatus === 'login_blocked') ? (
                                 <div className="max-w-sm">
-                                    <Tag color="red">Bị chặn đăng nhập</Tag>
+                                    <Tag color="red">{a.loginSaleBlocked ? 'Tạm ẩn bán · Cần kiểm tra đăng nhập' : 'Bị chặn đăng nhập'}</Tag>
                                     <p className="mt-1 text-xs text-red-600 dark:text-red-400">
                                         {a.publishError || 'Hãy sửa mật khẩu rồi chạy lại.'}
                                     </p>

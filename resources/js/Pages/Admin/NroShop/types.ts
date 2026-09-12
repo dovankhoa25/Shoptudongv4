@@ -40,6 +40,7 @@ export type Account = {
     snapshotFailures?: number;
     publishStatus?: string;
     publishError?: string;
+    loginSaleBlocked?: boolean;
     publishConfig?: PublishConfig;
     nick: NickListing | null;
     listingCounts: { total: number; active: number } | null;

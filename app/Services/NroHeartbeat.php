@@ -18,8 +18,9 @@ class NroHeartbeat
             if ($order && !$order->cancel_requested) {
                 if ($input['loginWaiting'] ?? false) {
                     $retry=empty($input['loginRetryAt']) ? null : \Carbon\Carbon::parse($input['loginRetryAt'])->toDateTimeString();
-                    if ($order->failure_code!=='login_wait' || $order->login_retry_at!==$retry) $updates+=['failure_code'=>'login_wait','public_failure'=>'Game đang giới hạn đăng nhập. Hãy chờ hoặc yêu cầu hủy nếu chưa nhận đồ.','login_retry_at'=>$retry];
+                    if ($order->failure_code!=='login_wait' || $order->login_retry_at!==$retry) $updates+=['failure_code'=>'login_wait','public_failure'=>'Bot đang thử kết nối lại. Hệ thống sẽ tiếp tục khi hết thời gian chờ.','login_retry_at'=>$retry];
                 }
+                if (!($input['loginWaiting'] ?? false) && $order->failure_code === 'login_wait') $updates += ['failure_code'=>null,'public_failure'=>null,'login_retry_at'=>null];
                 if (!empty($input['message']) && $order->delivery_message!==$input['message']) $updates['delivery_message']=$input['message'];
                 if ($updates) DB::table('item_orders')->where('id',$order->id)->update($updates+['updated_at'=>now()]);
             }

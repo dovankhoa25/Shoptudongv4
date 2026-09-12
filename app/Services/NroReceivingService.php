@@ -24,6 +24,7 @@ class NroReceivingService
             NroShopService::require(!$o->cancel_requested, 'Đơn đang chờ hủy và hoàn tiền.');
             NroShopService::require($o->failure_code !== 'missing_items', 'Kho thiếu đồ. Chờ shop bổ sung và kiểm tra lại kho.');
             NroShopService::require($o->status === 'awaiting_receipt', 'Đơn đang nhận đồ hoặc cần đối soát.');
+            NroShopService::require(!NroRoundRecovery::pending((int)$o->id),'Bot đang khôi phục lượt giao trước; không cần tạo phiên nhận khác.');
             NroShopService::require($a->status === 'active' && $a->server_id && $a->server_game_id, 'Kho cần được cấu hình server hiển thị và server đăng nhập.');
             if($a->publish_status==='login_blocked') {
                 DB::table('item_orders')->where('id',$id)->update(['failure_code'=>'login_failed','public_failure'=>'Acc kho chưa thể đăng nhập. Chờ shop xử lý hoặc hủy nếu chưa nhận món nào.','delivery_message'=>'Kho chưa thể đăng nhập.','updated_at'=>now()]);
@@ -85,9 +86,9 @@ class NroReceivingService
         if (!$job->delivery_session_id) return;
         DB::table('nro_delivery_sessions')->where('id', $job->delivery_session_id)->update([
             'status' => $status,
-            'receiver_credentials' => null,
+            'receiver_credentials' => ($status === 'review' || NroRoundRecovery::pending((int)$job->order_id)) ? DB::raw('receiver_credentials') : null,
             // Keep the login lock on uncertain results until reconciliation.
-            'receiver_lock' => $status === 'review' ? DB::raw('receiver_lock') : null,
+            'receiver_lock' => ($status === 'review' || NroRoundRecovery::pending((int)$job->order_id)) ? DB::raw('receiver_lock') : null,
             'updated_at' => now(),
         ]);
     }

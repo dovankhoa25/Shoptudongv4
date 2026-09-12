@@ -10,6 +10,16 @@ class NroDeliveryLifecycle
     public function recover(object $job): bool
     {
         if (!$job->order_id || !$job->delivery_session_id) return false;
+        if (!empty($job->recovery_json)) {
+            $order=DB::table('item_orders')->where('id',$job->order_id)->lockForUpdate()->first();
+            if(!$order || in_array($order->status,['completed','refunded'])) return false;
+            DB::table('nro_worker_jobs')->where('id',$job->id)->update(['status'=>'failed','updated_at'=>now()]);
+            DB::table('nro_worker_jobs')->insert(['account_id'=>$job->account_id,'order_id'=>$job->order_id,'delivery_session_id'=>$job->delivery_session_id,
+                'type'=>'delivery','status'=>'queued','recovery_json'=>$job->recovery_json,'created_at'=>now(),'updated_at'=>now()]);
+            DB::table('nro_delivery_sessions')->where('id',$job->delivery_session_id)->update(['status'=>'queued','updated_at'=>now()]);
+            DB::table('item_orders')->where('id',$job->order_id)->update(['status'=>'queued','updated_at'=>now()]);
+            return true;
+        }
         $s=DB::table('nro_delivery_sessions')->where('id',$job->delivery_session_id)->lockForUpdate()->first();
         $o=DB::table('item_orders')->where('id',$job->order_id)->lockForUpdate()->first();
         if (!$s || !$o || $s->trade_in_flight === null || (bool)$s->trade_in_flight) return false;
@@ -51,7 +61,7 @@ class NroDeliveryLifecycle
             },3);
         });
         DB::table('nro_worker_jobs as j')->join('nro_delivery_sessions as s','s.id','=','j.delivery_session_id')
-            ->whereIn('j.status',['queued','processing'])->whereIn('s.status',['queued','ready'])->where('s.trade_in_flight',false)
+            ->whereNull('j.recovery_json')->whereIn('j.status',['queued','processing'])->whereIn('s.status',['queued','ready'])->where('s.trade_in_flight',false)
             ->whereNotNull('s.expires_at')->where('s.expires_at','<=',now())->select('j.*')->orderBy('j.id')->chunkById(100,function($jobs) use(&$changed) {
                 foreach($jobs as $candidate) DB::transaction(function() use($candidate,&$changed) {
                     $a=NroAccount::whereKey($candidate->account_id)->lockForUpdate()->first();

@@ -94,9 +94,9 @@ class NroShopController extends Controller
         if (($filters['state'] ?? '') === 'hidden') $q->where('shop_hidden', true);
         if (($filters['state'] ?? '') === 'waiting') $q->where('publish_status', 'waiting_snapshot');
         if (($filters['state'] ?? '') === 'published') $q->whereIn('id', Nick::withoutUserOwnedScope()->where('status', 'not_sold')->select('game_account_id'));
-        if (($filters['state'] ?? '') === 'attention') $q->whereIn('publish_status', ['needs_attention', 'scan_failed', 'publish_failed']);
+        if (($filters['state'] ?? '') === 'attention') $q->where(fn($q)=>$q->where('login_sale_blocked',true)->orWhereIn('publish_status', ['needs_attention', 'scan_failed', 'publish_failed', 'login_blocked']));
         if (($filters['state'] ?? '') === 'sold') $q->where('status', 'sold');
-        $page = $q->orderByDesc('id')->paginate(30);
+        $page = $q->orderByDesc('login_sale_blocked')->orderByRaw("CASE WHEN publish_status = 'login_blocked' THEN 0 ELSE 1 END")->orderByDesc('id')->paginate(30);
         $accounts = $page->getCollection();
         $warehouseJobs = DB::table('nro_worker_jobs')->whereIn('account_id', $accounts->pluck('id'))->where('status', 'processing')->get(['account_id','worker_instance','lease_until'])->groupBy('account_id');
         $nicks = Nick::withoutUserOwnedScope()->with('category:id,name,slug,status')->whereIn('game_account_id', $accounts->pluck('id'))
@@ -124,7 +124,7 @@ class NroShopController extends Controller
                 'server_id' => $a->server_id, 'server_game_id' => $a->server_game_id, 'delivery_map' => $a->delivery_map, 'delivery_zone' => $a->delivery_zone, 'wait_minutes' => $a->wait_minutes,
                 'delivery_zone_mode' => $a->delivery_zone_mode,
                 'snapshotFailures' => (int)$a->snapshot_failures, 'publishStatus' => $a->publish_status, 'publishError' => $a->publish_error, 'publishConfig' => $a->publish_config,
-                'shop_hidden' => $a->shop_hidden, 'status' => $a->status, 'nick' => $this->nickSummary($nicks->get($a->id)),
+                'loginSaleBlocked' => (bool)$a->login_sale_blocked, 'shop_hidden' => $a->shop_hidden, 'status' => $a->status, 'nick' => $this->nickSummary($nicks->get($a->id)),
                 'listingCounts' => $caps['listings'] ? ['total' => (int) ($listingCounts->get($a->id)?->total ?? 0), 'active' => (int) ($listingCounts->get($a->id)?->active ?? 0)] : null,
             ]) : [],
             'categories' => $categories->where('template', 'default')->where('status', 'active')->get(['categories.id', 'categories.name']),
@@ -142,7 +142,7 @@ class NroShopController extends Controller
             ->whereIn('status', ['queued', 'processing', 'review'])->selectRaw('status, COUNT(*) as total')->groupBy('status')->pluck('total', 'status');
 
         return ['total' => (int) $byUsage->sum(), 'nick' => (int) ($byUsage['nick'] ?? 0), 'warehouse' => (int) ($byUsage['warehouse'] ?? 0),
-            'attention' => (clone $accounts)->whereIn('publish_status', ['needs_attention', 'scan_failed', 'publish_failed'])->count(),
+            'attention' => (clone $accounts)->where(fn($q)=>$q->where('login_sale_blocked',true)->orWhereIn('publish_status', ['needs_attention', 'scan_failed', 'publish_failed', 'login_blocked']))->count(),
             'reviewJobs' => (int) ($jobs['review'] ?? 0), 'activeJobs' => (int) (($jobs['queued'] ?? 0) + ($jobs['processing'] ?? 0)),
             'openOrders' => DB::table('item_orders')->whereIn('account_id', clone $ownedIds)->whereNotIn('status', ['completed', 'refunded'])->count(),
             // Real totals for the tab labels; the old page showed the size of a truncated list instead.
@@ -363,6 +363,12 @@ class NroShopController extends Controller
                 $updates['publish_status'] = $a->usage_type === 'nick' && $a->auto_publish ? 'waiting_snapshot' : null;
                 $updates['publish_error'] = null;
             }
+            if ($a->login_sale_blocked) {
+                $updates['last_synced_at']=null;
+                $updates['publish_status']='waiting_snapshot';
+                $updates['publish_error']='Đã cập nhật mật khẩu; đang kiểm tra đăng nhập và dữ liệu kho.';
+                DB::table('nro_worker_jobs')->insert(['account_id'=>$a->id,'type'=>'snapshot','status'=>'queued','created_at'=>now(),'updated_at'=>now()]);
+            }
             $a->update($updates);
             Nick::withoutUserOwnedScope()->where('game_account_id', $a->id)->where('status', 'not_sold')->update(['account_password' => AccountEncrypt::encrypt($v['password'])]);
         });
@@ -378,7 +384,7 @@ class NroShopController extends Controller
             NroShopService::require(!Nick::withoutUserOwnedScope()->where('game_account_id', $a->id)->where('status', 'sold')->exists(), 'Nick đã bán, không được đăng nhập lại.');
             NroShopService::require(!DB::table('nro_worker_jobs')->where('account_id', $a->id)->whereIn('status', ['queued', 'processing', 'review'])->exists(), 'Acc đã có công việc hoặc đang chờ đối soát.');
             $a->update(['snapshot_failures' => 0]);
-            if ($a->publish_status !== 'login_blocked') $a->update(['publish_status' => $a->auto_publish ? 'waiting_snapshot' : null, 'publish_error' => null]);
+            $a->update(['publish_status' => $a->auto_publish ? 'waiting_snapshot' : null, 'publish_error' => null]);
             DB::table('nro_worker_jobs')->insert(['account_id' => $a->id, 'type' => 'snapshot', 'status' => 'queued', 'created_at' => now(), 'updated_at' => now()]);
         });
         ApiCache::clearGroups(['public:nick', 'public:nro-shop:listings']);

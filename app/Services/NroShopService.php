@@ -68,6 +68,7 @@ class NroShopService
             && $account->last_synced_at !== null
             && $snapshot->captured_at->lte(now()->addMinutes(5)) && $account->status === 'active' && $account->usage_type === 'warehouse';
         $reasons = [];
+        if ($account?->login_sale_blocked) $reasons[] = 'Kho đang cần sửa thông tin đăng nhập';
         if ($account?->shop_hidden) $reasons[] = 'Kho đang tạm ẩn khỏi shop; đơn đã mua vẫn được giao';
         if ($account?->status === 'demo') $reasons[] = 'Dữ liệu demo · không giao dịch thật';
         if ($items->contains(fn ($i) => !NroListingStock::allows((int) json_decode($i->item_json, true)['templateId'], $policy))) $reasons[] = 'Gói chứa vật phẩm ngoài danh sách được phép bán';
@@ -108,6 +109,7 @@ class NroShopService
             $account = NroAccount::whereKey($listing->account_id)->lockForUpdate()->firstOrFail();
             $listing = DB::table('item_listings')->where('id', $listingId)->lockForUpdate()->first();
             self::require(!DB::table('item_orders')->where('listing_id', $listingId)->exists(), 'Gói đồ đã được mua.');
+            self::require(!$account->login_sale_blocked, 'Kho đang cần sửa thông tin đăng nhập.');
             self::require(!$account->shop_hidden, 'Kho đang tạm ẩn khỏi shop.');
             self::require($listing->user_id != $buyer->id, 'Không thể mua gói đồ của chính bạn.');
             self::require($account->server_id == $server, 'Nhân vật nhận phải ở cùng server với gói đồ.');
