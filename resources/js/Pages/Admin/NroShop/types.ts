@@ -1,3 +1,10 @@
+export type NroOrderFlow = {
+    state: 'pending' | 'completed' | 'refunded'; label: string; terminal: boolean;
+    phase: string; phaseLabel: string; message: string; delivered: number; total: number; remaining: number;
+    canReceive: boolean; canRequestRefund: boolean; canAdminRefund: boolean; canCheckStock: boolean;
+    retryAt?: string | null; pendingRecovery: boolean;
+};
+
 import type { NroItem } from '@/Components/Nro/NroSnapshot';
 
 export type NickListing = {
@@ -20,6 +27,7 @@ export type PublishConfig = {
 };
 
 export type Account = {
+    flow?: { data: string; dataLabel: string; login: string; loginLabel: string; visibility: string; activityLabel: string; online: boolean };
     id: number;
     account_name: string;
     ownerUsername?: string;
@@ -75,6 +83,7 @@ export type Listing = {
 };
 
 export type Order = {
+    flow?: NroOrderFlow;
     refundRequested?: boolean;
     refundAmount?: number;
     refundedAt?: string;
@@ -100,6 +109,7 @@ export type Order = {
 };
 
 export type Job = {
+    rounds?: { id: number; key: string; status: string; startedAt: string; updatedAt: string; items: { id: number; before: number; offered: number; delivered: number }[]; result?: unknown }[];
     auditOrderId?: number;
     lateResults?: { kind: string; at: string; data: unknown }[];
     id: number;

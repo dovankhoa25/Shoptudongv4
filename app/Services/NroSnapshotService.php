@@ -52,18 +52,6 @@ class NroSnapshotService
             'snapshot.currentTask.steps.*.objectiveType' => 'sometimes|integer|min:-128|max:255',
             'snapshot.currentTask.steps.*.mapId' => 'sometimes|integer|min:-1|max:65535',
             'snapshot.currentTask.steps.*.requiredCount' => 'sometimes|integer|min:-1|max:2147483647',
-            'snapshot.currentTask' => 'nullable|array',
-            'snapshot.currentTask.id' => 'sometimes|integer|min:-1|max:65535',
-            'snapshot.currentTask.currentStep' => 'sometimes|integer|min:-1|max:255',
-            'snapshot.currentTask.currentCount' => 'sometimes|integer|min:-1|max:2147483647',
-            'snapshot.currentTask.name' => 'sometimes|string|max:1000',
-            'snapshot.currentTask.detail' => 'sometimes|nullable|string|max:10000',
-            'snapshot.currentTask.steps' => 'sometimes|array|max:255',
-            'snapshot.currentTask.steps.*.name' => 'required|string|max:1000',
-            'snapshot.currentTask.steps.*.detail' => 'sometimes|nullable|string|max:10000',
-            'snapshot.currentTask.steps.*.objectiveType' => 'sometimes|integer|min:-128|max:255',
-            'snapshot.currentTask.steps.*.mapId' => 'sometimes|integer|min:-1|max:65535',
-            'snapshot.currentTask.steps.*.requiredCount' => 'sometimes|integer|min:-1|max:2147483647',
             ...collect(['bag', 'chest', 'equipped', 'collectionChest'])->flatMap(fn ($key) => [
                 "snapshot.$key" => 'present|array|max:1000', "snapshot.$key.*.slot" => 'required|integer|min:0|max:10000',
                 "snapshot.$key.*.templateId" => 'required|integer|min:0|max:100000',
@@ -88,9 +76,6 @@ class NroSnapshotService
             return $entry;
         }, $source['collectionBook'] ?? []);
         $data['currentTask'] = isset($source['currentTask']) ? Arr::only($source['currentTask'], ['id', 'currentStep', 'name', 'detail', 'currentCount']) : null;
-        if ($data['currentTask'] !== null && isset($source['currentTask']['steps'])) {
-            $data['currentTask']['steps'] = array_map(fn ($step) => Arr::only($step, ['name', 'detail', 'objectiveType', 'mapId', 'requiredCount']), $source['currentTask']['steps']);
-        }
         if ($data['currentTask'] !== null && isset($source['currentTask']['steps'])) {
             $data['currentTask']['steps'] = array_map(fn ($step) => Arr::only($step, ['name', 'detail', 'objectiveType', 'mapId', 'requiredCount']), $source['currentTask']['steps']);
         }
@@ -139,6 +124,7 @@ class NroSnapshotService
             }
             if ($payload['completeness']['bag'] && $payload['completeness']['chest'] && $payload['completeness']['equipped']) {
                 if ($account->login_sale_blocked) $account->update(['login_sale_blocked'=>false]);
+                DB::table('item_orders')->where('account_id',$account->id)->where('failure_code','login_failed')->where('failure_role','sender')->where('status','awaiting_receipt')->where('cancel_requested',false)->update(['failure_code'=>null,'failure_role'=>null,'public_failure'=>null,'login_retry_at'=>null,'delivery_message'=>'Acc kho đã được kiểm tra. Bạn có thể nhận tiếp.','updated_at'=>now()]);
                 NroRoundRecovery::resumeAccount((int)$account->id);
                 if ($account->publish_status === 'login_blocked') $account->update(['publish_status'=>null,'publish_error'=>null]);
             }

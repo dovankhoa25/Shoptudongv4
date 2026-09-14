@@ -2173,4 +2173,114 @@ class NroShopWorkflowTest extends TestCase
         $this->assertSame(1,DB::table('nro_worker_jobs')->where('order_id',$order)->where('status','queued')->whereNotNull('recovery_json')->count());
         $this->assertDatabaseHas('item_orders',['id'=>$order,'status'=>'queued','failure_code'=>null]);
     }
+
+    public function test_flow_terminal_orders_hide_old_runtime_and_heartbeat_cannot_reopen_them(): void {
+        [$a,$buyer,$order,$session,$job]=$this->recoveryFixture('auto');
+        DB::table('item_orders')->where('id',$order)->update(['status'=>'refunded','refund_amount'=>200,'refunded_at'=>now(),'failure_code'=>'login_wait','public_failure'=>'STALE_RETRY','delivery_message'=>'STALE_RETRY','login_retry_at'=>now()->addMinute()]);
+        $data=app(NroShopService::class)->order($order);
+        $this->assertSame('refunded',$data['flow']['state']);$this->assertTrue($data['flow']['terminal']);
+        $this->assertFalse($data['flow']['canReceive']);$this->assertFalse($data['flow']['canRequestRefund']);
+        $this->assertNull($data['session']);$this->assertNull($data['publicFailure']);$this->assertNull($data['botActivity']);
+        $this->assertStringNotContainsString('STALE_RETRY',$data['message']);
+        $this->postJson('/app/nro-worker/jobs/'.$job['id'].'/heartbeat',['leaseToken'=>$job['leaseToken'],'loginWaiting'=>true,'message'=>'STALE_NEW'])->assertOk()->assertJsonPath('final',true);
+        // Exercise the next scheduled historical cleanup, not the marker set by fixture claim.
+        \Illuminate\Support\Facades\Cache::forget('nro:terminal-cleanup');
+        app(\App\Services\NroDeliveryLifecycle::class)->expire();
+        $this->assertDatabaseHas('item_orders',['id'=>$order,'status'=>'refunded','public_failure'=>null]);
+        $this->assertDatabaseHas('nro_delivery_sessions',['id'=>$session,'receiver_credentials'=>null,'receiver_lock'=>null]);
+    }
+    public function test_flow_repeated_receive_reuses_active_request_and_rejects_changed_recipient(): void {
+        [$a,$buyer,$order,$session,$job]=$this->recoveryFixture();
+        $service=app(\App\Services\NroReceivingService::class);
+        for($i=0;$i<3;$i++) $this->assertSame($session,$service->start($buyer,$order,['mode'=>'manual','recipientName'=>'khach','requestKey'=>(string)Str::uuid()]));
+        $this->assertSame(1,DB::table('nro_worker_jobs')->where('order_id',$order)->count());
+        $this->assertSame(1,DB::table('nro_delivery_sessions')->where('order_id',$order)->count());
+        try {$service->start($buyer,$order,['mode'=>'manual','recipientName'=>'different','requestKey'=>(string)Str::uuid()]);$this->fail('Changing a live receiver must fail');}
+        catch(\Illuminate\Validation\ValidationException $e) {$this->assertNotEmpty($e->errors());}
+        $this->assertSame('pending',app(NroShopService::class)->order($order)['flow']['state']);
+    }
+    private function beginCheckpointRound(array $job): array {
+        $key=(string)Str::uuid();$checkpoint=array_map(fn($i)=>['id'=>$i['id'],'before'=>2,'offered'=>$i['quantity']-$i['delivered'],'delivered'=>$i['delivered']],$job['order']['items']);
+        $body=['leaseToken'=>$job['leaseToken'],'roundKey'=>$key,'checkpoint'=>$checkpoint];
+        $this->postJson('/app/nro-worker/jobs/'.$job['id'].'/begin-round',$body)->assertOk();
+        return [$key,$checkpoint,$body];
+    }
+    public function test_flow_checkpoint_is_durable_before_trade_and_expiry_queues_automatic_recovery(): void {
+        [$a,$buyer,$order,$session,$job]=$this->recoveryFixture('auto');
+        [$key,$checkpoint,$body]=$this->beginCheckpointRound($job);
+        $this->postJson('/app/nro-worker/jobs/'.$job['id'].'/begin-round',$body)->assertOk();
+        $this->assertDatabaseCount('nro_delivery_rounds',1);
+        $this->assertSame('trading',app(NroShopService::class)->order($order)['flow']['phase']);
+        $this->travel(4)->minutes();app(\App\Services\NroDeliveryLifecycle::class)->expire();
+        $this->assertSame(1,DB::table('nro_worker_jobs')->where('order_id',$order)->where('status','queued')->whereNotNull('recovery_json')->count());
+        $this->assertDatabaseHas('nro_delivery_sessions',['id'=>$session,'status'=>'queued','trade_in_flight'=>false]);
+        $this->assertSame('recovering',app(NroShopService::class)->order($order)['flow']['phase']);
+        $this->assertNotNull(DB::table('nro_delivery_sessions')->where('id',$session)->value('receiver_credentials'));
+    }
+    public function test_flow_late_round_receipt_after_expiry_settles_once_without_replaying_game(): void {
+        [$a,$buyer,$order,$session,$job]=$this->recoveryFixture();[$key]=$this->beginCheckpointRound($job);
+        $this->travel(4)->minutes();app(\App\Services\NroDeliveryLifecycle::class)->expire();
+        $url='/app/nro-worker/jobs/'.$job['id'];$lease=['leaseToken'=>$job['leaseToken']];
+        $items=array_map(fn($i)=>['id'=>$i['id'],'delivered'=>$i['quantity']],$job['order']['items']);
+        $progress=[...$lease,'roundKey'=>$key,'items'=>$items];
+        $this->postJson($url.'/progress',$progress)->assertOk();
+        $this->postJson($url.'/progress',$progress)->assertOk();
+        $this->postJson($url.'/complete',[...$lease,'outcome'=>'success'])->assertOk();
+        $balance=User::find($a->user_id)->balance;
+        $this->postJson($url.'/complete',[...$lease,'outcome'=>'success'])->assertOk();
+        $this->assertEquals(200,$balance);$this->assertEquals($balance,User::find($a->user_id)->balance);
+        $this->assertDatabaseHas('item_orders',['id'=>$order,'status'=>'completed']);
+        $this->assertSame(0,DB::table('nro_worker_jobs')->where('order_id',$order)->whereIn('status',['queued','processing','review'])->count());
+        $this->assertSame('completed',app(NroShopService::class)->order($order)['flow']['state']);
+    }
+    public function test_flow_round_receipt_must_match_offered_items_and_cancellation_clears_checkpoint(): void {
+        [$a,$buyer,$order,$session,$job]=$this->recoveryFixture();[$key]=$this->beginCheckpointRound($job);
+        $url='/app/nro-worker/jobs/'.$job['id'];$lease=['leaseToken'=>$job['leaseToken']];
+        $items=array_map(fn($i)=>['id'=>$i['id'],'delivered'=>0],$job['order']['items']);
+        $this->postJson($url.'/progress',[...$lease,'roundKey'=>$key,'items'=>$items])->assertUnprocessable();
+        $this->postJson($url.'/complete',[...$lease,'outcome'=>'trade_paused','tradeEvidence'=>'server_cancelled'])->assertOk();
+        $this->assertDatabaseHas('nro_delivery_rounds',['round_key'=>$key,'status'=>'cancelled']);
+        $this->assertNull(DB::table('nro_worker_jobs')->where('id',$job['id'])->value('recovery_json'));
+        $this->assertSame('cooldown',app(NroShopService::class)->order($order)['flow']['phase']);
+    }
+    public function test_flow_refund_clears_login_reason_but_keeps_refund_history_and_no_double_credit(): void {
+        [$seller,$a,$buyer,$order,$job]=$this->controlsFixture();
+        $this->postJson('/app/nro-worker/jobs/'.$job['id'].'/complete',['leaseToken'=>$job['leaseToken'],'outcome'=>'missing_items','payload'=>$this->payload(0)])->assertOk();
+        app(\App\Services\NroOrderRefund::class)->request($order,$buyer);
+        $data=app(NroShopService::class)->order($order);
+        $this->assertSame('refunded',$data['flow']['state']);$this->assertNull($data['failureCode']);$this->assertNull($data['loginRetryAt']);
+        $this->assertNotEmpty(DB::table('item_orders')->where('id',$order)->value('refund_note'));
+        app(\App\Services\NroOrderRefund::class)->request($order,$buyer);
+        $this->assertEquals(1000,$buyer->fresh()->balance);
+    }
+    public function test_flow_new_shared_order_receives_current_warehouse_position_and_private_patch(): void {
+        Event::fake([\App\Events\NroOrdersPatched::class]);
+        [$a,$buyer,$order,$session,$job]=$this->recoveryFixture();
+        $this->postJson('/app/nro-worker/jobs/'.$job['id'].'/warehouse-state',['leaseToken'=>$job['leaseToken'],'phase'=>'ready','position'=>['characterId'=>10,'name'=>'bot','mapId'=>5,'mapName'=>'Đảo Kame','zone'=>24,'x'=>285,'y'=>288]])->assertOk();
+        $data=app(NroShopService::class)->order($order);$this->assertEquals(24,$data['botActivity']['position']['zone']);
+        app(\App\Services\NroRealtimePublisher::class)->push([$order]);
+        Event::assertDispatched(\App\Events\NroOrdersPatched::class,function($event) {
+            $json=json_encode($event->broadcastWith());
+            return str_contains($json,'flow') && !str_contains($json,'secret-pass') && !str_contains($json,'receiver_credentials');
+        });
+    }
+    public function test_flow_inactive_or_unconfigured_warehouse_does_not_offer_receive(): void {
+        [$a,$buyer,$order,$session,$job]=$this->recoveryFixture();
+        DB::table('nro_worker_jobs')->where('id',$job['id'])->update(['status'=>'failed']);
+        DB::table('nro_delivery_sessions')->where('id',$session)->update(['status'=>'failed']);
+        DB::table('item_orders')->where('id',$order)->update(['status'=>'awaiting_receipt']);
+        $this->assertTrue(app(NroShopService::class)->order($order)['flow']['canReceive']);
+        $a->update(['server_game_id'=>null]);
+        $flow=app(NroShopService::class)->order($order)['flow'];
+        $this->assertFalse($flow['canReceive']);$this->assertSame('needs_input',$flow['phase']);
+    }
+    public function test_flow_another_live_job_cannot_make_an_old_position_live(): void {
+        [$a,$buyer,$order,$session,$job]=$this->recoveryFixture();
+        DB::table('nro_delivery_sessions')->where('id',$session)->update(['position_json'=>json_encode(['zone'=>21,'mapId'=>5])]);
+        $other=(array)DB::table('item_orders')->find($order);unset($other['id']);$other['request_key']=(string)Str::uuid();
+        $otherId=DB::table('item_orders')->insertGetId($other);
+        DB::table('nro_worker_jobs')->where('id',$job['id'])->update(['order_id'=>$otherId]);
+        $data=app(NroShopService::class)->order($order);
+        $this->assertTrue($data['botOnline']);$this->assertNull($data['session']['position']);
+    }
 }

@@ -14,6 +14,7 @@ class NroHeartbeat
             abort_unless($job->status==='processing' && $job->lease_until>=now()->toDateTimeString(),409);
             DB::table('nro_worker_jobs')->where('id',$job->id)->update(['lease_until'=>now()->addMinutes(3),'updated_at'=>now()]);
             $order=$job->order_id ? DB::table('item_orders')->where('id',$job->order_id)->lockForUpdate()->first() : null;
+            if ($order && NroOrderFlow::terminal($order->status)) return ['id'=>$job->id,'ok'=>true,'final'=>true,'cancelRequested'=>true];
             $updates=[];
             if ($order && !$order->cancel_requested) {
                 if ($input['loginWaiting'] ?? false) {

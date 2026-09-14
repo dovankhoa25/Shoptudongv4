@@ -38,6 +38,10 @@ class NroWorkerController extends Controller
                 $account = NroAccount::whereKey($candidate->account_id)->lockForUpdate()->first();
                 $job = DB::table('nro_worker_jobs')->where('id', $candidate->id)->lockForUpdate()->first();
                 if (!$job || $job->status !== 'queued') continue;
+                if ($job->order_id && \App\Services\NroOrderFlow::terminal((string)DB::table('item_orders')->where('id',$job->order_id)->value('status'))) {
+                    \App\Services\NroOrderFlow::closeExecution($job->order_id,(string)DB::table('item_orders')->where('id',$job->order_id)->value('status'));
+                    continue;
+                }
                 if (DB::table('nro_worker_jobs')->where('account_id',$job->account_id)->where('id','!=',$job->id)->whereNotNull('recovery_json')->whereIn('status',['queued','processing'])->exists()) continue;
                 if ($job->recovery_json && DB::table('nro_worker_jobs')->where('account_id',$job->account_id)->where('id','!=',$job->id)->where('status','processing')->exists()) continue;
                 if ($job->order_id && DB::table('item_orders')->where('id',$job->order_id)->where('failure_code','login_wait')->where('login_retry_at','>',now())->exists()) continue;
@@ -167,12 +171,19 @@ class NroWorkerController extends Controller
             $terminal = DB::table('nro_worker_jobs')->where('id', $id)->lockForUpdate()->first();
             if ($terminal && in_array($terminal->status, ['completed', 'failed', 'expired'])) {
                 if ($terminal->lease_token !== null) $this->job($r, $id, true);
+                if ($terminal->type==='delivery' && $r->input('outcome')==='success'
+                    && DB::table('nro_delivery_rounds')->where('job_id',$terminal->id)->where('status','confirmed')->exists()
+                    && !DB::table('item_order_items')->where('order_id',$terminal->order_id)->whereColumn('delivered','<','quantity')->exists()) {
+                    $shop->settle($terminal->order_id,true);
+                    return response()->json(['ok'=>true,'alreadyFinalized'=>true]);
+                }
                 $this->lateResult($r, $terminal, 'complete');
                 return response()->json(['ok' => true, 'alreadyFinalized' => true]);
             }
             // A restarted tool may use a newly issued key; the unguessable lease token still binds the journal to this job.
             $job = $this->job($r, $id, true);
             abort_unless(in_array($job->status, ['processing', 'review']), 409);
+            if ($job->order_id && \App\Services\NroOrderFlow::terminal((string)DB::table('item_orders')->where('id',$job->order_id)->value('status'))) return response()->json(['ok'=>true,'alreadyFinalized'=>true]);
             if ($r->input('outcome') === 'reconnect_check') {
                 $r->validate(['recovery'=>'required|array|min:1|max:200','recovery.*.id'=>'required|integer|distinct',
                     'recovery.*.before'=>'required|integer|min:0','recovery.*.offered'=>'required|integer|min:0', 'recovery.*.delivered'=>'required|integer|min:0']);
@@ -230,6 +241,8 @@ class NroWorkerController extends Controller
                 $otherRunning = DB::table('nro_worker_jobs')->where('account_id', $accountId)->where('id', '!=', $id)->where('status', 'processing')->exists();
                 if (is_array($payload) && $job->status === 'processing' && $job->lease_until >= now()->toDateTimeString() && !$otherRunning) $snapshots->ingest($account, $payload);
                 else $account->update(['last_synced_at' => null]);
+                \App\Services\NroDeliveryRound::finish($job,'cancelled',['evidence'=>$r->input('tradeEvidence'),'message'=>$r->input('message')]);
+                $job->recovery_json=null;
                 if ($r->input('outcome') === 'trade_recovered') {
                     DB::table('nro_delivery_sessions')->where('id', $session->id)->update(['trade_in_flight'=>false, 'status'=>'ready', 'updated_at'=>now()]);
                     DB::table('item_orders')->where('id',$job->order_id)->whereNotIn('status',['completed','refunded'])->update(['failure_code'=>null,'public_failure'=>null,'login_retry_at'=>null]);
@@ -257,7 +270,7 @@ class NroWorkerController extends Controller
             if ($permanentSenderLoginFailure && $r->input('loginFailureKind') === 'BadCredentials') {
                 $account->update(['login_sale_blocked'=>true]);
                 DB::table('item_orders')->where('account_id',$account->id)->whereNotIn('status',['completed','refunded'])->update([
-                    'failure_code'=>'login_failed','public_failure'=>'Acc kho sai thông tin đăng nhập. Shop cần cập nhật; bạn có thể yêu cầu hủy nếu chưa nhận đồ.',
+                    'failure_role'=>'sender','failure_code'=>'login_failed','public_failure'=>'Acc kho sai thông tin đăng nhập. Shop cần cập nhật; bạn có thể yêu cầu hủy nếu chưa nhận đồ.',
                     'login_retry_at'=>null,'updated_at'=>now()]);
             }
             if ($job->order_id && $r->input('outcome') === 'login_failed' && $r->boolean('retryable')
@@ -269,7 +282,7 @@ class NroWorkerController extends Controller
                 if (app(\App\Services\NroDeliveryLifecycle::class)->recover($job)) return response()->json(['ok'=>true,'recovered'=>true,'retrySafe'=>true]);
             }
             if($job->order_id && $r->input('outcome')==='login_failed') DB::table('item_orders')->where('id',$job->order_id)->update([
-                'failure_code'=>'login_failed','public_failure'=>$r->input('loginAccountRole')==='receiver' ? 'Acc nhận chưa thể đăng nhập hoặc chưa sẵn sàng nhận đồ. Kiểm tra lại thông tin nhận.' : 'Acc kho chưa thể đăng nhập. Bạn có thể chờ shop xử lý hoặc hủy nếu chưa nhận món nào.',
+                'failure_role'=>$r->input('loginAccountRole'),'failure_code'=>'login_failed','public_failure'=>$r->input('loginAccountRole')==='receiver' ? 'Acc nhận chưa thể đăng nhập hoặc chưa sẵn sàng nhận đồ. Kiểm tra lại thông tin nhận.' : 'Acc kho chưa thể đăng nhập. Bạn có thể chờ shop xử lý hoặc hủy nếu chưa nhận món nào.',
                 'login_retry_at'=>null,'updated_at'=>now()]);
             if($job->order_id && in_array($r->input('outcome'), ['review','interrupted']) && app(\App\Services\NroDeliveryLifecycle::class)->recover($job)) return response()->json(['ok'=>true,'recovered'=>true,'retrySafe'=>true]);
             if (!$success && !$expired && app(\App\Services\NroReceivingService::class)->retryInterrupted($job, $r->input('message'))) return response()->json(['ok' => true, 'retrySafe' => true]);
@@ -319,6 +332,7 @@ class NroWorkerController extends Controller
             NroAccount::whereKey($accountId)->lockForUpdate()->firstOrFail();
             $job=$this->job($r,$id,true);
             if(in_array($job->status,['completed','failed','expired'])) return response()->json(['ok'=>true]);
+            if($job->order_id && \App\Services\NroOrderFlow::terminal((string)DB::table('item_orders')->where('id',$job->order_id)->value('status'))) return response()->json(['ok'=>true]);
             $message='Tool đã lưu kết quả nhưng API chưa chấp nhận. Shop đang kiểm tra dữ liệu; không giao lại hoặc hoàn tiền khi chưa xác nhận.';
             DB::table('nro_worker_jobs')->where('id',$id)->update(['status'=>$job->type==='delivery'?'review':'failed','result_json'=>json_encode(['reason'=>'result_rejected','httpStatus'=>$r->integer('httpStatus')]),'updated_at'=>now()]);
             if($job->order_id) DB::table('item_orders')->where('id',$job->order_id)->update(['status'=>'review','failure_code'=>'result_rejected','public_failure'=>$message,'delivery_message'=>$message,'updated_at'=>now()]);
@@ -330,14 +344,26 @@ class NroWorkerController extends Controller
     public function progress(Request $r, int $id, NroSnapshotService $snapshots)
     {
         $r->validate(['leaseToken' => 'required|uuid', 'items' => 'required|array|min:1|max:20',
-            'items.*.id' => 'required|integer|distinct', 'items.*.delivered' => 'required|integer|min:0', 'payload' => 'nullable|array']);
+            'roundKey'=>'nullable|uuid', 'items.*.id' => 'required|integer|distinct', 'items.*.delivered' => 'required|integer|min:0', 'payload' => 'nullable|array']);
         abort_if(strlen($r->getContent()) > 4 * 1024 * 1024, 413);
         return DB::transaction(function () use ($r, $id, $snapshots) {
             $accountId = DB::table('nro_worker_jobs')->where('id', $id)->value('account_id');
             NroAccount::whereKey($accountId)->lockForUpdate()->firstOrFail();
             $job = $this->job($r, $id, true);
-            if (in_array($job->status, ['completed','failed','expired'])) { $this->lateResult($r,$job,'progress'); return response()->json(['ok'=>true,'alreadyFinalized'=>true]); }
-            abort_unless($job->type === 'delivery' && in_array($job->status, ['processing','review']), 409);
+            $roundReceipt=$r->filled('roundKey') && DB::table('nro_delivery_rounds')->where('round_key',$r->input('roundKey'))->where('job_id',$job->id)->whereIn('status',['started','confirmed'])->exists();
+            if (in_array($job->status, ['completed','failed','expired']) && !$roundReceipt) { $this->lateResult($r,$job,'progress'); return response()->json(['ok'=>true,'alreadyFinalized'=>true]); }
+            abort_unless($job->type === 'delivery' && ($roundReceipt || in_array($job->status, ['processing','review'])), 409);
+            if (\App\Services\NroOrderFlow::terminal((string)DB::table('item_orders')->where('id',$job->order_id)->value('status'))) return response()->json(['ok'=>true,'alreadyFinalized'=>true]);
+            $round=null;
+            if ($r->filled('roundKey')) {
+                $round=DB::table('nro_delivery_rounds')->where('round_key',$r->input('roundKey'))->where('job_id',$job->id)->where('order_id',$job->order_id)->first();
+                abort_unless($round,422);
+                if ($round->status==='confirmed') { abort_unless(json_decode($round->result_json,true)===$r->input('items'),422); return response()->json(['ok'=>true]); }
+                abort_unless($round->status==='started',409);
+                $offered=collect(json_decode($round->before_json,true))->keyBy('id');
+                abort_unless($offered->count()===count($r->input('items')),422);
+                foreach($r->input('items') as $line) { $before=$offered->get($line['id']); abort_unless($before && $line['delivered']===$before['delivered']+$before['offered'],422); }
+            }
             $hasProgress = false;
             foreach ($r->input('items') as $line) {
                 $item = DB::table('item_order_items')->where('id', $line['id'])->where('order_id', $job->order_id)->lockForUpdate()->first();
@@ -361,6 +387,7 @@ class NroWorkerController extends Controller
             if ($hasProgress && !array_diff($allItemIds, array_column($r->input('items'), 'id'))) {
                 DB::table('nro_delivery_sessions')->where('id', $job->delivery_session_id)->whereIn('status', ['trading','review'])->update(['status' => 'ready', 'trade_in_flight' => false, 'updated_at' => now()]);
             }
+            if ($round) \App\Services\NroDeliveryRound::finish($job,'confirmed',$r->input('items'));
             // Delivery acknowledgement never depends on a successful inventory refresh.
             // The independent stock endpoint ingests a new snapshot after the receipt is durable.
             return response()->json(['ok' => true]);
@@ -373,6 +400,8 @@ class NroWorkerController extends Controller
             $accountId=DB::table('nro_worker_jobs')->where('id',$id)->value('account_id');
             NroAccount::whereKey($accountId)->lockForUpdate()->firstOrFail();$job=$this->job($r,$id);
             abort_unless($job->status==='processing' && $job->lease_until>=now()->toDateTimeString(),409);
+            \App\Services\NroDeliveryRound::finish($job,'recovered');
+            DB::table('nro_delivery_sessions')->where('id',$job->delivery_session_id)->update(['trade_in_flight'=>false,'trade_phase'=>null,'phase_deadline'=>null]);
             DB::table('nro_worker_jobs')->where('order_id',$job->order_id)->update(['recovery_json'=>null,'updated_at'=>now()]);
             return response()->json(['ok'=>true]);
         });
@@ -424,7 +453,9 @@ class NroWorkerController extends Controller
 
     public function beginRound(Request $r, int $id)
     {
-        $r->validate(['leaseToken' => 'required|uuid']);
+        $r->validate(['leaseToken'=>'required|uuid','roundKey'=>'nullable|uuid',
+            'checkpoint'=>'required_with:roundKey|array|min:1|max:200','checkpoint.*.id'=>'required|integer|distinct',
+            'checkpoint.*.before'=>'required|integer|min:0','checkpoint.*.offered'=>'required|integer|min:0','checkpoint.*.delivered'=>'required|integer|min:0']);
         return DB::transaction(function () use ($r, $id) {
             $accountId = DB::table('nro_worker_jobs')->where('id', $id)->value('account_id');
             NroAccount::whereKey($accountId)->lockForUpdate()->firstOrFail();
@@ -437,7 +468,13 @@ class NroWorkerController extends Controller
             abort_if((NroAccount::find($accountId)->delivery_activity['pauseStartedAt'] ?? null) !== null, 409, 'Bot đang lấy đồ hoặc di chuyển.');
             $s = DB::table('nro_delivery_sessions')->where('id', $job->delivery_session_id)->lockForUpdate()->first();
             abort_if(DB::table('item_orders')->where('id',$job->order_id)->value('cancel_requested'),409,'Đơn đang yêu cầu hủy.');
+            abort_if(\App\Services\NroOrderFlow::terminal((string)DB::table('item_orders')->where('id',$job->order_id)->value('status')),409);
+            if ($r->filled('roundKey')) {
+                $existing=DB::table('nro_delivery_rounds')->where('round_key',$r->input('roundKey'))->first();
+                if ($existing) { abort_unless($existing->job_id==$id && $existing->status==='started' && json_decode($existing->before_json,true)===$r->input('checkpoint'),409); return response()->json(['ok'=>true]); }
+            }
             abort_unless($s && $s->status === 'ready' && $s->expires_at > now()->toDateTimeString(), 409);
+            if ($r->filled('roundKey')) \App\Services\NroDeliveryRound::begin($job,$r->input('roundKey'),$r->input('checkpoint'));
             DB::table('nro_delivery_sessions')->where('id', $s->id)->update(['status' => 'trading', 'trade_in_flight' => true, 'trade_phase' => 'locking', 'phase_deadline' => now()->addSeconds(20), 'updated_at' => now()]);
             return response()->json(['ok' => true]);
         });

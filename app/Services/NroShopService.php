@@ -152,6 +152,9 @@ class NroShopService
 
         $rows = DB::table('item_orders')->whereIn('id', $ids)->get()->keyBy('id');
         if ($rows->isEmpty()) return [];
+        $recovering=DB::table('nro_worker_jobs')->whereIn('order_id',$rows->keys())->whereNotNull('recovery_json')->pluck('order_id')->flip();
+        $running=DB::table('nro_worker_jobs')->whereIn('order_id',$rows->keys())->whereIn('status',['queued','processing','review'])->pluck('order_id')->flip();
+        $auditing=DB::table('nro_worker_jobs')->whereIn('account_id',$rows->pluck('account_id'))->whereNotNull('audit_order_id')->whereIn('status',['queued','processing'])->pluck('account_id')->flip();
         // Ascending id so the highest id overwrites earlier ones: the latest session per order.
         $sessions = DB::table('nro_delivery_sessions')->whereIn('id',DB::table('nro_delivery_sessions')->selectRaw('MAX(id)')->whereIn('order_id',$rows->keys())->groupBy('order_id'))->get()->keyBy('order_id');
         $accounts = NroAccount::whereIn('id', $rows->pluck('account_id')->filter()->unique())->get()->keyBy('id');
@@ -161,17 +164,19 @@ class NroShopService
         $activity = DB::table('nro_worker_jobs as j')->join('nro_delivery_sessions as s', 's.id', '=', 'j.delivery_session_id')
             ->whereIn('j.account_id', $rows->pluck('account_id')->unique())->where('j.status', 'processing')
             ->get(['j.account_id', 'j.order_id', 's.status', 's.position_json', 'j.worker_instance', 'j.lease_until'])->groupBy('account_id');
-        return $rows->map(function ($o) use ($sessions, $accounts, $servers, $itemsByOrder, $activity) {
+        return $rows->map(function ($o) use ($sessions, $accounts, $servers, $itemsByOrder, $activity, $recovering, $running, $auditing) {
             $session = $this->sessionPayload($sessions->get($o->id));
             $location = $accounts->get($o->account_id);
-            $live=($activity->get($o->account_id) ?? collect())->contains(fn($j)=>(int)$j->order_id===(int)$o->id && $j->lease_until && $j->lease_until>now()->toDateTimeString());
-            if($session && !$live) $session['position']=null;
+            $live=($activity->get($o->account_id) ?? collect())->contains(fn($j)=>$j->lease_until && $j->lease_until>now()->toDateTimeString());
+            $warehouseState=$location ? NroWarehouseActivity::publicPayload($location,$activity->get($o->account_id) ?? collect()) : [];
+            $ownLive=($activity->get($o->account_id) ?? collect())->contains(fn($j)=>$j->order_id==$o->id && $j->lease_until && $j->lease_until>now()->toDateTimeString());
+            if($session) $session['position']=$live ? (isset($warehouseState['position']) ? array_replace($warehouseState['position'],['recipientName'=>$session['recipientName']]) : ($ownLive ? $session['position'] : null)) : null;
             $delivered=($itemsByOrder->get($o->id) ?? collect())->sum('delivered');
 
-            return ['id' => $o->id, 'revision'=>(int)$o->realtime_revision, 'title' => $o->title, 'price' => (string) $o->price, 'status' => $o->status,
+            return NroOrderFlow::present(['id' => $o->id, 'revision'=>(int)$o->realtime_revision, 'title' => $o->title, 'price' => (string) $o->price, 'status' => $o->status,
                 'recipientName' => $session['recipientName'] ?? $o->recipient_name, 'serverIndex' => $o->server_index, 'serverId' => $o->server_id,
                 'serverName' => $servers[$o->server_id] ?? null, 'message' => $o->status==='processing' && !$live ? 'Bot mất liên lạc; chờ khôi phục và xác nhận lại điểm nhận.' : ($o->public_failure ?: $o->delivery_message),
-                'botLeaseUntil'=>($lease=($activity->get($o->account_id) ?? collect())->where('order_id',$o->id)->max('lease_until')) ? \Carbon\Carbon::parse($lease)->toIso8601String() : null,'botOnline'=>$live,'failureCode'=>$o->failure_code,'publicFailure'=>$o->public_failure,'loginRetryAt'=>$o->login_retry_at ? \Carbon\Carbon::parse($o->login_retry_at)->toIso8601String() : null,'cancelRequested'=>(bool)$o->cancel_requested,'canCancel'=>!$delivered && !$o->cancel_requested && !in_array($o->status,['review','completed','refunded']) && NroOrderRefund::eligible($o),'refundRequested' => (bool)$o->refund_requested, 'refundAmount' => (int)$o->refund_amount, 'refundedAt' => $o->refunded_at, 'session' => $session,
+                'botLeaseUntil'=>($lease=($activity->get($o->account_id) ?? collect())->max('lease_until')) ? \Carbon\Carbon::parse($lease)->toIso8601String() : null,'botOnline'=>$live,'failureCode'=>$o->failure_code,'publicFailure'=>$o->public_failure,'loginRetryAt'=>$o->login_retry_at ? \Carbon\Carbon::parse($o->login_retry_at)->toIso8601String() : null,'cancelRequested'=>(bool)$o->cancel_requested,'canCancel'=>!$delivered && !$o->cancel_requested && !in_array($o->status,['review','completed','refunded']) && NroOrderRefund::eligible($o,$recovering->has($o->id)),'refundRequested' => (bool)$o->refund_requested, 'refundAmount' => (int)$o->refund_amount, 'refundedAt' => $o->refunded_at, 'session' => $session,
                 // Counts and bot identity are public; other buyers' names/order IDs are never exposed.
                 'botActivity' => array_merge($location ? NroWarehouseActivity::publicPayload($location, $activity->get($o->account_id) ?? collect()) : [], [
                     'waitingCount' => ($activity->get($o->account_id) ?? collect())->whereIn('status', ['preparing', 'ready'])->count(),
@@ -179,7 +184,7 @@ class NroShopService
                 ]),
                 'deliveryLocation' => $location ? ['mapId' => $location->delivery_map, 'mapName' => $location->delivery_map == 5 ? 'Đảo Kame' : null, 'zoneMode' => $location->delivery_zone_mode, 'zone' => $location->delivery_zone] : null,
                 'createdAt' => $o->created_at, 'items' => ($itemsByOrder->get($o->id) ?? collect())->map(fn ($i) => [
-                    'id' => $i->id, 'item' => json_decode($i->item_json, true), 'quantity' => $i->quantity, 'delivered' => $i->delivered])->values()->all()];
+                    'id' => $i->id, 'item' => json_decode($i->item_json, true), 'quantity' => $i->quantity, 'delivered' => $i->delivered])->values()->all()], $o, $location, $recovering->has($o->id), $running->has($o->id), $auditing->has($o->account_id));
         })->all();
     }
 
@@ -210,6 +215,8 @@ class NroShopService
             description: 'Bán'.' gói đồ #'.$orderId, related: 'nro_item_order', relatedId: $orderId,
             oldBalance: $before, newBalance: $before + $order->price, idempotencyKey: "nro-order:$orderId:settle");
         DB::table('item_orders')->where('id', $orderId)->update(['status' => 'completed', 'failure_code'=>null,'public_failure'=>null,'login_retry_at'=>null,'cancel_requested'=>false,'refund_requested' => false, 'updated_at' => now()]);
+        NroOrderFlow::closeExecution($orderId,'completed');
+        DB::table('item_orders')->where('id',$orderId)->update(NroOrderFlow::terminalChanges('completed'));
         if ($delivered) DB::table('item_order_items')->where('order_id', $orderId)->update(['delivered' => DB::raw('quantity')]);
         // Force a fresh inventory before the next sale after manual settlement.
         NroAccount::whereKey($order->account_id)->update(['last_synced_at' => null]);

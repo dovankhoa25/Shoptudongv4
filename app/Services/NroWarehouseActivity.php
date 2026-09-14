@@ -38,6 +38,7 @@ class NroWarehouseActivity
             }
         } else $pausedAt ??= now()->toIso8601String();
         $account->update(['delivery_activity' => ['phase' => $phase, 'message' => self::MESSAGES[$phase],
+            'position' => $phase==='ready' ? $position : ($old['position'] ?? null),
             'pauseStartedAt' => $pausedAt, 'workerInstance' => $instance, 'updatedAt' => now()->toIso8601String()]]);
     }
     public static function publicPayload(NroAccount $account, $jobs): array
@@ -45,7 +46,7 @@ class NroWarehouseActivity
         $activity = $account->delivery_activity ?? [];
         $phase = $activity['phase'] ?? null;
         $live = $jobs->contains(fn ($job) => $job->worker_instance === ($activity['workerInstance'] ?? null) && $job->lease_until && Carbon::parse($job->lease_until)->isFuture());
-        return ['phase' => $live ? $phase : null, 'message' => $live ? ($activity['message'] ?? null) : null,
+        return ['position'=>$live ? ($activity['position'] ?? null) : null, 'phase' => $live ? $phase : null, 'message' => $live ? ($activity['message'] ?? null) : null,
             'pauseStartedAt' => $live ? ($activity['pauseStartedAt'] ?? null) : null,
             'preparing' => $live && in_array($phase, ['home','collecting','travelling'])];
     }

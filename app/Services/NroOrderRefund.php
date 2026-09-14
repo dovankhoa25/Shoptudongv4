@@ -77,6 +77,8 @@ class NroOrderRefund
             DB::table('item_orders')->where('id',$id)->update(['status'=>'refunded','cancel_requested'=>false,'refund_requested'=>false,'refund_amount'=>$amount,
                 'refund_actor_id'=>$actor->id,'refund_note'=>$note,'refunded_at'=>now(),'updated_at'=>now(),
                 'delivery_message'=>'Đã hoàn '.number_format($amount,0,',','.').'đ. Đơn đã kết thúc.']);
+            DB::table('item_orders')->where('id',$id)->update(NroOrderFlow::terminalChanges('refunded',$amount));
+            NroOrderFlow::closeExecution($id,'refunded');
             $account->update(['last_synced_at'=>null]);
         }, 3);
         ApiCache::clearGroup('public:nro-shop:listings');

@@ -231,7 +231,7 @@ export default function AccountsTab({
                         title: 'Vai trò',
                         dataIndex: 'usage_type',
                         width: 100,
-                        render: (v, a: Account) => <><Tag>{v === 'nick' ? 'Bán nick' : 'Kho đồ'}</Tag>{a.shop_hidden && <Tooltip title="Gói đồ đã ẩn khỏi shop. Đơn đã mua vẫn được giao."><Tag color="orange">Tạm ẩn shop</Tag></Tooltip>}{(a.snapshotFailures ?? 0) >= 3 && <Tag color="red">Dừng tự quét · 3 lần lỗi</Tag>}{a.deliveryActivity?.message && <div className="mt-1 text-xs text-sky-700 dark:text-sky-300">{a.deliveryActivity.message}</div>}</>,
+                        render: (v, a: Account) => <><Tag>{v === 'nick' ? 'Bán nick' : 'Kho đồ'}</Tag>{a.shop_hidden && <Tooltip title="Gói đồ đã ẩn khỏi shop. Đơn đã mua vẫn được giao."><Tag color="orange">Tạm ẩn shop</Tag></Tooltip>}{(a.snapshotFailures ?? 0) >= 3 && <Tag color="red">Dừng tự quét · 3 lần lỗi</Tag>}</>,
                     },
                     {
                         title: 'Tin bán',
@@ -264,11 +264,12 @@ export default function AccountsTab({
                         title: 'Dữ liệu game',
                         dataIndex: 'last_synced_at',
                         width: 150,
-                        render: v => (
-                            <span className="text-xs text-slate-500 dark:text-slate-400">
-                                {v ? dateTime(v) : 'Chờ lấy / cập nhật'}
-                            </span>
-                        ),
+                        render: (v, a: Account) => <div className="space-y-1 text-xs">
+                            <div>{a.flow?.dataLabel || (v ? 'Đã có dữ liệu' : 'Chờ lấy dữ liệu')}</div>
+                            {a.flow?.login==='needs_fix' && <Tag color="red">Cần sửa đăng nhập</Tag>}
+                            <div className={a.flow?.online ? 'text-sky-600' : 'text-slate-500'}>{a.flow?.activityLabel || 'Bot offline'}</div>
+                            <div className="text-slate-500">{v ? dateTime(v) : 'Chưa cập nhật'}</div>
+                        </div>,
                     },
                     {
                         title: 'Thao tác',

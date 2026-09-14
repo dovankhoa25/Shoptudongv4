@@ -125,7 +125,7 @@ export default function NroShop({
         },
         {
             key: 'jobs',
-            label: `Công việc tool (${stats.jobs})`,
+            label: `Nhật ký kỹ thuật (${stats.jobs})`,
             show: caps.manageAccounts || caps.reconcile,
             children: (
                 <JobsTab canReconcile={canReconcile} run={run} busy={busy} dataVersion={dataVersion} />

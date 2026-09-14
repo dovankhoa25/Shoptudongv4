@@ -14,9 +14,10 @@ class NroDeliveryLifecycle
             $order=DB::table('item_orders')->where('id',$job->order_id)->lockForUpdate()->first();
             if(!$order || in_array($order->status,['completed','refunded'])) return false;
             DB::table('nro_worker_jobs')->where('id',$job->id)->update(['status'=>'failed','updated_at'=>now()]);
+            if (!DB::table('nro_worker_jobs')->where('account_id',$job->account_id)->where('id','!=',$job->id)->where('status','processing')->where('lease_until','>',now())->exists()) NroAccount::whereKey($job->account_id)->update(['delivery_activity'=>null]);
             DB::table('nro_worker_jobs')->insert(['account_id'=>$job->account_id,'order_id'=>$job->order_id,'delivery_session_id'=>$job->delivery_session_id,
                 'type'=>'delivery','status'=>'queued','recovery_json'=>$job->recovery_json,'created_at'=>now(),'updated_at'=>now()]);
-            DB::table('nro_delivery_sessions')->where('id',$job->delivery_session_id)->update(['status'=>'queued','updated_at'=>now()]);
+            DB::table('nro_delivery_sessions')->where('id',$job->delivery_session_id)->update(['status'=>'queued','trade_in_flight'=>false,'trade_phase'=>null,'phase_deadline'=>null,'position_json'=>null,'updated_at'=>now()]);
             DB::table('item_orders')->where('id',$job->order_id)->update(['status'=>'queued','updated_at'=>now()]);
             return true;
         }
@@ -46,6 +47,20 @@ class NroDeliveryLifecycle
     public function expire(): array
     {
         $changed=[];
+        // Historical cleanup is hourly; the ordinary 15-second claim maintenance only handles live work.
+        if (\Illuminate\Support\Facades\Cache::add('nro:terminal-cleanup',true,3600)) DB::table('item_orders')->whereIn('status',NroOrderFlow::TERMINAL)
+            ->where(function($q) { $q->whereNotNull('failure_code')->orWhereNotNull('public_failure')->orWhereNotNull('login_retry_at')
+                ->orWhere('cancel_requested',true)->orWhere('refund_requested',true)
+                ->orWhereExists(fn($s)=>$s->selectRaw('1')->from('nro_delivery_sessions')->whereColumn('order_id','item_orders.id')->whereIn('status',NroOrderFlow::ACTIVE_SESSIONS)); })
+            ->orderBy('id')->chunkById(100,function($orders) use(&$changed) {
+                foreach($orders as $candidate) DB::transaction(function() use($candidate,&$changed) {
+                    NroAccount::whereKey($candidate->account_id)->lockForUpdate()->first();
+                    $order=DB::table('item_orders')->where('id',$candidate->id)->lockForUpdate()->first();
+                    if(!$order || !NroOrderFlow::terminal($order->status)) return;
+                    DB::table('item_orders')->where('id',$order->id)->update(NroOrderFlow::terminalChanges($order->status,(int)$order->refund_amount));
+                    NroOrderFlow::closeExecution($order->id,$order->status);$changed[]=(int)$order->account_id;
+                },3);
+            });
         DB::table('nro_worker_jobs')->where('status','processing')->where('lease_until','<',now())->orderBy('id')->chunkById(100,function($jobs) use (&$changed) {
             foreach($jobs as $candidate) DB::transaction(function() use($candidate,&$changed) {
                 $a=NroAccount::whereKey($candidate->account_id)->lockForUpdate()->first();

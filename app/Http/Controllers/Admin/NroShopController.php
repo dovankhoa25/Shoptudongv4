@@ -98,7 +98,7 @@ class NroShopController extends Controller
         if (($filters['state'] ?? '') === 'sold') $q->where('status', 'sold');
         $page = $q->orderByDesc('login_sale_blocked')->orderByRaw("CASE WHEN publish_status = 'login_blocked' THEN 0 ELSE 1 END")->orderByDesc('id')->paginate(30);
         $accounts = $page->getCollection();
-        $warehouseJobs = DB::table('nro_worker_jobs')->whereIn('account_id', $accounts->pluck('id'))->where('status', 'processing')->get(['account_id','worker_instance','lease_until'])->groupBy('account_id');
+        $warehouseJobs = DB::table('nro_worker_jobs')->whereIn('account_id', $accounts->pluck('id'))->whereIn('status', ['queued','processing'])->get(['account_id','worker_instance','lease_until','type','status'])->groupBy('account_id');
         $nicks = Nick::withoutUserOwnedScope()->with('category:id,name,slug,status')->whereIn('game_account_id', $accounts->pluck('id'))
             ->get(['id','game_account_id','category_id','status','price','description','snapshot_id'])->keyBy('game_account_id');
         $listingCounts = DB::table('item_listings')->whereIn('account_id', $accounts->pluck('id'))
@@ -119,6 +119,7 @@ class NroShopController extends Controller
             'servers' => DB::table('servers')->where('status', true)->get(['id','name','name_view']),
             'loginServers' => $caps['manageAccounts'] || $caps['settings'] ? DB::table('server_game_login')->get(['id','name']) : [],
             'accounts' => $caps['accounts'] ? $accounts->map(fn ($a) => [
+                'flow'=>\App\Services\NroAccountFlow::present($a,$warehouseJobs->get($a->id) ?? collect()),
                 'deliveryActivity' => \App\Services\NroWarehouseActivity::publicPayload($a, $warehouseJobs->get($a->id) ?? collect()), 'ownerUsername' => $owners->get($a->user_id), 'id' => $a->id, 'account_name' => $a->account_name, 'server_index' => $a->server_index, 'usage_type' => $a->usage_type,
                 'character_name' => $a->character_name, 'last_synced_at' => $a->last_synced_at, 'latest_snapshot_id' => $a->latest_snapshot_id,
                 'server_id' => $a->server_id, 'server_game_id' => $a->server_game_id, 'delivery_map' => $a->delivery_map, 'delivery_zone' => $a->delivery_zone, 'wait_minutes' => $a->wait_minutes,
@@ -175,7 +176,8 @@ class NroShopController extends Controller
         $v = $r->validate(['q' => 'nullable|string|max:100', 'status' => 'nullable|in:active,paused,sold,draft',
             'accountId' => 'nullable|integer', 'page' => 'nullable|integer|min:1']);
         $q = DB::table('item_listings')->whereIn('account_id', $this->ownedAccountIds($r));
-        if (!empty($v['status'])) $q->where('status', $v['status']);
+        if (($v['status'] ?? '')==='pending') $q->whereNotIn('status', ['completed','refunded']);
+        elseif (!empty($v['status'])) $q->where('status', $v['status']);
         if (!empty($v['accountId'])) $q->where('account_id', (int) $v['accountId']);
         if (!empty(trim($v['q'] ?? ''))) {
             $term = trim($v['q']);
@@ -198,7 +200,7 @@ class NroShopController extends Controller
     {
         abort_unless($this->capabilities($r)['orders'], 403);
         $v = $r->validate(['q' => 'nullable|string|max:100', 'accountId' => 'nullable|integer', 'page' => 'nullable|integer|min:1',
-            'status' => 'nullable|in:queued,awaiting_receipt,processing,review,completed,refunded,failed,expired']);
+            'status' => 'nullable|in:pending,queued,awaiting_receipt,processing,review,completed,refunded,failed,expired']);
         $q = DB::table('item_orders')->whereIn('account_id', $this->ownedAccountIds($r));
         if (!empty($v['status'])) $q->where('status', $v['status']);
         if (!empty($v['accountId'])) $q->where('account_id', (int) $v['accountId']);
@@ -239,11 +241,13 @@ class NroShopController extends Controller
         // The reconcile form needs the order behind each job awaiting review, and only those.
         $reviewOrderIds = $rows->where('status', 'review')->pluck('order_id')->filter()->unique();
         $orders = $caps['reconcile'] && $reviewOrderIds->isNotEmpty() ? $shop->orders($reviewOrderIds) : [];
+        $rounds=DB::table('nro_delivery_rounds')->whereIn('job_id',$rows->pluck('id'))->orderByDesc('id')->get()->groupBy('job_id');
         $late = DB::table('nro_late_results')->whereIn('job_id',$rows->pluck('id'))->orderByDesc('id')->get()->groupBy('job_id');
         $accountNames = DB::table('nro_accounts')->whereIn('id', $rows->pluck('account_id')->filter()->unique())->pluck('account_name', 'id');
 
         return $this->paged($page, $rows->map(fn ($j) => ['id' => $j->id, 'account_id' => $j->account_id, 'order_id' => $j->order_id,
             'auditOrderId' => $j->audit_order_id, 'type' => $j->type, 'status' => $j->status, 'updated_at' => $j->updated_at, 'result_json' => $j->result_json,
+            'rounds'=>($rounds->get($j->id) ?? collect())->map(fn($round)=>['id'=>$round->id,'key'=>$round->round_key,'status'=>$round->status,'startedAt'=>$round->created_at,'updatedAt'=>$round->updated_at,'items'=>json_decode($round->before_json,true),'result'=>json_decode($round->result_json ?? 'null',true)])->values(),
             'lateResults' => ($late->get($j->id) ?? collect())->take(5)->map(fn($x)=>['kind'=>$x->kind,'at'=>$x->created_at,'data'=>json_decode($x->payload_json,true)])->values(),
             'accountName' => $accountNames[$j->account_id] ?? null, 'order' => $orders[$j->order_id] ?? null])->values());
     }

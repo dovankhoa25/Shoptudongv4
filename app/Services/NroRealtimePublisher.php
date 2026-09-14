@@ -23,7 +23,7 @@ class NroRealtimePublisher
             $grouped=[];
             foreach ($payloads as $id=>$order) {
                 $buyer=(int)$owners[$id];$buyers[]=$buyer;
-                $patch=Arr::only($order,['id','revision','status','message','recipientName','botLeaseUntil','botOnline','failureCode','publicFailure','loginRetryAt','cancelRequested','canCancel','refundRequested','refundAmount','refundedAt','session','botActivity','deliveryLocation']);
+                $patch=Arr::only($order,['id','revision','flow','status','message','recipientName','botLeaseUntil','botOnline','failureCode','publicFailure','loginRetryAt','cancelRequested','canCancel','refundRequested','refundAmount','refundedAt','session','botActivity','deliveryLocation']);
                 $patch['itemProgress']=array_map(fn($i)=>Arr::only($i,['id','delivered']),$order['items']);
                 $grouped[$buyer][]=$patch;
             }

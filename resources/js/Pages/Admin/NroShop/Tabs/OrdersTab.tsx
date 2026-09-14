@@ -6,18 +6,9 @@ import { usePagedTab } from '../usePagedTab';
 import type { Order } from '../types';
 import OrderStockCheckModal from './OrderStockCheckModal';
 
-const OPEN = ['queued', 'awaiting_receipt', 'processing', 'review'];
 
-const ORDER_STATUSES = [
-    'queued',
-    'awaiting_receipt',
-    'processing',
-    'review',
-    'completed',
-    'refunded',
-    'failed',
-    'expired',
-];
+
+const ORDER_STATUSES = [{value:'pending',label:'Chưa nhận đủ'},{value:'completed',label:'Đã nhận đủ'},{value:'refunded',label:'Đã hoàn tiền'}];
 
 export default function OrdersTab({ dataVersion, canRefund, canCheck, canReconcile }: { dataVersion: number; canRefund: boolean; canCheck: boolean; canReconcile: boolean }) {
     const { rows, loading, filters, setFilters, apply, reload } = usePagedTab<Order>(
@@ -51,7 +42,7 @@ export default function OrdersTab({ dataVersion, canRefund, canCheck, canReconci
                     allowClear
                     value={(filters.status as string) || undefined}
                     onChange={status => apply({ ...filters, status })}
-                    options={ORDER_STATUSES.map(value => ({ value, label: statusName[value] || value }))}
+                    options={ORDER_STATUSES}
                 />
                 <Button type="primary" onClick={() => apply()}>
                     Lọc
@@ -128,45 +119,32 @@ export default function OrdersTab({ dataVersion, canRefund, canCheck, canReconci
                                 <div className="space-y-1">
                                     <Tag
                                         color={
-                                            o.status === 'review' ? 'orange' : OPEN.includes(o.status) ? 'blue' : undefined
+                                            o.flow?.state==='pending' ? (['needs_attention','needs_stock','needs_input'].includes(o.flow.phase) ? 'orange' : 'blue') : o.status==='completed' ? 'green' : undefined
                                         }
                                     >
-                                        {statusName[o.status] || o.status}
+                                        {o.flow?.label || (['completed','refunded'].includes(o.status) ? statusName[o.status] : 'Chưa nhận đủ')}
                                     </Tag>
-                                    {o.refundRequested && <Tag color="volcano">{done > 0 ? 'Cần bổ sung để giao đủ' : 'Cần xử lý / có thể hoàn tiền'}</Tag>}
                                     {!!o.refundAmount && <div className="text-xs">Đã hoàn {money(o.refundAmount)} · {o.refundActor || 'Admin'} · {dateTime(o.refundedAt)}<div>{o.refundNote}</div></div>}
-                                    <Progress
+                                    {o.status!=='refunded' && <Progress
                                         percent={all ? Math.round((done / all) * 100) : 0}
                                         size="small"
-                                        status={o.status === 'refunded' ? 'exception' : undefined}
-                                    />
+                                    />}
                                     <div className="text-xs text-slate-500 dark:text-slate-400">
                                         Đã nhận {done} / {all} món
                                     </div>
-                                    {o.session && (
-                                        <div className="text-xs text-slate-500 dark:text-slate-400">
-                                            Phiên: {o.session.mode === 'auto' ? 'Tool nhận hộ' : 'Khách tự nhận'} ·{' '}
-                                            {({ preparing: 'Chuẩn bị', ready: 'Chờ khách', trading: 'Đang giao', suspended: 'Tạm dừng phiên nhận' } as Record<string, string>)[o.session.status] || statusName[o.session.status] || o.session.status}
-                                        </div>
-                                    )}
-                                    {o.session?.status === 'trading' && <div className="text-xs font-medium text-cyan-700 dark:text-cyan-300">
-                                        {o.session.tradePhase === 'confirming' ? 'Đã khóa · Chờ hoàn tất' : 'Đang giao · Chờ khách khóa'}
-                                        {o.session.phaseDeadline && <div>Hạn bước này: {dateTime(o.session.phaseDeadline)}</div>}
-                                    </div>}
-                                    {o.session?.retryAt && o.session.status === 'suspended' && <div className="text-xs text-amber-600">Nhận lại từ {dateTime(o.session.retryAt)}</div>}
-                                    {o.message && (
-                                        <div className="text-xs text-amber-600 dark:text-amber-400">{o.message}</div>
-                                    )}
+                                    {!o.flow?.terminal && <div className="text-xs font-medium">{o.flow?.phaseLabel || 'Tiến trình nhận đồ'}</div>}
+                                    {o.flow?.retryAt && !o.flow.terminal && <div className="text-xs text-amber-600">Thử lại / nhận lại từ {dateTime(o.flow.retryAt)}</div>}
+                                    {o.message && <div className="text-xs text-slate-500 dark:text-slate-400">{o.message}</div>}
                                 </div>
                             );
                         },
                     },
                     ...(canRefund || canCheck ? [{
                         title: 'Xử lý', width: 190,
-                        render: (_: unknown, o: Order) => ['awaiting_receipt', 'review', 'processing', 'queued'].includes(o.status) ? <div>
-                            {canCheck && <Button size="small" className="mb-2" onClick={() => setStockCheck(o)}>Đối soát / Kiểm tra kho</Button>}
+                        render: (_: unknown, o: Order) => !o.flow?.terminal && !['completed','refunded'].includes(o.status) ? <div>
+                            {canCheck && o.flow?.canCheckStock && <Button size="small" className="mb-2" onClick={() => setStockCheck(o)}>Kiểm tra kho / Lượt giao</Button>}
                             {o.items.some(i=>i.delivered>0) && <div className="mb-2 text-xs text-amber-600">Đã nhận một phần · Cần giao đủ</div>}
-                            {canRefund && <Button size="small" danger disabled={o.items.some(i=>i.delivered>0) || o.status !== 'awaiting_receipt' || (!!o.session && ['queued','preparing','ready','trading','review'].includes(o.session.status))}
+                            {canRefund && <Button size="small" danger disabled={!o.flow?.canAdminRefund}
                                 onClick={() => { form.resetFields(); form.setFieldsValue({ amount: o.items.some(i => i.delivered > 0) ? undefined : Number(o.price) }); setRefund(o); }}>Hoàn tiền</Button>}
                             {(o.status !== 'awaiting_receipt' || (!!o.session && ['queued','preparing','ready','trading','review'].includes(o.session.status))) && <div className="mt-1 text-xs text-slate-500">Kết thúc phiên / đối soát trước</div>}
                         </div> : null,

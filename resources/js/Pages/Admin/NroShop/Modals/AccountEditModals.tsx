@@ -152,7 +152,7 @@ export function DeliverySettingsModal({
                 <Form.Item name="delivery_zone_mode" label="Chọn khu">
                     <Select
                         options={[
-                            { value: 'auto', label: 'Tự chọn khu ít người từ 4–15' },
+                            { value: 'auto', label: 'Ngẫu nhiên khu 20–25, giữ khu cho các đơn' },
                             { value: 'fixed', label: 'Khu cố định' },
                         ]}
                     />
