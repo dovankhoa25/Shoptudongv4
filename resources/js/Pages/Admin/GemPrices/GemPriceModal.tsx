@@ -338,6 +338,7 @@ interface GemPriceModalProps {
 interface FormData {
     server_id: number;
     multiplier: number;
+    min_amount: number;
     status: boolean;
 }
 
@@ -361,6 +362,7 @@ export default function GemPriceModal({ open, onClose, gemPrice, servers }: GemP
                 form.setFieldsValue({
                     server_id: gemPrice.server.id,
                     multiplier: gemPrice.multiplier,
+                    min_amount: gemPrice.min_amount ?? 10000,
                     status: gemPrice.status,
                 });
             } else {
@@ -368,6 +370,7 @@ export default function GemPriceModal({ open, onClose, gemPrice, servers }: GemP
                 form.setFieldsValue({
                     status: true,
                     multiplier: 13, // Default x13
+                    min_amount: 10000,
                 });
             }
         }
@@ -379,6 +382,7 @@ export default function GemPriceModal({ open, onClose, gemPrice, servers }: GemP
         const submitData = {
             server_id: values.server_id,
             multiplier: values.multiplier,
+            min_amount: values.min_amount,
             status: values.status,
         };
 
@@ -426,6 +430,7 @@ export default function GemPriceModal({ open, onClose, gemPrice, servers }: GemP
     const handleServerChange = (serverId: number) => {
         const server = servers.find(s => s.id === serverId);
         setSelectedServer(server || null);
+        if (!gemPrice) form.setFieldsValue({ min_amount: server?.gem_min_amount ?? 10000 });
     };
 
     // Calculate gems based on current multiplier
@@ -499,6 +504,10 @@ export default function GemPriceModal({ open, onClose, gemPrice, servers }: GemP
                     </Select>
                 </Form.Item>
 
+                <Form.Item label="Tiền mua tối thiểu" name="min_amount"
+                    rules={[{ required: true, message: 'Vui lòng nhập số tiền tối thiểu!' }, { type: 'integer', min: 1, message: 'Nhập số nguyên lớn hơn 0.' }]}>
+                    <InputNumber min={1} precision={0} addonAfter="VNĐ" style={{ width: '100%' }} />
+                </Form.Item>
                 {/* Multiplier Input */}
                 <Form.Item
                     label={

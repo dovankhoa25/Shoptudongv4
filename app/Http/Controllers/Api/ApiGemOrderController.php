@@ -192,7 +192,7 @@ class ApiGemOrderController extends Controller
         $validated = $request->validate([
             'server_id' => 'required|exists:servers,id',
             'character_name' => 'required|string|min:3|max:191',
-            'money_amount' => 'required|integer|min:10000',
+            'money_amount' => 'required|integer|min:1',
         ]);
 
         $user = $request->user();
@@ -247,6 +247,14 @@ class ApiGemOrderController extends Controller
                 'message' => 'Server đang tạm ngưng. Không thể tạo đơn.',
             ], 422);
         }
+
+        $minimumAmount = (int) ($gemPrice->min_amount ?? 10000);
+        $request->validate([
+            'money_amount' => ['required', 'integer', 'min:'.$minimumAmount],
+        ], [
+            'money_amount.min' => 'Số tiền mua ngọc tối thiểu cho server này là '
+                .number_format($minimumAmount, 0, ',', '.').' VNĐ.',
+        ]);
 
         // ✅ Tính ngọc
         $multiplier = $gemPrice->multiplier;

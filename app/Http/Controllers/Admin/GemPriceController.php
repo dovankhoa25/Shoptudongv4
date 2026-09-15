@@ -57,7 +57,7 @@ class GemPriceController extends Controller
 
         return Inertia::render('Admin/GemPrices/Index', [
             'gemPrices' => GemPriceResource::collection($gemPrices),
-            'servers' => Server::active()->get(['id', 'name']),
+            'servers' => Server::active()->with('currentGemPrice')->get(['id', 'name'])->map(fn ($server) => ['id' => $server->id, 'name' => $server->name, 'gem_min_amount' => (int) ($server->currentGemPrice?->min_amount ?? 10000)]),
             'filters' => $request->only(['server_id', 'search', 'status', 'min_multiplier', 'max_multiplier']),
             'stats' => $stats,
         ]);
@@ -71,8 +71,11 @@ class GemPriceController extends Controller
         $validated = $request->validate([
             'server_id' => 'required|exists:servers,id',
             'multiplier' => 'required|numeric|min:1|max:100',
+            'min_amount' => 'sometimes|required|integer|min:1',
             'status' => 'required|boolean',
         ]);
+
+        $validated['min_amount'] ??= GemPrice::getCurrentMultiplier($validated['server_id'])?->min_amount ?? 10000;
 
         // Deactivate old prices for this server if new one is active
         if ($validated['status']) {
@@ -82,7 +85,7 @@ class GemPriceController extends Controller
         }
 
         $gemPrice = GemPrice::create($validated);
-        ApiCache::clearGroups(['public:server-prices']);
+        ApiCache::clearGroups(['public:server-prices', 'public:servers']);
 
         return Redirect::route('admin.gem-prices.index')
             ->with('success', 'Hệ số giá ngọc đã được tạo thành công.');
@@ -96,6 +99,7 @@ class GemPriceController extends Controller
         $validated = $request->validate([
             'server_id' => 'required|exists:servers,id',
             'multiplier' => 'required|numeric|min:1|max:100',
+            'min_amount' => 'sometimes|required|integer|min:1',
             'status' => 'required|boolean',
         ]);
 
@@ -108,7 +112,7 @@ class GemPriceController extends Controller
         }
 
         $gemPrice->update($validated);
-        ApiCache::clearGroups(['public:server-prices']);
+        ApiCache::clearGroups(['public:server-prices', 'public:servers']);
 
         return Redirect::route('admin.gem-prices.index')
             ->with('success', 'Hệ số giá ngọc đã được cập nhật thành công.');
@@ -130,7 +134,7 @@ class GemPriceController extends Controller
         }
 
         $gemPrice->delete();
-        ApiCache::clearGroups(['public:server-prices']);
+        ApiCache::clearGroups(['public:server-prices', 'public:servers']);
 
         return Redirect::route('admin.gem-prices.index')
             ->with('success', 'Hệ số giá ngọc đã được xóa thành công.');
@@ -152,7 +156,7 @@ class GemPriceController extends Controller
         $gemPrice->update([
             'status' => ! $gemPrice->status,
         ]);
-        ApiCache::clearGroups(['public:server-prices']);
+        ApiCache::clearGroups(['public:server-prices', 'public:servers']);
 
         $status = $gemPrice->status ? 'kích hoạt' : 'vô hiệu hóa';
 
@@ -172,6 +176,7 @@ class GemPriceController extends Controller
         ]);
 
         foreach ($validated['updates'] as $update) {
+            $minimumAmount = GemPrice::getCurrentMultiplier($update['server_id'])?->min_amount ?? 10000;
             // Deactivate old prices
             GemPrice::where('server_id', $update['server_id'])
                 ->where('status', true)
@@ -181,9 +186,10 @@ class GemPriceController extends Controller
             GemPrice::create([
                 'server_id' => $update['server_id'],
                 'multiplier' => $update['multiplier'],
+                'min_amount' => $minimumAmount,
                 'status' => true,
             ]);
-            ApiCache::clearGroups(['public:server-prices']);
+            ApiCache::clearGroups(['public:server-prices', 'public:servers']);
         }
 
         return response()->json([
@@ -223,7 +229,7 @@ class GemPriceController extends Controller
     {
         $validated = $request->validate([
             'server_id' => 'required|exists:servers,id',
-            'vnd_amount' => 'required|numeric|min:10000',
+            'vnd_amount' => 'required|integer|min:1',
         ]);
 
         $gemPrice = GemPrice::getCurrentMultiplier($validated['server_id']);
@@ -233,6 +239,8 @@ class GemPriceController extends Controller
                 'error' => 'Server này chưa có cài đặt giá',
             ], 404);
         }
+
+        $request->validate(['vnd_amount' => ['required', 'integer', 'min:'.($gemPrice->min_amount ?? 10000)]]);
 
         $gems = $gemPrice->calculateGems($validated['vnd_amount']);
 

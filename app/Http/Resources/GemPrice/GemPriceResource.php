@@ -24,6 +24,7 @@ class GemPriceResource extends JsonResource
                 }),
             ],
             'multiplier' => $this->multiplier,
+            'min_amount' => (int) ($this->min_amount ?? 10000),
             'multiplier_display' => $this->multiplier_display, // x13, x13.5
             'gems_per_10k' => $this->gems_per_base, // 130, 135
             'gems_per_10k_formatted' => number_format($this->gems_per_base) . ' ngọc/10k',

@@ -164,6 +164,11 @@ export default function GemPricePage() {
             )
         },
         {
+            key: 'min_amount',
+            title: 'Mua tối thiểu',
+            render: (value: number) => Number(value ?? 10000).toLocaleString('vi-VN') + 'đ',
+        },
+        {
             key: 'multiplier_display',
             title: 'Hệ số',
             width: 120,

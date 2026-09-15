@@ -39,7 +39,7 @@ class ServerController extends Controller
             180,
             function () {
                 $servers = Server::with(['gemPrices' => function ($query) {
-                    $query->where('status', true);
+                    $query->where('status', true)->latest();
                 }])->get();
 
                 return [

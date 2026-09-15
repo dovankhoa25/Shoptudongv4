@@ -6,6 +6,7 @@ export interface IGemPrice {
         name: string;
     };
     multiplier: number;
+    min_amount: number;
     multiplier_display: string; // x13, x13.5
     gems_per_10k: number; // 130, 135
     gems_per_10k_formatted: string;

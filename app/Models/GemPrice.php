@@ -14,11 +14,13 @@ class GemPrice extends Model
     protected $fillable = [
         'server_id',
         'multiplier',
+        'min_amount',
         'status'
     ];
 
     protected $casts = [
         'multiplier' => 'decimal:2',
+        'min_amount' => 'integer',
         'status' => 'boolean'
     ];
 

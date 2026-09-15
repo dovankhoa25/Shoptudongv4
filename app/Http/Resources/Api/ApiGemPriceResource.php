@@ -13,6 +13,7 @@ class ApiGemPriceResource extends JsonResource
             'id'                        => $this->id,
             'server_id'           => $this->server_id,
             'multiplier'    => $this->multiplier,
+            'min_amount' => (int) ($this->min_amount ?? 10000),
             'status'                    => $this->status,
             'created_at'                => $this->created_at,
         ];
