@@ -43,6 +43,12 @@ final class TrafficMonitor
             $route = $request->route()?->uri() ?? '[unmatched]';
             $method = in_array($request->method(), ['GET','POST','PUT','PATCH','DELETE','OPTIONS','HEAD'], true)
                 ? $request->method() : 'OTHER';
+            // HandleCors returns before routing. Do not mislabel preflight as a missing route,
+            // or record the raw URL/headers (unbounded cardinality and possible secrets).
+            if ($route === '[unmatched]' && $method === 'OPTIONS'
+                && $request->headers->has('Origin') && $request->headers->has('Access-Control-Request-Method')) {
+                $route = '[preflight]';
+            }
             $status = $event->response->getStatusCode();
             $group = match (true) {
                 $request->is('api/*') => 'api',
@@ -119,11 +125,12 @@ final class TrafficMonitor
         } catch (\Throwable) {
             $available = false;
         }
-        $totals = ['count' => 0, 'limited' => 0, 'auth_errors' => 0, 'not_found' => 0, 'server_errors' => 0, 'total_ms' => 0, 'max_ms' => 0];
+        $totals = ['count' => 0, 'options' => 0, 'limited' => 0, 'auth_errors' => 0, 'not_found' => 0, 'server_errors' => 0, 'total_ms' => 0, 'max_ms' => 0];
         $ips = [];
         $endpoints = [];
         foreach ($rows as $row) {
             $totals['count'] += $row['count'];
+            $totals['options'] += $row['method'] === 'OPTIONS' ? $row['count'] : 0;
             $totals['limited'] += $row['status'] === 429 ? $row['count'] : 0;
             $totals['auth_errors'] += in_array($row['status'], [401,403], true) ? $row['count'] : 0;
             $totals['not_found'] += $row['status'] === 404 ? $row['count'] : 0;

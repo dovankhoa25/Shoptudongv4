@@ -8,7 +8,7 @@ type Filter = { minutes?: number; ip?: string; group?: string; status?: string }
 type Data = PageProps & {
     filters: Filter;
     traffic: { enabled: boolean; available: boolean; minutes: number; from: number; to: number; overflow: number; series: number; store: string;
-        totals: { count: number; limited: number; auth_errors: number; not_found: number; server_errors: number; total_ms: number; max_ms: number };
+        totals: { count: number; options: number; limited: number; auth_errors: number; not_found: number; server_errors: number; total_ms: number; max_ms: number };
         ips: { key: string; count: number }[]; endpoints: { key: string; count: number }[]; rows: TrafficRow[] };
 };
 const number = (value: number) => value.toLocaleString('vi-VN');
@@ -46,6 +46,10 @@ export default function TrafficPage() {
                     <div key={String(label)} className="rounded border border-gray-200 p-3 dark:border-gray-700"><div className="text-xs text-gray-500">{label}</div><div className="mt-1 text-xl font-semibold">{number(Number(value))}</div></div>)}
             </div>
             <div className="grid gap-4 lg:grid-cols-2">
+                <p className="text-sm text-gray-500 lg:col-span-2">
+                    {number(totals.count - totals.options)} lượt gọi khác · {number(totals.options)} OPTIONS.
+                    {' '}[preflight] là bước kiểm tra CORS trước khi gọi API, chưa chạy xử lý nghiệp vụ; không phải lỗi 404.
+                </p>
                 <section className="rounded border border-gray-200 p-3 dark:border-gray-700"><h2 className="mb-2 font-semibold">IP gọi nhiều nhất</h2>
                     {traffic.ips.map(row => <button key={row.key} onClick={() => apply({ ...form, ip: row.key === 'unknown' ? '' : row.key })} className="flex w-full justify-between gap-3 py-1 text-left text-sm hover:text-blue-500"><span className="break-all font-mono">{row.key}</span><span>{number(row.count)}</span></button>)}
                     {!traffic.ips.length && <p className="text-sm text-gray-500">Chưa có dữ liệu trong bộ lọc này.</p>}

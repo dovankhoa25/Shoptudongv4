@@ -78,10 +78,15 @@ Nếu bỏ trống FRONTEND_CACHE_ORIGINS, command không gửi gì. Không cầ
 
 ## Admin → Lưu lượng & API
 
+### Bổ sung cache kênh chat và preflight
+
+Xem [chu kỳ cache, chống gọi lặp và kiểm tra triển khai](chat-request-optimization-2026-09-15.md). Kết quả kênh giữ 60 giây khi không còn subscriber, đổi khoá ngay khi token/logout thay đổi; lỗi 429 có thời gian chờ riêng. Preflight có TTL mặc định 300 giây, không cache nội dung API.
+
 URL: `/admin/traffic`; quyền `traffic.view`, migration cấp cho admin/super-admin hiện hữu, enum/seeder cấp cho lần seed sau. Người dùng/CTV không tự có quyền.
 
 - Cửa sổ 1/5/15 phút, top IP, top endpoint, lọc đúng IP/nhóm/HTTP; chi tiết tối đa 100 nhóm request.
 - Đếm HTTP 429, 401/403, 404, 5xx; trung bình/tối đa thời gian xử lý tại Laravel.
+- Tách tổng OPTIONS khỏi lượt gọi khác; preflight xử lý trước router dùng nhãn [preflight]. Số này không tự xác định người gọi là browser hay bot.
 - Chỉ lưu route template, method, IP, nguồn IP, status, số lượt và thời gian. Không lưu query, body, password hoặc token.
 - Counter gần đúng. Lock lấy ngay; bận/lỗi thì bỏ qua để không xếp request website vào hàng chờ thống kê. Tối đa 8 × 64 nhóm mỗi phút; request vượt số nhóm được đếm overflow không có chi tiết.
 - 17 slot phút xoay vòng × 8 shard, cộng lock: số key vật lý có giới hạn cả trên file store. Không tạo file mới mãi theo thời gian. Không có bảng log request hoặc insert DB mỗi request khi dùng file/Redis.

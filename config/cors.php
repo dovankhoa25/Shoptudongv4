@@ -32,9 +32,10 @@ return [
 
     'allowed_headers' => ['*'],
 
-    'exposed_headers' => [],
+    'exposed_headers' => ['Retry-After'],
 
-    'max_age' => 0,
+    // Cache browser permission checks only; actual API requests still authenticate.
+    'max_age' => max(0, min(600, (int) env('CORS_MAX_AGE', 300))),
 
     'supports_credentials' => true,
 

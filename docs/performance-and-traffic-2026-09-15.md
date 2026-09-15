@@ -43,7 +43,7 @@ Một số test chat/realtime còn cố kết nối Ably và phát lỗi mạng 
 
 Source đã sửa, **chưa deploy và chưa chạy migration production**. Không đổi .env production, proxy trust hay cấu hình tài khoản Cloudflare. Backend build local đã tạo assets; không đóng gói lại public/build.zip có thay đổi sẵn từ trước.
 
-Frontend cache sync cần cấu hình origins + secret chung và cron Laravel. Nếu chưa bật, Next.js vẫn dùng TTL hiện có. Frontend v4 chưa có node_modules đúng phiên bản trong workspace, nên chưa chạy full Next build/typecheck hoặc Lighthouse.
+Frontend cache sync cần cấu hình origins + secret chung và cron Laravel. Nếu chưa bật, Next.js vẫn dùng TTL hiện có. Ở lượt tối ưu chat tiếp theo, dependencies frontend đã có và typecheck toàn bộ ba frontend đạt; chưa chạy full Next build hoặc Lighthouse. Xem [bản sửa request chat/OPTIONS](chat-request-optimization-2026-09-15.md).
 
 Chưa đo p50/p95, MySQL EXPLAIN, tải CPU/RAM/PHP workers, kích thước ảnh thực tế hay xác minh giao dịch trên production. Ảnh gốc/thumbnail, bundle lớn và broadcast đồng bộ vẫn cần số đo để tối ưu tiếp.
 
