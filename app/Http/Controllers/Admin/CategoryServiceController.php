@@ -56,6 +56,8 @@ class CategoryServiceController extends Controller
         $category = Category::find($validated['category_id']);
         $category->services()->syncWithoutDetaching($validated['service_ids']);
 
+        \App\Support\ApiCache::clearGroup('public:catalog');
+
         return redirect()->back()
             ->with('success', 'Gán service cho category thành công!');
     }
@@ -72,6 +74,8 @@ class CategoryServiceController extends Controller
 
         $category = Category::find($validated['category_id']);
         $category->services()->detach($validated['service_id']);
+
+        \App\Support\ApiCache::clearGroup('public:catalog');
 
         return redirect()->back()
             ->with('success', 'Bỏ service khỏi category thành công!');

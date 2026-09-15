@@ -26,7 +26,7 @@ class NickController extends Controller
 {
     public function getByCategory(Request $request, $slug)
     {
-        $category = Category::with('attributes.options')
+        $category = Category::query()
             ->where('slug', $slug)
             ->first();
 
@@ -70,7 +70,7 @@ class NickController extends Controller
         $queryParams = $request->query();
         ksort($queryParams);
 
-        return ApiCache::remember(
+        return ApiCache::rememberJson(
             'public:nick',
             ApiCache::key(
                 'nick-category',
@@ -80,6 +80,7 @@ class NickController extends Controller
             ),
             90,
             function () use ($request, $category) {
+                $category->loadMissing('attributes.options');
                 $orderBys = $this->parseSort($request);
 
                 $query = Nick::query()
@@ -172,7 +173,7 @@ class NickController extends Controller
         $queryParams = $request->query();
         ksort($queryParams);
 
-        return ApiCache::remember(
+        return ApiCache::rememberJson(
             'public:nick',
             ApiCache::key(
                 'nick-category',
@@ -206,7 +207,7 @@ class NickController extends Controller
         $queryParams = $request->query();
         ksort($queryParams);
 
-        return ApiCache::remember(
+        return ApiCache::rememberJson(
             'public:nick',
             ApiCache::key(
                 'nick-category',
@@ -268,7 +269,7 @@ class NickController extends Controller
             json_encode($queryParams, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
         );
 
-        return ApiCache::remember(
+        return ApiCache::rememberJson(
             'public:nick',
             $cacheKey,
             60,
@@ -608,7 +609,7 @@ class NickController extends Controller
     {
         $cacheKey = ApiCache::key('nick-detail', $id);
 
-        $cached = ApiCache::remember(
+        $cached = ApiCache::rememberJson(
             'public:nick',
             $cacheKey,
             120,

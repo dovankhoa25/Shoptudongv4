@@ -17,15 +17,18 @@ class NroItemFilters
         'gold'=>'Vàng từ quái', 'hp'=>'HP', 'ki'=>'KI', 'other'=>'Khác'];
     // Other combat/utility stats, excluding slot counts, item level, expiry and trade metadata.
     public const OTHER_STAT_IDS = [3,4,5,10,14,15,16,17,18,19,27,28,42,43,44,45,46,47,62,78,79,80,81,88,94,197,204,206];
-    private array $catalog;
+    private ?array $catalog = null;
     private array $overrides;
     public function __construct()
     {
-        $this->catalog = array_column(json_decode(file_get_contents(resource_path('nro/item-templates.json')), true), null, 'id');
         $this->overrides = array_column(self::overrides(), 'group', 'id');
     }
     public static function overrides(): array { return json_decode(Setting::get('nro_item_group_overrides', '[]'), true) ?: []; }
-    public function knownIds(): array { return array_keys($this->catalog); }
+    private function catalog(): array
+    {
+        return $this->catalog ??= array_column(json_decode(file_get_contents(resource_path('nro/item-templates.json')), true, 512, JSON_THROW_ON_ERROR), null, 'id');
+    }
+    public function knownIds(): array { return array_keys($this->catalog()); }
     public function group(array $template): string
     {
         if (isset($this->overrides[$template['id']])) return $this->overrides[$template['id']];
@@ -48,7 +51,7 @@ class NroItemFilters
             $ids = array_values(array_unique([...$defaults, ...$this->templateIds(['group'=>$group])]));
             $itemsByGroup[$group] = [];
             foreach ($ids as $id) {
-                $item=$this->catalog[$id] ?? null;
+                $item=$this->catalog()[$id] ?? null;
                 if ($item && $this->group($item)===$group) $itemsByGroup[$group][]=['value'=>(string)$id,'label'=>$item['name']];
             }
         }
@@ -56,7 +59,7 @@ class NroItemFilters
     }
     public function templateIds(array $filters): array
     {
-        return array_keys(array_filter($this->catalog, function ($item) use ($filters) {
+        return array_keys(array_filter($this->catalog(), function ($item) use ($filters) {
             if (!empty($filters['group']) && $this->group($item) !== $filters['group']) return false;
             if (isset($filters['itemId']) && (int)$item['id'] !== (int)$filters['itemId']) return false;
             if (isset($filters['equipmentType']) && (int)$item['type'] !== (int)$filters['equipmentType']) return false;

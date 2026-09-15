@@ -46,6 +46,11 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         Schema::defaultStringLength(191);
+        Event::listen(\Illuminate\Foundation\Http\Events\RequestHandled::class, [\App\Services\TrafficMonitor::class, 'record']);
+        foreach (array_keys(\App\Observers\PublicCacheObserver::GROUPS) as $model) {
+            $model::observe(\App\Observers\PublicCacheObserver::class);
+        }
+        \Spatie\MediaLibrary\MediaCollections\Models\Media::observe(\App\Observers\PublicCacheObserver::class);
         \App\Models\User::observe(\App\Observers\UserBalanceObserver::class);
         Event::listen(\App\Events\AdminEvent::class,fn($event)=>app(\App\Services\AdminLive\Updates::class)->changed($event->resource));
         Event::listen(\App\Events\NroShopUpdated::class,function($event){foreach($event->adminResources as $resource)app(\App\Services\AdminLive\Updates::class)->changed($resource);});

@@ -57,6 +57,8 @@ class CategoryAttributeController extends Controller
         $category = Category::find($validated['category_id']);
         $category->attributes()->syncWithoutDetaching($validated['attribute_ids']);
 
+        \App\Support\ApiCache::clearGroup('public:nick');
+
         return redirect()->back()
             ->with('success', 'Cập nhật danh mục thành công!');
     }
@@ -70,6 +72,8 @@ class CategoryAttributeController extends Controller
 
         $category = Category::find($validated['category_id']);
         $category->attributes()->detach($validated['attribute_id']);
+
+        \App\Support\ApiCache::clearGroup('public:nick');
 
         return redirect()->back()
             ->with('success', 'Cập nhật danh mục thành công!');

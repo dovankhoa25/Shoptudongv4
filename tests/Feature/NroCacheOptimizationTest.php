@@ -6,6 +6,23 @@ use Tests\TestCase;
 
 class NroCacheOptimizationTest extends TestCase
 {
+    public function test_invalidation_waits_for_outer_commit_and_is_discarded_on_rollback(): void
+    {
+        Cache::flush();
+        ApiCache::remember('committed', 'row', 60, fn () => 'old');
+        \Illuminate\Support\Facades\DB::beginTransaction();
+        \Illuminate\Support\Facades\DB::beginTransaction();
+        ApiCache::clearGroup('committed');
+        \Illuminate\Support\Facades\DB::commit();
+        $this->assertSame('old', ApiCache::remember('committed', 'row', 60, fn () => 'too-early'));
+        \Illuminate\Support\Facades\DB::commit();
+        $this->assertSame('new', ApiCache::remember('committed', 'row', 60, fn () => 'new'));
+        \Illuminate\Support\Facades\DB::beginTransaction();
+        ApiCache::clearGroup('committed');
+        \Illuminate\Support\Facades\DB::rollBack();
+        $this->assertSame('new', ApiCache::remember('committed', 'row', 60, fn () => 'rolled-back'));
+    }
+
     public function test_invalidation_during_production_cannot_resurrect_an_old_group(): void
     {
         Cache::flush();$calls=0;

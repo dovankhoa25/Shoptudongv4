@@ -126,6 +126,20 @@ class AdminLiveViewTest extends TestCase {
         $this->assertDatabaseMissing('admin_live_views',['id'=>$id]);
     }
 
+    public function test_identical_tabs_share_a_read_but_different_filters_do_not(): void {
+        $admin=$this->admin();$this->actingAs($admin);
+        foreach(['/admin/users?search=one','/admin/users?search=one','/admin/users?search=two'] as $url) {
+            $this->postJson('/admin/live-views',['url'=>$url])->assertOk();
+        }
+        app(Updates::class)->flush();
+        Event::fake([AdminViewPatched::class]);
+        $reader=$this->mock(Reader::class);
+        $reader->shouldReceive('read')->once()->withArgs(fn($user,$url,$mode)=>$user->id===$admin->id && $url==='/admin/users?search=one' && $mode==='page')->andReturn(['users'=>['data'=>[['id'=>1]]]]);
+        $reader->shouldReceive('read')->once()->withArgs(fn($user,$url,$mode)=>$user->id===$admin->id && $url==='/admin/users?search=two' && $mode==='page')->andReturn(['users'=>['data'=>[['id'=>2]]]]);
+        app(Updates::class)->changed('user');app(Updates::class)->flush();
+        Event::assertDispatchedTimes(AdminViewPatched::class,3);
+    }
+
     public function test_cache_eviction_keeps_revisions_increasing_and_can_recover(): void {
         $admin=$this->admin();$this->actingAs($admin);
         $id=$this->postJson('/admin/live-views',['url'=>'/admin/users'])->assertOk()->json('id');

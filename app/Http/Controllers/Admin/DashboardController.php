@@ -47,18 +47,27 @@ class DashboardController extends Controller
 
         $laterMovements = InventoryMovement::query()
             ->where('occurred_at', '>', $dayEnd)
+            ->select('server_id', 'asset_type')
+            ->selectRaw('SUM(quantity_delta) AS quantity_delta')
+            ->groupBy('server_id', 'asset_type')
             ->get()
             ->groupBy('server_id');
 
         $goldTransactions = GoldTransaction::query()
             ->where('status', 'completed')
             ->whereBetween('updated_at', [$transactionPeriodStart, $dayEnd])
+            ->select('server_id', 'type')
+            ->selectRaw('SUM(gold_qty) AS gold_qty, COUNT(*) AS order_count')
+            ->groupBy('server_id', 'type')
             ->get()
             ->groupBy('server_id');
 
         $gemTransactions = GemTransaction::query()
             ->where('status', GemTransaction::STATUS_COMPLETED)
             ->whereBetween('updated_at', [$transactionPeriodStart, $dayEnd])
+            ->select('server_id')
+            ->selectRaw('SUM(gem_qty) AS gem_qty, COUNT(*) AS order_count')
+            ->groupBy('server_id')
             ->get()
             ->groupBy('server_id');
 
@@ -113,9 +122,7 @@ class DashboardController extends Controller
                 $serverGemTransactions = $gemTransactions->get($server->id, collect());
 
                 $soldGold = (int) $goldOrders->sum('gold_qty');
-                $soldGoldBar = (int) $goldOrders->sum('gold_bar_qty');
                 $importedGold = (int) $goldImports->sum('gold_qty');
-                $importedGoldBar = (int) $goldImports->sum('gold_bar_qty');
                 $soldGems = (int) $serverGemTransactions->sum('gem_qty');
 
                 // gold_transactions.gold_qty đã là tổng quy đổi; gold_bar_qty chỉ là cơ cấu hiển thị.
@@ -217,7 +224,7 @@ class DashboardController extends Controller
                             'adjustment' => $gemAdjustment,
                             'adjustment_details' => $movementDetails($gemAdjustments),
                             'sold' => $soldGems,
-                            'order_count' => $serverGemTransactions->count(),
+                            'order_count' => (int) $serverGemTransactions->sum('order_count'),
                             'expected' => $expectedGems,
                             'actual' => $closingGems,
                             'difference' => $gemDifference,
@@ -229,8 +236,8 @@ class DashboardController extends Controller
                             'imported_converted' => $importedGoldConverted,
                             'adjustment' => $goldAdjustment,
                             'adjustment_details' => $movementDetails($goldAdjustments),
-                            'order_count' => $goldOrders->count(),
-                            'import_count' => $goldImports->count(),
+                            'order_count' => (int) $goldOrders->sum('order_count'),
+                            'import_count' => (int) $goldImports->sum('order_count'),
                             'expected_converted' => $expectedGoldConverted,
                             'actual_converted' => $closingGoldConverted,
                             'difference' => $goldDifference,

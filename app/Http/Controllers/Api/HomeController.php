@@ -15,18 +15,14 @@ class HomeController extends Controller
      */
     public function getServerPrices()
     {
-        return ApiCache::remember(
+        return ApiCache::rememberJson(
             'public:server-prices',
             ApiCache::key('server-prices', 'all'),
             120,
             function () {
                 $servers = Server::active()
-                    ->with([
-                        'goldPrices' => function ($query) {
-                            $query->where('status', true)->latest();
-                        },
-                        'currentGemPrice'
-                    ])
+                    ->with(['currentGoldPrice', 'currentGemPrice'])
+                    ->withSum('activeGemBots as total_available_gems', 'gem_qty')
                     ->get();
 
                 return [
@@ -43,18 +39,14 @@ class HomeController extends Controller
      */
     public function getServerPriceById($serverId)
     {
-        return ApiCache::remember(
+        return ApiCache::rememberJson(
             'public:server-prices',
             ApiCache::key('server-price', (int) $serverId),
             120,
             function () use ($serverId) {
                 $server = Server::active()
-                    ->with([
-                        'goldPrices' => function ($query) {
-                            $query->where('status', true)->latest();
-                        },
-                        'currentGemPrice'
-                    ])
+                    ->with(['currentGoldPrice', 'currentGemPrice'])
+                    ->withSum('activeGemBots as total_available_gems', 'gem_qty')
                     ->findOrFail($serverId);
 
                 return [
@@ -72,12 +64,8 @@ class HomeController extends Controller
     public function index()
     {
         $servers = Server::active()
-            ->with([
-                'goldPrices' => function ($query) {
-                    $query->where('status', true)->latest();
-                },
-                'currentGemPrice'
-            ])
+            ->with(['currentGoldPrice', 'currentGemPrice'])
+            ->withSum('activeGemBots as total_available_gems', 'gem_qty')
             ->get();
 
         return view('home', [

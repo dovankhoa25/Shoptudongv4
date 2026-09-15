@@ -55,6 +55,8 @@ class CategoryTemplateController extends Controller
             ]
         );
 
+        \App\Support\ApiCache::clearGroup('public:catalog');
+
         return redirect()->back()
             ->with('success', 'Lưu Template thành công!');
     }
@@ -69,6 +71,8 @@ class CategoryTemplateController extends Controller
         ]);
 
         CategoryTemplate::where('category_id', $validated['category_id'])->delete();
+
+        \App\Support\ApiCache::clearGroup('public:catalog');
 
         return redirect()->back()
             ->with('success', 'Xoá Template thành công!');

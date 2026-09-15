@@ -20,9 +20,11 @@ class Updates {
         $resources=array_keys($this->pending);$this->pending=[];$this->scheduled=false;if(!$resources)return;
         try {
             DB::table('admin_live_views')->where('expires_at','<=',now())->delete();
+            // Share a projection only within this flush and the same user/session/filter.
+            $projections=[];
             foreach(DB::table('admin_live_views')->where('expires_at','>',now())->get() as $view) {
                 if(!array_intersect($resources,json_decode($view->resources,true)))continue;
-                try {$this->refresh($view);}catch(\Throwable $e){Log::warning('Admin live view update failed',['view'=>$view->id,'error'=>$e->getMessage()]);}
+                try {$this->refresh($view,$projections);}catch(\Throwable $e){Log::warning('Admin live view update failed',['view'=>$view->id,'error'=>$e->getMessage()]);}
             }
         }catch(\Throwable $e){Log::warning('Admin live update failed',['error'=>$e->getMessage()]);}
     }
@@ -39,11 +41,15 @@ class Updates {
         DB::table('admin_live_views')->where('id',$id)->increment('revision');
         return (int)DB::table('admin_live_views')->where('id',$id)->value('revision');
     }
-    private function refresh(object $view): void {
-        Cache::lock('admin-live:lock:'.$view->id,30)->block(5,function()use($view) {
+    private function refresh(object $view,array &$projections): void {
+        Cache::lock('admin-live:lock:'.$view->id,30)->block(5,function()use($view,&$projections) {
             if(!DB::table('admin_live_views')->where('id',$view->id)->where('expires_at','>',now())->exists())return;
             $user=User::find($view->user_id);
-            try {abort_unless($user && !$user->isLocked() && app(\App\Services\Chat\ChatRealtimeChannel::class)->webCredentialIsActive((int)$view->user_id,$view->credential_hash),403);$data=app(Reader::class)->read($user,$view->url,$view->mode);}
+            try {
+                abort_unless($user && !$user->isLocked() && app(\App\Services\Chat\ChatRealtimeChannel::class)->webCredentialIsActive((int)$view->user_id,$view->credential_hash),403);
+                $key=hash('sha256',json_encode([$view->user_id,$view->credential_hash,$view->url,$view->mode],JSON_THROW_ON_ERROR));
+                $data=$projections[$key] ??= app(Reader::class)->read($user,$view->url,$view->mode);
+            }
             catch(\Symfony\Component\HttpKernel\Exception\HttpExceptionInterface $e) {
                 if(in_array($e->getStatusCode(),[401,403,404])) {
                     broadcast(new AdminViewPatched($view->id,['revoked'=>true,'viewId'=>$view->id]));

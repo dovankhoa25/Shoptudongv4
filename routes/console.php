@@ -12,7 +12,8 @@ Artisan::command('inspire', function () {
 // Schedule::command('stats:compute')->everyMinute();
 
 // Schedule::command('stats:compute')->dailyAt('02:00');
-Schedule::command('stats:compute')->everyThirtyMinutes();
+Schedule::command('stats:compute')->everyThirtyMinutes()->withoutOverlapping();
+Schedule::command('frontend-cache:sync')->everyMinute()->withoutOverlapping();
 
 // Schedule command xóa nick cũ chạy hàng ngày lúc 3:00 AM
 Schedule::command('nicks:clean-old')->dailyAt('03:00');

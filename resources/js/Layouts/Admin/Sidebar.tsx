@@ -45,6 +45,7 @@ interface MenuItem {
 const SIDEBAR_SCROLL_STORAGE_KEY = 'admin-sidebar-scroll-top';
 
 const menuItems: MenuItem[] = [
+    { key: 'traffic', label: 'Lưu lượng & API', href: '/admin/traffic', icon: Activity, permission: 'traffic.view' },
     { key: 'nro-shop', label: 'Kho NRO & snapshot nick', href: '/admin/nro-shop', icon: Package, permission: ["nicks.create","nro-accounts.view","nro-accounts.manage","item-listings.view","item-listings.manage","item-orders.view","item-orders.reconcile","nro-workers.manage","nro-settings.manage","nro-sale-policy.manage","nicks.manage"] },
     {
         key: 'dashboard',

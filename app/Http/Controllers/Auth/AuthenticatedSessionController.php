@@ -101,8 +101,8 @@ class AuthenticatedSessionController extends Controller
     {
         LoginAttempt::create([
             'user_id' => $user?->id,
-            'username' => $request->input('login'),
-            'email' => filter_var($request->input('login'), FILTER_VALIDATE_EMAIL) ?: null,
+            'username' => $request->input('username'),
+            'email' => filter_var($request->input('username'), FILTER_VALIDATE_EMAIL) ?: null,
             'provider' => 'password',
             'ip_address' => $request->ip(),
             'user_agent' => $request->userAgent(),

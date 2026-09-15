@@ -13,7 +13,7 @@ class BotController extends Controller
     public function index(Request $request)
     {
         $request->validate([
-            'server_id' => 'required|exists:servers,id',
+            'server_id' => 'required|integer|min:1',
             'type'      => 'required|in:selling_main,import_main',
         ]);
 
@@ -23,12 +23,13 @@ class BotController extends Controller
             (string) $request->input('type')
         );
 
-        return ApiCache::remember('public:bots', $cacheKey, 180, function () use ($request) {
+        return ApiCache::rememberJson('public:bots', $cacheKey, 180, function () use ($request) {
+            $request->validate(['server_id' => 'exists:servers,id']);
             $bots = Bot::query()
             ->where('server_id', $request->server_id)
             ->where('type', $request->type)
             ->where('status', true)
-            ->get();
+            ->get(['id', 'name', 'server_id', 'type', 'map_name', 'map_id', 'area_number', 'status']);
 
             return [
                 'success' => true,

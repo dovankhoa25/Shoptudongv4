@@ -80,20 +80,7 @@ class WithdrawalRequestController extends Controller
         $baseQuery = WithdrawalRequest::query();
         $this->applyFilters($baseQuery, $request);
 
-        return [
-            'total_requests' => (clone $baseQuery)->count(),
-            'pending_requests' => (clone $baseQuery)->where('status', 'pending')->count(),
-            'approved_requests' => (clone $baseQuery)->where('status', 'approved')->count(),
-            'rejected_requests' => (clone $baseQuery)->where('status', 'rejected')->count(),
-            'paid_requests' => (clone $baseQuery)->where('status', 'paid')->count(),
-            'total_amount' => (clone $baseQuery)->sum('amount'),
-            'total_fee' => (clone $baseQuery)->sum('fee'),
-            'total_net_amount' => (clone $baseQuery)->sum('net_amount'),
-            'paid_amount' => (clone $baseQuery)->where('status', 'paid')->sum('net_amount'),
-            'pending_amount' => (clone $baseQuery)->where('status', 'pending')->sum('amount'),
-            'today_requests' => (clone $baseQuery)->whereDate('created_at', today())->count(),
-            'today_amount' => (clone $baseQuery)->whereDate('created_at', today())->sum('amount'),
-        ];
+        return \App\Support\WithdrawalStatistics::read($baseQuery);
     }
 
     public function store(Request $request)

@@ -14,7 +14,7 @@ class ServerInfoResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
-        $currentGoldPrice = $this->goldPrices()->where('status', true)->latest()->first();
+        $currentGoldPrice = $this->currentGoldPrice;
         $currentGemPrice = $this->currentGemPrice;
 
         return [
@@ -31,7 +31,7 @@ class ServerInfoResource extends JsonResource
             'gem_multiplier' => $currentGemPrice?->multiplier ?? null, // Hệ số giá ngọc
 
             // Số lượng ngọc available
-            'total_available_gems' => $this->getTotalAvailableGems(),
+            'total_available_gems' => (int) ($this->total_available_gems ?? 0),
 
             // Format hiển thị cho popup
             'formatted_gold_sell_price' => $currentGoldPrice ? 'x' . number_format($currentGoldPrice->price) : null,

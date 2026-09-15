@@ -5,6 +5,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Support\ApiCache;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
@@ -18,21 +19,21 @@ class AnalyticsController extends Controller
         $user = $request->user();
         $isAdmin = $user->canViewAllAdminData();
 
+        $request->validate(['date' => 'nullable|date_format:Y-m-d']);
         $statDate = $request->get('date') ??
-            DB::table('seller_category_stats')->max('stat_date') ??
+            ApiCache::remember('admin:analytics', 'latest-date', 120, fn () => DB::table('seller_category_stats')->max('stat_date')) ??
             now()->toDateString();
 
-        if ($isAdmin) {
-            $analytics = $this->getAdminAnalytics($statDate);
-        } else {
-            $analytics = $this->getSellerAnalytics($user->id, $statDate);
-        }
+        $analytics = ApiCache::remember('admin:analytics',
+            ApiCache::key($statDate, $isAdmin ? 'all' : 'seller-'.$user->id), 120,
+            fn () => $isAdmin ? $this->getAdminAnalytics($statDate) : $this->getSellerAnalytics($user->id, $statDate)
+        );
 
         return Inertia::render('Admin/Analytics/Index', [
             'analytics' => $analytics,
             'statDate' => $statDate,
             'isAdmin' => $isAdmin,
-            'availableDates' => $this->getAvailableDates(),
+            'availableDates' => ApiCache::remember('admin:analytics', 'available-dates', 120, fn () => $this->getAvailableDates()),
         ]);
     }
 

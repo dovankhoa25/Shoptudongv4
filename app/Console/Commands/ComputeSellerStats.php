@@ -17,7 +17,8 @@ class ComputeSellerStats extends Command
         try {
             $this->info("Bắt đầu tính toán thống kê theo category...");
 
-            $this->computeStats();
+            DB::transaction(fn () => $this->computeStats());
+            \App\Support\ApiCache::clearGroup('admin:analytics');
 
             $this->info("Hoàn thành tính toán thống kê theo category");
         } catch (Exception $e) {

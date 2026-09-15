@@ -26,7 +26,7 @@ interface FormData {
     map_id: string;
     area_number: string;
     coordinates: string;
-    proxy: string;
+    proxy?: string;
     status: boolean;
 }
 
@@ -63,8 +63,6 @@ export default function GemBotModal({ open, onClose, gemBot, servers, logins }: 
     }, [open, gemBot, form]);
 
     const handleSubmit = async (values: FormData) => {
-        setLoading(true);
-
         const submitData = {
             name: values.name?.trim() || null,
             account_name: values.account_name.trim(),
@@ -76,7 +74,7 @@ export default function GemBotModal({ open, onClose, gemBot, servers, logins }: 
             map_id: values.map_id.trim(),
             area_number: values.area_number.trim(),
             coordinates: values.coordinates.trim(),
-            proxy: values.proxy.trim(),
+            proxy: values.proxy?.trim() || '',
             status: values.status,
         };
 
@@ -92,6 +90,7 @@ export default function GemBotModal({ open, onClose, gemBot, servers, logins }: 
         const method = gemBot ? 'put' : 'post';
 
         router[method](url, submitData, {
+            onStart: () => setLoading(true),
             onSuccess: () => {
                 message.success(
                     gemBot

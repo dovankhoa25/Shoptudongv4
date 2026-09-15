@@ -108,6 +108,10 @@ Route::prefix('admin')
             ->middleware(['unlocked.user', Permission::middleware(Permission::ChatsView)])
             ->name('chats.index');
 
+        Route::get('/traffic', [\App\Http\Controllers\Admin\TrafficController::class, 'index'])
+            ->middleware(Permission::middleware(Permission::TrafficView))
+            ->name('traffic.index');
+
         // thống kê
         Route::get('/analytics', [AnalyticsController::class, 'index'])
             ->middleware(Permission::middleware(Permission::AnalyticsView))

@@ -370,19 +370,7 @@ class GemOrderController extends Controller
         $this->applyFilters($baseQuery, $request);
 
         return [
-            'total_orders' => (clone $baseQuery)->count(),
-            'pending_orders' => (clone $baseQuery)->where('status', GemTransaction::STATUS_PENDING)->count(),
-            'processing_orders' => (clone $baseQuery)->where('status', GemTransaction::STATUS_PROCESSING)->count(),
-            'completed_orders' => (clone $baseQuery)->where('status', GemTransaction::STATUS_COMPLETED)->count(),
-            'cancelled_orders' => (clone $baseQuery)->where('status', GemTransaction::STATUS_CANCELLED)->count(),
-            'refunded_orders' => (clone $baseQuery)->where('status', GemTransaction::STATUS_REFUNDED)->count(),
-            'total_revenue' => (clone $baseQuery)->where('status', GemTransaction::STATUS_COMPLETED)->sum('amount_vnd'),
-            'total_gems_sold' => (clone $baseQuery)->where('status', GemTransaction::STATUS_COMPLETED)->sum('gem_qty'),
-            'today_orders' => (clone $baseQuery)->whereDate('created_at', today())->count(),
-            'today_revenue' => (clone $baseQuery)
-                ->where('status', GemTransaction::STATUS_COMPLETED)
-                ->whereDate('created_at', today())
-                ->sum('amount_vnd'),
+            ...\App\Support\TradingStatistics::read($baseQuery, 'gem'),
         ];
     }
 

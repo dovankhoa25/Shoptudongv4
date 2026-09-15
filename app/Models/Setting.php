@@ -4,6 +4,8 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use App\Support\ApiCache;
 
 class Setting extends Model
 {
@@ -11,7 +13,7 @@ class Setting extends Model
 
     public static function get($key, $default = null)
     {
-        $settings = Cache::rememberForever('settings', function () {
+        $settings = ApiCache::remember('internal:settings', 'all', 3600, function () {
             return self::pluck('value', 'key')->toArray();
         });
 
@@ -21,6 +23,8 @@ class Setting extends Model
     public static function set($key, $value): void
     {
         self::updateOrCreate(['key' => $key], ['value' => $value]);
-        Cache::forget('settings');
+        ApiCache::clearGroup('internal:settings');
+        // Retire the legacy key too during rolling deployments.
+        DB::afterCommit(fn () => Cache::forget('settings'));
     }
 }

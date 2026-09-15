@@ -172,6 +172,8 @@ class SpinController extends Controller
             Spin::where('id', $id)->update(['sort_order' => $index]);
         }
 
+        \App\Support\ApiCache::clearGroup('public:nick');
+
         return response()->json(['success' => true, 'message' => 'Đã cập nhật thứ tự!']);
     }
 }

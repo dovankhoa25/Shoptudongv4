@@ -91,6 +91,7 @@ class ServiceController extends Controller
 
         $service = Service::findOrFail($id);
         $service->categories()->sync($request->categories);
+        \App\Support\ApiCache::clearGroup('public:catalog');
 
         return back()->with('success', 'Gán danh mục thành công.');
     }

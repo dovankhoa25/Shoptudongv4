@@ -3,6 +3,7 @@ namespace App\Support;
 
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 final class ApiCache
@@ -28,7 +29,24 @@ final class ApiCache
     }
     public static function clearGroup(string $group): void
     {
+        if (DB::transactionLevel() > 0) {
+            DB::afterCommit(fn () => Cache::forever(self::key('generation',$group),(string)Str::uuid()));
+            return;
+        }
         Cache::forever(self::key('generation',$group),(string)Str::uuid());
+    }
+    /** Resolve resources before caching, including pagination/meta and nested resources. */
+    public static function rememberJson(string $group, string $key, int $ttlSeconds, callable $producer): mixed
+    {
+        return self::remember($group, self::key('json-v1', $key), $ttlSeconds, function () use ($producer) {
+            $value = $producer();
+            if ($value instanceof \Illuminate\Http\Resources\Json\JsonResource) {
+                return $value->response()->getData(true);
+            }
+            if ($value instanceof \Illuminate\Http\JsonResponse) return $value->getData(true);
+
+            return json_decode(json_encode($value, JSON_THROW_ON_ERROR), true, 512, JSON_THROW_ON_ERROR);
+        });
     }
     public static function clearGroups(array $groups): void
     {

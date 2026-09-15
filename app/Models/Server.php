@@ -25,6 +25,14 @@ class Server extends Model
         return $this->hasMany(GoldPrice::class);
     }
 
+    public function currentGoldPrice(): HasOne
+    {
+        return $this->hasOne(GoldPrice::class)->ofMany(
+            ['created_at' => 'max', 'id' => 'max'],
+            fn ($query) => $query->where('status', true)
+        );
+    }
+
     // 🔗 1 Server có nhiều Bots
     public function bots()
     {

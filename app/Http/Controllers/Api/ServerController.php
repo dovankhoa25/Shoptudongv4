@@ -14,7 +14,7 @@ class ServerController extends Controller
 {
     public function index(Request $request)
     {
-        return ApiCache::remember(
+        return ApiCache::rememberJson(
             'public:servers',
             ApiCache::key('servers', 'gold-prices'),
             180,
@@ -33,7 +33,7 @@ class ServerController extends Controller
 
     public function getGem(Request $request)
     {
-        return ApiCache::remember(
+        return ApiCache::rememberJson(
             'public:servers',
             ApiCache::key('servers', 'gem-prices'),
             180,

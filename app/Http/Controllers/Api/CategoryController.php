@@ -13,17 +13,17 @@ class CategoryController extends Controller
 {
     public function index()
     {
-        return ApiCache::remember(
+        return ApiCache::rememberJson(
             'public:catalog',
-            ApiCache::key('game-types', 'with-categories'),
+            ApiCache::key('game-types', 'with-categories-json-v2'),
             300,
             fn () => ApiGameTypeResource::collection(
                 GameType::with(['categories' => function ($query) {
-                    $query->orderBy('sort_order');
+                    $query->with('media')->orderBy('sort_order');
                 }])
                     ->orderBy('sort_order')
                     ->get()
-            )
+            )->response()->getData(true)
         );
     }
 
@@ -69,7 +69,7 @@ class CategoryController extends Controller
 
     public function servicesBySlug($slug)
     {
-        return ApiCache::remember(
+        return ApiCache::rememberJson(
             'public:catalog',
             ApiCache::key('game-type-services', $slug),
             120,

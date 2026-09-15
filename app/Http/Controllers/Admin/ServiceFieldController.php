@@ -50,6 +50,8 @@ class ServiceFieldController extends Controller
         $service = Service::find($validated['service_id']);
         $service->fields()->syncWithoutDetaching($validated['field_ids']);
 
+        \App\Support\ApiCache::clearGroup('public:catalog');
+
         return redirect()->back()
             ->with('success', 'Gán field cho service thành công!');
     }
@@ -66,6 +68,8 @@ class ServiceFieldController extends Controller
 
         $service = Service::find($validated['service_id']);
         $service->fields()->detach($validated['field_id']);
+
+        \App\Support\ApiCache::clearGroup('public:catalog');
 
         return redirect()->back()
             ->with('success', 'Bỏ field khỏi service thành công!');

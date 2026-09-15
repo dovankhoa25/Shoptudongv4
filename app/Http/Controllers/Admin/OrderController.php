@@ -161,21 +161,7 @@ class OrderController extends Controller
         $baseQuery = GoldTransaction::where('type', 'order');
         $this->applyFilters($baseQuery, $request);
 
-        return [
-            'total_orders' => (clone $baseQuery)->count(),
-            'pending_orders' => (clone $baseQuery)->where('status', 'pending')->count(),
-            'processing_orders' => (clone $baseQuery)->where('status', 'processing')->count(),
-            'completed_orders' => (clone $baseQuery)->where('status', 'completed')->count(),
-            'cancelled_orders' => (clone $baseQuery)->where('status', 'cancelled')->count(),
-            'failed_orders' => 0,
-            'total_revenue' => (clone $baseQuery)->where('status', 'completed')->sum('amount_vnd'),
-            'total_gold_sold' => (clone $baseQuery)->where('status', 'completed')->sum('gold_qty'),
-            'today_orders' => (clone $baseQuery)->whereDate('created_at', today())->count(),
-            'today_revenue' => (clone $baseQuery)
-                ->where('status', 'completed')
-                ->whereDate('created_at', today())
-                ->sum('amount_vnd'),
-        ];
+        return \App\Support\TradingStatistics::read($baseQuery, 'gold');
     }
 
     /**

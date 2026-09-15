@@ -15,14 +15,13 @@ class FrontendClientRegistry
     {
         $staticOrigins = config('cors.static_allowed_origins', []);
 
-        if (! Schema::hasTable('oauth_clients')) {
-            return $staticOrigins;
-        }
-
         $dynamicOrigins = Cache::remember(
             self::CACHE_KEY,
             now()->addMinutes(5),
-            fn (): array => Passport::client()->newQuery()
+            function (): array {
+                if (! Schema::hasTable('oauth_clients')) return [];
+
+                return Passport::client()->newQuery()
                 ->where('is_first_party', true)
                 ->where('revoked', false)
                 ->when(
@@ -43,7 +42,8 @@ class FrontendClientRegistry
                 ->map(fn (string $origin): string => rtrim($origin, '/'))
                 ->unique()
                 ->values()
-                ->all(),
+                ->all();
+            },
         );
 
         return collect([...$staticOrigins, ...$dynamicOrigins])

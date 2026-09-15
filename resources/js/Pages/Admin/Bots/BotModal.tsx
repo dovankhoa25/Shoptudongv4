@@ -37,7 +37,7 @@ interface FormData {
     map_id: string;
     area_number: string;
     coordinates: string;
-    proxy: string;
+    proxy?: string;
     status: boolean;
 }
 
@@ -84,8 +84,6 @@ export default function BotModal({ open, onClose, bot, servers, logins }: BotMod
     }, [open, bot, form]);
 
     const handleSubmit = async (values: FormData) => {
-        setLoading(true);
-
         // Convert types array to comma-separated string for backend
         const typeString = values.types.join(',');
 
@@ -103,7 +101,7 @@ export default function BotModal({ open, onClose, bot, servers, logins }: BotMod
             map_id: values.map_id.trim(),
             area_number: values.area_number.trim(),
             coordinates: values.coordinates.trim(),
-            proxy: values.proxy.trim(),
+            proxy: values.proxy?.trim() || '',
             status: values.status,
         };
 
@@ -111,6 +109,7 @@ export default function BotModal({ open, onClose, bot, servers, logins }: BotMod
         const method = bot ? 'put' : 'post';
 
         router[method](url, submitData, {
+            onStart: () => setLoading(true),
             onSuccess: () => {
                 const action = bot ? 'cập nhật' : 'tạo';
                 const botName = values.name || values.account_name;
