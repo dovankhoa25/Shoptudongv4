@@ -29,7 +29,8 @@ class NroReceivingService
             NroShopService::require(!NroRoundRecovery::pending((int)$o->id),'Bot đang khôi phục lượt giao trước; không cần tạo phiên nhận khác.');
             NroShopService::require($a->status === 'active' && $a->server_id && $a->server_game_id, 'Kho cần được cấu hình server hiển thị và server đăng nhập.');
             if($a->publish_status==='login_blocked') {
-                DB::table('item_orders')->where('id',$id)->update(['failure_role'=>'sender','failure_code'=>'login_failed','public_failure'=>'Acc kho chưa thể đăng nhập. Chờ shop xử lý hoặc hủy nếu chưa nhận món nào.','delivery_message'=>'Kho chưa thể đăng nhập.','updated_at'=>now()]);
+                $locked=$a->login_failure_kind==='AccountLocked';
+                DB::table('item_orders')->where('id',$id)->update(['failure_role'=>'sender','failure_code'=>$locked ? 'account_locked' : 'login_failed','public_failure'=>$locked ? 'Acc kho bị game khóa. Bạn có thể yêu cầu hủy nếu chưa nhận món nào.' : 'Acc kho chưa thể đăng nhập. Chờ shop xử lý để tiếp tục giao đồ.','delivery_message'=>'Kho chưa thể đăng nhập.','updated_at'=>now()]);
                 return 0;
             }
             NroShopService::require(!DB::table('nro_delivery_sessions')->where('order_id', $id)->whereIn('status', ['queued', 'preparing', 'ready', 'trading', 'review'])->exists(), 'Đơn đã có phiên nhận.');

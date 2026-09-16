@@ -265,12 +265,17 @@ class NroWorkerController extends Controller
                 && $r->boolean('retryable', true) === false && $r->filled('loginFailureKind');
             if ($permanentSenderLoginFailure) $account->update([
                 'publish_status' => 'login_blocked',
+                'login_failure_kind' => $r->input('loginFailureKind'),
                 'publish_error' => $r->input('message') ?: 'Acc kho bị chặn đăng nhập. Hãy sửa mật khẩu trước khi chạy lại.',
             ]);
+            $lockedSender=$permanentSenderLoginFailure && $r->input('loginFailureKind') === 'AccountLocked';
+            if ($lockedSender) DB::table('item_orders')->where('account_id',$account->id)->whereNotIn('status',['completed','refunded'])->update([
+                'failure_role'=>'sender','failure_code'=>'account_locked','public_failure'=>'Acc kho bị game khóa. Bạn có thể yêu cầu hủy nếu chưa nhận món nào.',
+                'login_retry_at'=>null,'updated_at'=>now()]);
             if ($permanentSenderLoginFailure && $r->input('loginFailureKind') === 'BadCredentials') {
                 $account->update(['login_sale_blocked'=>true]);
                 DB::table('item_orders')->where('account_id',$account->id)->whereNotIn('status',['completed','refunded'])->update([
-                    'failure_role'=>'sender','failure_code'=>'login_failed','public_failure'=>'Acc kho sai thông tin đăng nhập. Shop cần cập nhật; bạn có thể yêu cầu hủy nếu chưa nhận đồ.',
+                    'failure_role'=>'sender','failure_code'=>'login_failed','public_failure'=>'Acc kho sai thông tin đăng nhập. Shop cần cập nhật để tiếp tục giao đồ.',
                     'login_retry_at'=>null,'updated_at'=>now()]);
             }
             if ($job->order_id && $r->input('outcome') === 'login_failed' && $r->boolean('retryable')
@@ -282,7 +287,7 @@ class NroWorkerController extends Controller
                 if (app(\App\Services\NroDeliveryLifecycle::class)->recover($job)) return response()->json(['ok'=>true,'recovered'=>true,'retrySafe'=>true]);
             }
             if($job->order_id && $r->input('outcome')==='login_failed') DB::table('item_orders')->where('id',$job->order_id)->update([
-                'failure_role'=>$r->input('loginAccountRole'),'failure_code'=>'login_failed','public_failure'=>$r->input('loginAccountRole')==='receiver' ? 'Acc nhận chưa thể đăng nhập hoặc chưa sẵn sàng nhận đồ. Kiểm tra lại thông tin nhận.' : 'Acc kho chưa thể đăng nhập. Bạn có thể chờ shop xử lý hoặc hủy nếu chưa nhận món nào.',
+                'failure_role'=>$r->input('loginAccountRole'),'failure_code'=>$lockedSender ? 'account_locked' : 'login_failed','public_failure'=>$r->input('loginAccountRole')==='receiver' ? 'Acc nhận chưa thể đăng nhập hoặc chưa sẵn sàng nhận đồ. Kiểm tra lại thông tin nhận.' : ($lockedSender ? 'Acc kho bị game khóa. Bạn có thể yêu cầu hủy nếu chưa nhận món nào.' : 'Acc kho chưa thể đăng nhập. Shop cần xử lý để tiếp tục giao đồ.'),
                 'login_retry_at'=>null,'updated_at'=>now()]);
             if($job->order_id && in_array($r->input('outcome'), ['review','interrupted']) && app(\App\Services\NroDeliveryLifecycle::class)->recover($job)) return response()->json(['ok'=>true,'recovered'=>true,'retrySafe'=>true]);
             if (!$success && !$expired && app(\App\Services\NroReceivingService::class)->retryInterrupted($job, $r->input('message'))) return response()->json(['ok' => true, 'retrySafe' => true]);

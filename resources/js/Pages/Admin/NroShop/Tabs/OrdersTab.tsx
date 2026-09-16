@@ -124,7 +124,7 @@ export default function OrdersTab({ dataVersion, canRefund, canCheck, canReconci
                                     >
                                         {o.flow?.label || (['completed','refunded'].includes(o.status) ? statusName[o.status] : 'Chưa nhận đủ')}
                                     </Tag>
-                                    {!!o.refundAmount && <div className="text-xs">Đã hoàn {money(o.refundAmount)} · {o.refundActor || 'Admin'} · {dateTime(o.refundedAt)}<div>{o.refundNote}</div></div>}
+                                    {!!o.refundAmount && <div className="text-xs">Đã hoàn {money(o.refundAmount)} · {o.refundActor || 'Admin'} · {dateTime(o.refundedAt)}<div>Lý do hoàn: {o.refundNote}</div></div>}
                                     {o.status!=='refunded' && <Progress
                                         percent={all ? Math.round((done / all) * 100) : 0}
                                         size="small"
@@ -155,8 +155,8 @@ export default function OrdersTab({ dataVersion, canRefund, canCheck, canReconci
             <Modal title={`Hoàn tiền đơn #${refund?.id || ''}`} open={!!refund} onCancel={() => !saving && setRefund(null)}
                 okText="Xác nhận hoàn tiền" cancelText="Đóng" confirmLoading={saving} okButtonProps={{ disabled: partial }} onOk={() => form.submit()}>
                 <p className="mb-3">Người mua: <strong>{refund?.buyerUsername}</strong> · Tiền đơn: {money(refund?.price || 0)}</p>
-                <Alert type="warning" showIcon message={partial ? 'Đơn đã giao một phần: phải tiếp tục giao đủ, không được hoàn tiền.' : 'Chưa giao món nào: hoàn đủ tiền đơn.'}
-                    description="Hoàn tiền sẽ kết thúc đơn và giải phóng số đồ chưa giao. Tool không tự hoàn tiền." />
+                <Alert type="warning" showIcon message={partial ? 'Đơn đã giao một phần: phải tiếp tục giao đủ, không được hoàn tiền.' : 'Admin nhập số tiền cần hoàn, tối đa bằng tiền đơn.'}
+                    description="Xác nhận sẽ kết thúc đơn và giải phóng đồ chưa giao. Nếu hoàn ít hơn tiền đơn, phần chênh lệch không tự hoàn thêm. Tool không tự hoàn tiền." />
                 <Form form={form} layout="vertical" className="mt-4" onFinish={async v => {
                     setSaving(true);
                     try { await axios.post(`/admin/nro-shop/orders/${refund?.id}/refund`, v); message.success('Đã hoàn tiền và kết thúc đơn'); setRefund(null); reload(); }
@@ -164,7 +164,7 @@ export default function OrdersTab({ dataVersion, canRefund, canCheck, canReconci
                     finally { setSaving(false); }
                 }}>
                     <Form.Item name="amount" label="Số tiền hoàn (đ)" rules={[{ required: true, message: 'Nhập số tiền cần hoàn' }]}>
-                        <InputNumber className="!w-full" min={1} max={Number(refund?.price || 0)} precision={0} disabled />
+                        <InputNumber className="!w-full" min={1} max={Number(refund?.price || 0)} precision={0} disabled={partial || saving} />
                     </Form.Item>
                     <Form.Item name="note" label="Lý do / kết quả kiểm tra" rules={[{ required: true, min: 10, max: 250, message: 'Nhập lý do từ 10–250 ký tự' }]}>
                         <Input.TextArea rows={3} maxLength={250} showCount />

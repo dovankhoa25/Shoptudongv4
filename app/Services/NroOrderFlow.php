@@ -65,6 +65,9 @@ class NroOrderFlow
         } elseif ($order->failure_code==='missing_items') {
             $phase='needs_stock';$label='Cần bổ sung đồ';
             $message=$done ? 'Kho cần bổ sung phần còn lại để bạn nhận đủ. Đơn đã nhận một phần không thể hoàn tiền.' : 'Kho thiếu đúng vật phẩm. Bạn có thể chờ bổ sung hoặc yêu cầu hủy hoàn tiền.';
+        } elseif ($order->failure_code==='account_locked' && ($order->failure_role ?? null)==='sender') {
+            $phase='needs_input';$label='Acc kho bị game khóa';
+            $message=$done ? 'Acc kho bị game khóa. Shop cần xử lý để giao đủ phần còn lại.' : 'Acc kho bị game khóa. Bạn có thể chờ shop xử lý hoặc yêu cầu hủy hoàn tiền.';
         } elseif ($order->failure_code==='login_failed' || $account?->publish_status==='login_blocked') {
             $phase='needs_input';$label='Cần sửa thông tin nhận hoặc acc kho';
             $sender=$account?->publish_status==='login_blocked' || ($order->failure_role ?? null)==='sender';

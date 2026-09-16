@@ -422,7 +422,7 @@ class NroShopWorkflowTest extends TestCase
         $this->postJson($url,$body)->assertOk();
         $admin=User::factory()->create(); $admin->assignRole('admin');
         $refund=['amount'=>200,'note'=>'Đã kiểm tra kho thiếu đúng đồ.'];
-        $this->actingAs($admin,'web')->postJson('/admin/nro-shop/orders/'.$order.'/refund',['amount'=>100,'note'=>$refund['note']])->assertUnprocessable();
+        $this->actingAs($admin,'web')->postJson('/admin/nro-shop/orders/'.$order.'/refund',['amount'=>201,'note'=>$refund['note']])->assertUnprocessable();
         $this->postJson('/admin/nro-shop/orders/'.$order.'/refund',$refund)->assertOk();
         $this->postJson('/admin/nro-shop/orders/'.$order.'/refund',$refund)->assertOk();
         $this->postJson($url, $body)->assertOk();
@@ -472,7 +472,7 @@ class NroShopWorkflowTest extends TestCase
         $count=DB::table('nro_worker_jobs')->where('order_id',$order)->count();
         $this->assertEquals(0,app(\App\Services\NroReceivingService::class)->start($buyer,$order,['mode'=>'manual','recipientName'=>'khach','requestKey'=>(string)Str::uuid()]));
         $this->assertEquals($count,DB::table('nro_worker_jobs')->where('order_id',$order)->count());
-        $this->assertDatabaseHas('item_orders',['id'=>$order,'failure_code'=>'login_failed']);
+        $this->assertDatabaseHas('item_orders',['id'=>$order,'failure_code'=>'account_locked']);
         $this->actingAs($seller, 'web')->patchJson('/admin/nro-shop/accounts/'.$a->id.'/password', ['password' => 'new-safe-password'])->assertUnprocessable();
         $this->travel(4)->minutes();
         $this->actingAs($seller, 'web')->patchJson('/admin/nro-shop/accounts/'.$a->id.'/password', ['password' => 'new-safe-password'])->assertOk();
@@ -1825,17 +1825,16 @@ class NroShopWorkflowTest extends TestCase
         $id=DB::table('nro_worker_jobs')->insertGetId(['account_id'=>$available->id,'type'=>'snapshot','status'=>'queued','created_at'=>now(),'updated_at'=>now()]);
         $this->withToken($this->token)->postJson('/app/nro-worker/claim',['protocolVersion'=>4,'workerInstance'=>(string)Str::uuid(),'types'=>['delivery','snapshot']])->assertOk()->assertJsonPath('data.id',$id);
     }
-    public function test_login_wait_cancellation_waits_for_worker_acknowledgement(): void
+    public function test_login_wait_does_not_allow_customer_cancellation(): void
     {
         [$seller,$a,$buyer,$order,$job]=$this->controlsFixture();$url='/app/nro-worker/jobs/'.$job['id'];$lease=['leaseToken'=>$job['leaseToken']];
         $this->postJson($url.'/heartbeat',[...$lease,'loginWaiting'=>true,'loginRetryAt'=>now()->addMinute()->toIso8601String(),'message'=>'Chờ game'])->assertOk();
         Passport::actingAs($buyer);
-        $this->postJson('/api/nro-shop/orders/'.$order.'/cancel')->assertOk()->assertJsonPath('data.cancelRequested',true);
+        $this->assertFalse(app(NroShopService::class)->order($order)['flow']['canRequestRefund']);
+        $this->postJson('/api/nro-shop/orders/'.$order.'/cancel')->assertUnprocessable();
+        $this->withToken($this->token)->postJson($url.'/heartbeat',$lease)->assertOk()->assertJsonPath('cancelRequested',false);
         $this->assertEquals(800,$buyer->fresh()->balance);
-        $this->withToken($this->token)->postJson($url.'/heartbeat',$lease)->assertOk()->assertJsonPath('cancelRequested',true);
-        $this->postJson($url.'/complete',[...$lease,'outcome'=>'review'])->assertOk();
-        $this->assertEquals(1000,$buyer->fresh()->balance);
-        $this->assertDatabaseHas('item_orders',['id'=>$order,'status'=>'refunded']);
+        $this->assertDatabaseMissing('item_orders',['id'=>$order,'status'=>'refunded']);
     }
     public function test_missing_equipped_snapshot_does_not_replace_sellable_inventory(): void
     {
@@ -1866,13 +1865,13 @@ class NroShopWorkflowTest extends TestCase
         $this->assertEquals(800,$buyer->fresh()->balance);
         $this->assertEquals(2,DB::table('nro_inventory_items')->where('account_id',$a->id)->sum('reserved'));
     }
-    public function test_login_blocked_stock_can_be_bought_and_receiver_sees_cancel_option(): void
+    public function test_game_locked_stock_can_be_bought_and_receiver_sees_cancel_option(): void
     {
         $seller=$this->seller();$a=$this->warehouse($seller);$listing=$this->listing($seller,$a);
-        $a->update(['publish_status'=>'login_blocked','publish_error'=>'private full account login failure']);
+        $a->update(['publish_status'=>'login_blocked','login_failure_kind'=>'AccountLocked','publish_error'=>'private full account login failure']);
         $buyer=User::factory()->create(['balance'=>1000]);Passport::actingAs($buyer);
         $id=$this->postJson('/api/nro-shop/orders',['listingId'=>$listing,'serverId'=>10,'requestKey'=>(string)Str::uuid()])->assertOk()->json('data.id');
-        $data=$this->postJson('/api/nro-shop/orders/'.$id.'/receive',['mode'=>'manual','recipientName'=>'khach','requestKey'=>(string)Str::uuid()])->assertOk()->assertJsonPath('data.failureCode','login_failed')->assertJsonPath('data.canCancel',true)->json('data');
+        $data=$this->postJson('/api/nro-shop/orders/'.$id.'/receive',['mode'=>'manual','recipientName'=>'khach','requestKey'=>(string)Str::uuid()])->assertOk()->assertJsonPath('data.failureCode','account_locked')->assertJsonPath('data.canCancel',true)->json('data');
         $this->assertStringNotContainsString('private full account',json_encode($data));
         $this->postJson('/api/nro-shop/orders/'.$id.'/cancel')->assertOk()->assertJsonPath('data.status','refunded');
     }
@@ -1905,7 +1904,7 @@ class NroShopWorkflowTest extends TestCase
         [$seller,$a,$buyer,$order,$job]=$this->controlsFixture();$url='/app/nro-worker/jobs/'.$job['id'];$lease=['leaseToken'=>$job['leaseToken']];
         $this->postJson($url.'/ready',[...$lease,'characterId'=>10,'name'=>'bot','mapId'=>5,'zone'=>7,'recipientName'=>'khach'])->assertOk();
         $this->postJson($url.'/begin-round',$lease)->assertOk();
-        DB::table('item_orders')->where('id',$order)->update(['failure_code'=>'login_wait']);
+        DB::table('item_orders')->where('id',$order)->update(['failure_code'=>'missing_items']);
         Passport::actingAs($buyer);$this->postJson('/api/nro-shop/orders/'.$order.'/cancel')->assertOk();
         $this->withToken($this->token)->postJson($url.'/begin-round',$lease)->assertConflict();
         $lines=DB::table('item_order_items')->where('order_id',$order)->orderBy('id')->get()->values()->map(fn($i,$n)=>['id'=>$i->id,'delivered'=>$n===0?1:0])->all();
@@ -2282,5 +2281,75 @@ class NroShopWorkflowTest extends TestCase
         DB::table('nro_worker_jobs')->where('id',$job['id'])->update(['order_id'=>$otherId]);
         $data=app(NroShopService::class)->order($order);
         $this->assertTrue($data['botOnline']);$this->assertNull($data['session']['position']);
+    }
+
+    public function test_admin_can_choose_refund_amount_and_replay_does_not_credit_twice(): void
+    {
+        [$seller,$a,$buyer,$order,$job]=$this->controlsFixture();
+        DB::table('nro_worker_jobs')->where('order_id',$order)->update(['status'=>'failed']);
+        DB::table('nro_delivery_sessions')->where('order_id',$order)->update(['status'=>'failed']);
+        DB::table('item_orders')->where('id',$order)->update(['status'=>'awaiting_receipt','failure_code'=>'login_wait']);
+        $admin=User::factory()->create();$admin->assignRole('admin');
+        $url='/admin/nro-shop/orders/'.$order.'/refund';$body=['amount'=>90,'note'=>'Admin quyết định số tiền hoàn theo yêu cầu.'];
+        $this->actingAs($seller,'web')->postJson($url,$body)->assertForbidden();
+        $this->actingAs($admin,'web')->postJson($url,['amount'=>201,'note'=>$body['note']])->assertUnprocessable();
+        $this->postJson($url,['amount'=>0,'note'=>$body['note']])->assertUnprocessable();
+        $this->postJson($url,$body)->assertOk();$this->postJson($url,$body)->assertOk();
+        $this->postJson($url,['amount'=>100,'note'=>$body['note']])->assertUnprocessable();
+        $this->assertEquals(890,$buyer->fresh()->balance);
+        $this->assertDatabaseHas('item_orders',['id'=>$order,'status'=>'refunded','refund_amount'=>90,'refund_actor_id'=>$admin->id]);
+        $this->assertEquals(1,DB::table('transactions')->where('idempotency_key',"nro-order:$order:admin-refund")->count());
+        $this->assertEquals(0,DB::table('nro_inventory_items')->where('account_id',$a->id)->sum('reserved'));
+    }
+    public function test_stale_refund_flag_and_temporary_login_error_never_authorize_customer_refund(): void
+    {
+        [$seller,$a,$buyer,$order,$job]=$this->controlsFixture();
+        $buyer->assignRole('admin'); // The customer endpoint must not turn into an admin override.
+        DB::table('nro_worker_jobs')->where('order_id',$order)->update(['status'=>'failed']);
+        DB::table('nro_delivery_sessions')->where('order_id',$order)->update(['status'=>'failed']);
+        Passport::actingAs($buyer);
+        foreach(['login_wait','login_failed',null] as $code) {
+            DB::table('item_orders')->where('id',$order)->update(['status'=>'awaiting_receipt','failure_code'=>$code,'refund_requested'=>true,'cancel_requested'=>false]);
+            $this->assertFalse(app(NroShopService::class)->order($order)['flow']['canRequestRefund']);
+            $this->postJson('/api/nro-shop/orders/'.$order.'/cancel')->assertUnprocessable();
+            DB::table('item_orders')->where('id',$order)->update(['cancel_requested'=>true]);
+            app(\App\Services\NroOrderRefund::class)->finishRequested($order);
+            $this->assertDatabaseHas('item_orders',['id'=>$order,'status'=>'awaiting_receipt','cancel_requested'=>false,'refund_requested'=>false]);
+        }
+        $this->assertEquals(800,$buyer->fresh()->balance);
+    }
+    public function test_only_game_locked_sender_failure_permits_customer_refund(): void
+    {
+        [$seller,$a,$buyer,$order,$job]=$this->controlsFixture();
+        $this->postJson('/app/nro-worker/jobs/'.$job['id'].'/complete',[
+            'leaseToken'=>$job['leaseToken'],'outcome'=>'login_failed','loginFailureKind'=>'AccountLocked','retryable'=>false,'loginAccountRole'=>'sender','message'=>'Game khóa acc kho',
+        ])->assertOk();
+        $this->assertDatabaseHas('nro_accounts',['id'=>$a->id,'login_failure_kind'=>'AccountLocked']);
+        $this->assertTrue(app(NroShopService::class)->order($order)['flow']['canRequestRefund']);
+        Passport::actingAs($buyer);
+        $this->postJson('/api/nro-shop/orders/'.$order.'/cancel')->assertOk()->assertJsonPath('data.status','refunded');
+        $this->assertEquals(1000,$buyer->fresh()->balance);
+    }
+    public function test_wrong_password_and_locked_receiver_cannot_request_refund(): void
+    {
+        foreach([['sender','BadCredentials'],['receiver','AccountLocked']] as [$role,$kind]) {
+            [$seller,$a,$buyer,$order,$job]=$this->controlsFixture();
+            $this->withToken($this->token)->postJson('/app/nro-worker/jobs/'.$job['id'].'/complete',[
+                'leaseToken'=>$job['leaseToken'],'outcome'=>'login_failed','loginFailureKind'=>$kind,'retryable'=>false,'loginAccountRole'=>$role,'message'=>'Login bị từ chối',
+            ])->assertOk();
+            $this->assertFalse(app(NroShopService::class)->order($order)['flow']['canRequestRefund']);
+            Passport::actingAs($buyer);$this->postJson('/api/nro-shop/orders/'.$order.'/cancel')->assertUnprocessable();
+            $this->assertEquals(800,$buyer->fresh()->balance);
+        }
+    }
+    public function test_complete_snapshot_clears_game_lock_classification(): void
+    {
+        [$seller,$a,$buyer,$order,$job]=$this->controlsFixture();
+        DB::table('item_orders')->where('id',$order)->update(['status'=>'awaiting_receipt','failure_code'=>'account_locked','failure_role'=>'sender']);
+        $a->update(['publish_status'=>'login_blocked','login_failure_kind'=>'AccountLocked']);
+        app(NroSnapshotService::class)->ingest($a,$this->payload(2));
+        $this->assertNull($a->fresh()->login_failure_kind);
+        $this->assertDatabaseHas('item_orders',['id'=>$order,'failure_code'=>null]);
+        $this->assertFalse(app(NroShopService::class)->order($order)['flow']['canRequestRefund']);
     }
 }

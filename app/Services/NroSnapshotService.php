@@ -123,8 +123,8 @@ class NroSnapshotService
                 }
             }
             if ($payload['completeness']['bag'] && $payload['completeness']['chest'] && $payload['completeness']['equipped']) {
-                if ($account->login_sale_blocked) $account->update(['login_sale_blocked'=>false]);
-                DB::table('item_orders')->where('account_id',$account->id)->where('failure_code','login_failed')->where('failure_role','sender')->where('status','awaiting_receipt')->where('cancel_requested',false)->update(['failure_code'=>null,'failure_role'=>null,'public_failure'=>null,'login_retry_at'=>null,'delivery_message'=>'Acc kho đã được kiểm tra. Bạn có thể nhận tiếp.','updated_at'=>now()]);
+                if ($account->login_sale_blocked || $account->login_failure_kind) $account->update(['login_sale_blocked'=>false,'login_failure_kind'=>null]);
+                DB::table('item_orders')->where('account_id',$account->id)->whereIn('failure_code',['login_failed','account_locked'])->where('failure_role','sender')->where('status','awaiting_receipt')->where('cancel_requested',false)->update(['failure_code'=>null,'failure_role'=>null,'public_failure'=>null,'login_retry_at'=>null,'delivery_message'=>'Acc kho đã được kiểm tra. Bạn có thể nhận tiếp.','updated_at'=>now()]);
                 NroRoundRecovery::resumeAccount((int)$account->id);
                 if ($account->publish_status === 'login_blocked') $account->update(['publish_status'=>null,'publish_error'=>null]);
             }
