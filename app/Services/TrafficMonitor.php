@@ -8,6 +8,8 @@ use Symfony\Component\HttpFoundation\IpUtils;
 
 final class TrafficMonitor
 {
+    public function __construct(private TrafficMonitorState $state) {}
+
     private function store()
     {
         return Cache::store(config('traffic_monitor.store'));
@@ -34,9 +36,11 @@ final class TrafficMonitor
 
     public function record(RequestHandled $event): void
     {
-        if (!config('traffic_monitor.enabled')) return;
         // The monitoring page must not inflate its own numbers.
-        if ($event->request->route()?->getName() === 'admin.traffic.index') return;
+        if (str_starts_with((string) $event->request->route()?->getName(), 'admin.traffic.')) return;
+        $enabled = $event->request->attributes->has('_traffic_enabled')
+            ? $event->request->attributes->get('_traffic_enabled') : $this->state->enabled();
+        if (!$enabled) return;
         try {
             $request = $event->request;
             $client = $this->client($request);
@@ -97,8 +101,9 @@ final class TrafficMonitor
         $minutes = max(1, min((int) config('traffic_monitor.minutes'), $minutes));
         $now = now()->timestamp;
         $minute = intdiv($now, 60);
+        $enabled = $this->state->enabled();
         $keys = [];
-        for ($offset = 0; $offset < $minutes; $offset++) {
+        for ($offset = 0; $enabled && $offset < $minutes; $offset++) {
             for ($shard = 0; $shard < config('traffic_monitor.shards'); $shard++) {
                 $keys[] = $this->key($minute - $offset, $shard);
             }
@@ -107,7 +112,7 @@ final class TrafficMonitor
         $overflow = 0;
         $available = true;
         try {
-            foreach ($this->store()->many($keys) as $bucket) {
+            foreach ($enabled ? $this->store()->many($keys) : [] as $bucket) {
                 if (!$bucket || $bucket['minute'] < $minute - $minutes + 1 || $bucket['minute'] > $minute) continue;
                 $overflow += $bucket['overflow'];
                 foreach ($bucket['rows'] as $id => $row) {
@@ -147,7 +152,7 @@ final class TrafficMonitor
         $top = fn ($items) => array_map(fn ($key, $count) => ['key' => (string) $key, 'count' => $count],
             array_keys(array_slice($items, 0, 10, true)), array_values(array_slice($items, 0, 10, true)));
         return [
-            'enabled' => (bool) config('traffic_monitor.enabled'), 'available' => $available,
+            'enabled' => $enabled, 'available' => $available,
             'minutes' => $minutes, 'from' => ($minute - $minutes + 1) * 60, 'to' => $now,
             'totals' => $totals, 'ips' => $top($ips), 'endpoints' => $top($endpoints),
             'rows' => array_values(array_slice($rows, 0, 100)), 'overflow' => $overflow,

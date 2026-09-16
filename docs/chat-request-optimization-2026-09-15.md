@@ -36,7 +36,7 @@ Backend vẫn xác thực từng request thật và broadcast authorization. Kh�
 1. Build/deploy frontend mới trên cả ba site và backend có cấu hình CORS mới + assets admin mới.
 2. Backend đặt CORS_MAX_AGE=300 (hoặc dùng mặc định), chạy php artisan config:cache theo quy trình deploy. Không cần migration mới cho riêng bản sửa này.
 3. Mở phiên browser dùng bundle mới, thử hai tab đăng nhập, mở/đóng chat và chuyển trang. Kênh chat không được gọi liên tục khi token không đổi; đăng xuất phải ngừng dùng kênh cũ.
-4. Đối chiếu cửa sổ 1 phút ở admin: GET /api/chat/realtime-channel, 429 và OPTIONS. Cache preflight chỉ giảm request do browser tuân theo CORS; một script cố ý vẫn có thể gửi nhiều request.
+4. Bật ghi nhận tạm ở admin → Lưu lượng & API (công tắc bổ sung 16/09), đối chiếu cửa sổ 1 phút: GET /api/chat/realtime-channel, 429 và OPTIONS; tắt lại khi kiểm tra xong. Cache preflight chỉ giảm request do browser tuân theo CORS; một script cố ý vẫn có thể gửi nhiều request.
 5. Muốn ngăn lưu lượng cố ý trước khi PHP chạy cần cấu hình bảo vệ ở Cloudflare/server. Bản sửa này chưa cấu hình hoặc bật rule Cloudflare và không chứng minh website chịu được một mức tải cụ thể.
 
 Nguồn: [RTK Query cache](https://redux-toolkit.js.org/rtk-query/usage/cache-behavior), [Access-Control-Max-Age](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Access-Control-Max-Age).

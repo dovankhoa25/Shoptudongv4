@@ -7,6 +7,7 @@ enum Permission: string
     case DashboardView = 'dashboard.view';
     case AnalyticsView = 'analytics.view';
     case TrafficView = 'traffic.view';
+    case TrafficManage = 'traffic.manage';
 
     case UsersView = 'users.view';
     case UsersCreate = 'users.create';

@@ -1,7 +1,9 @@
 <?php
 // Observability only: this configuration does not change throttling or proxy trust.
 return [
-    'enabled' => (bool) env('TRAFFIC_MONITOR_ENABLED', true),
+    // Default before an admin saves the switch. The private control file takes precedence.
+    'enabled' => (bool) env('TRAFFIC_MONITOR_ENABLED', false),
+    'state_path' => env('TRAFFIC_MONITOR_STATE_PATH', storage_path('app/private/traffic-monitor.state')),
     'store' => env('TRAFFIC_MONITOR_STORE', 'file'),
     'minutes' => 15,
     'shards' => 8,

@@ -2,6 +2,7 @@
 
 ## Đã sửa trong source local
 
+- Bổ sung 16/09: công tắc bật/tắt ghi nhận ở `/admin/traffic`, quyền `traffic.manage`, mặc định tắt khi chưa có cấu hình bật/trạng thái đã lưu. Khi tắt bỏ qua bộ đếm/cache thống kê; còn một kiểm tra file trạng thái nhỏ mỗi request. Xem hướng dẫn triển khai và thứ tự ưu tiên file/`.env` trong bản đồ cache bên dưới.
 - Admin có trang **Lưu lượng & API** tại `/admin/traffic`: top IP/endpoint, lọc IP/nhóm/mã HTTP, số lần 429/401/403/404/5xx và thời gian xử lý. Phân quyền `traffic.view`, cửa sổ tối đa 15 phút, bộ đếm gần đúng có giới hạn dung lượng. Không tự khóa IP.
 - Cache public dựng JSON hoàn chỉnh trước khi lưu. Danh mục nạp media theo lô; giá server dùng quan hệ giá hiện hành và tổng tồn kho bằng SQL; bot chỉ select các cột public.
 - Xóa nhóm cache sau commit ngoài cùng; rollback không xóa. Observer chung bao phủ ghi model từ admin, AppAuto/V2 và command. Thêm invalidation cho pivot danh mục/dịch vụ/field/thuộc tính, xóa template và đổi thứ tự spin.
@@ -18,6 +19,7 @@ Bản đồ chi tiết TTL, đường ghi và invalidation, cơ chế Next.js, c
 
 ## Đã kiểm chứng
 
+- Bổ sung công tắc 16/09: **20 test liên quan traffic/CORS/frontend registry, 187 assertions đạt**, gồm bật/tắt qua HTTP, không truy cập cache thống kê khi tắt, không flush cache nghiệp vụ, phân quyền xem/quản lý và lỗi lưu trạng thái. Đây chưa phải benchmark production.
 - **47 test backend liên quan, 1.015 assertions: qua** (43 test / 866 assertions và 4 test NRO / 149 assertions).
 - **3 test webhook frontend: qua**; chạy handler TypeScript thật với stub `next/cache`, kiểm tra HMAC, tags, timestamp, input lỗi và giới hạn body. Đây không phải kiểm chứng hệ thống cache của Next trên hosting.
 - **52 file PHP sửa/thêm: syntax hợp lệ**; `git diff --check` không có lỗi whitespace.

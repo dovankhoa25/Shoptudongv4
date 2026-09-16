@@ -7,6 +7,7 @@ type TrafficRow = { ip: string; source: string; route: string; method: string; s
 type Filter = { minutes?: number; ip?: string; group?: string; status?: string };
 type Data = PageProps & {
     filters: Filter;
+    canManage: boolean;
     traffic: { enabled: boolean; available: boolean; minutes: number; from: number; to: number; overflow: number; series: number; store: string;
         totals: { count: number; options: number; limited: number; auth_errors: number; not_found: number; server_errors: number; total_ms: number; max_ms: number };
         ips: { key: string; count: number }[]; endpoints: { key: string; count: number }[]; rows: TrafficRow[] };
@@ -15,8 +16,19 @@ const number = (value: number) => value.toLocaleString('vi-VN');
 const time = (value: number) => new Date(value * 1000).toLocaleTimeString('vi-VN');
 
 export default function TrafficPage() {
-    const { traffic, filters } = usePage<Data>().props;
+    const { traffic, filters, canManage } = usePage<Data>().props;
     const [form, setForm] = useState<Filter>(filters);
+    const [saving, setSaving] = useState(false);
+    const [switchError, setSwitchError] = useState('');
+    const toggleRecording = () => {
+        setSwitchError('');
+        router.patch('/admin/traffic', { enabled: !traffic.enabled }, {
+            preserveScroll: true,
+            onStart: () => setSaving(true),
+            onFinish: () => setSaving(false),
+            onError: errors => setSwitchError(errors.enabled ?? 'Không đổi được trạng thái ghi nhận.'),
+        });
+    };
     const apply = (next: Filter = form) => {
         setForm(next);
         router.get('/admin/traffic', next, { preserveScroll: true, preserveState: true });
@@ -26,8 +38,22 @@ export default function TrafficPage() {
         <Head title="Lưu lượng & API" />
         <div className="space-y-4 p-4 text-gray-900 dark:text-gray-100">
             <div><h1 className="text-xl font-semibold">Lưu lượng & API</h1>
-                <p className="mt-1 text-sm text-gray-500">Yêu cầu tới Laravel · {time(traffic.from)} – {time(traffic.to)} · bấm IP để xem API đã gọi.</p>
+                {traffic.enabled && <p className="mt-1 text-sm text-gray-500">Yêu cầu tới Laravel · {time(traffic.from)} – {time(traffic.to)} · bấm IP để xem API đã gọi.</p>}
             </div>
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-gray-200 p-3 dark:border-gray-700">
+                <div>
+                    <div className="font-medium">{traffic.enabled ? 'Đang ghi nhận lưu lượng' : 'Đã tắt ghi nhận lưu lượng'}</div>
+                    <p className="mt-1 text-sm text-gray-500">{traffic.enabled
+                        ? 'Tắt khi không cần theo dõi để giảm tải cho website.'
+                        : 'Không thu thập request hoặc đọc/ghi bộ đếm thống kê. Bật lại khi cần kiểm tra.'}</p>
+                </div>
+                {canManage && <button type="button" disabled={saving} onClick={toggleRecording}
+                    className={`rounded px-4 py-2 text-sm font-medium disabled:opacity-50 ${traffic.enabled ? 'border border-gray-300 dark:border-gray-600' : 'bg-blue-600 text-white'}`}>
+                    {saving ? 'Đang lưu…' : traffic.enabled ? 'Tắt ghi nhận' : 'Bật ghi nhận'}
+                </button>}
+            </div>
+            {switchError && <p role="alert" className="text-sm text-red-500">{switchError}</p>}
+            {traffic.enabled && <>
             <form onSubmit={event => { event.preventDefault(); apply(); }} className="flex flex-wrap gap-2">
                 <select aria-label="Khoảng thời gian" value={form.minutes ?? 5} onChange={event => setForm({ ...form, minutes: Number(event.target.value) })} className="rounded border border-gray-300 bg-white dark:border-gray-700 dark:bg-gray-900">
                     <option value={1}>1 phút</option><option value={5}>5 phút</option><option value={15}>15 phút</option>
@@ -40,7 +66,7 @@ export default function TrafficPage() {
                 <button className="rounded bg-blue-600 px-4 py-2 text-white">Lọc / Làm mới</button>
                 <button type="button" onClick={() => apply({ minutes: 5 })} className="rounded border px-3">Xóa lọc</button>
             </form>
-            {(!traffic.enabled || !traffic.available) && <p role="alert" className="rounded bg-amber-100 p-3 text-amber-900">{!traffic.enabled ? 'Đang tắt ghi nhận lưu lượng.' : 'Không đọc được bộ nhớ thống kê. Kiểm tra cache store.'}</p>}
+            {!traffic.available && <p role="alert" className="rounded bg-amber-100 p-3 text-amber-900">Không đọc được bộ nhớ thống kê. Kiểm tra cache store.</p>}
             <div className="grid grid-cols-2 gap-2 lg:grid-cols-6">
                 {[['Request ghi nhận', totals.count], ['Bị giới hạn · 429', totals.limited], ['401 / 403', totals.auth_errors], ['Không tìm thấy · 404', totals.not_found], ['Lỗi máy chủ · 5xx', totals.server_errors], ['Trung bình (ms)', Math.round(totals.total_ms / Math.max(1, totals.count))]].map(([label, value]) =>
                     <div key={String(label)} className="rounded border border-gray-200 p-3 dark:border-gray-700"><div className="text-xs text-gray-500">{label}</div><div className="mt-1 text-xl font-semibold">{number(Number(value))}</div></div>)}
@@ -75,6 +101,7 @@ export default function TrafficPage() {
                 {' '}Không chứa nội dung gửi lên, token hoặc query string. Request bị Cloudflare chặn trước khi tới Laravel không xuất hiện.
                 {' '}Thời gian đo tại ứng dụng, không gồm độ trễ mạng. IP kết nối có thể là proxy nội bộ nếu máy chủ chưa nhận trực tiếp từ Cloudflare.
             </p>
+            </>}
         </div>
     </AdminLayout>;
 }

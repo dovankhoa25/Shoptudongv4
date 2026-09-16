@@ -62,14 +62,14 @@ Backend:
 ```dotenv
 FRONTEND_CACHE_ORIGINS=https://123nick.com,https://shophhp.net,https://vanghhp.vn
 FRONTEND_CACHE_WEBHOOK_SECRET=<chuoi-bi-mat-ngau-nhien-toi-thieu-32-ky-tu>
-TRAFFIC_MONITOR_ENABLED=true
-TRAFFIC_MONITOR_STORE=file
+TRAFFIC_MONITOR_ENABLED=false
+TRAFFIC_MONITOR_STORE=redis
 ```
 
-Mỗi frontend: `WEBHOOK_SECRET` phải trùng secret trên backend. Không dùng biến `NEXT_PUBLIC_*` cho secret. Origins chỉ chứa domain triển khai thực tế do chủ hệ thống quản lý; bỏ domain không dùng. Có thể chọn `TRAFFIC_MONITOR_STORE=redis` khi Redis đã được cấu hình và kiểm tra; file dùng được trên một máy. Nhiều máy phải dùng cùng store để có số liệu tổng.
+Mỗi frontend: `WEBHOOK_SECRET` phải trùng secret trên backend. Không dùng biến `NEXT_PUBLIC_*` cho secret. Origins chỉ chứa domain triển khai thực tế do chủ hệ thống quản lý; bỏ domain không dùng. Ví dụ trên dùng Redis đã được cấu hình và kiểm tra; `TRAFFIC_MONITOR_STORE` độc lập với `CACHE_STORE`, mặc định vẫn là file nếu không khai báo. Nhiều máy phải dùng cùng store để có số liệu tổng và cùng file trạng thái (hoặc đổi trạng thái trên từng máy).
 
 1. Build/deploy source cả backend và các frontend; backend đã chạy thành công `npm run build` local. Build frontend bằng lockfile/runtime đúng dự án.
-2. Kiểm tra index thật, EXPLAIN và kế hoạch thêm index rồi chạy migration khi triển khai (có migration index và quyền traffic.view). Chưa chạy trên DB production trong phiên làm việc này.
+2. Kiểm tra index thật, EXPLAIN và kế hoạch thêm index rồi chạy migration khi triển khai (có migration index, quyền traffic.view và traffic.manage). Chưa chạy trên DB production trong phiên làm việc này.
 3. Cập nhật cấu hình môi trường, chạy `php artisan config:cache` và giữ cron Laravel `schedule:run` mỗi phút.
 4. Chạy `php artisan frontend-cache:sync` để kiểm tra kết nối sau khi đã deploy endpoint mới. Chỉ HTTP thành công kèm JSON success=true mới được ghi nhận.
 5. Test sửa giá/danh mục/nick; kiểm tra API trước, rồi frontend sau lượt scheduler. Giao dịch vẫn phải kiểm tra DB thật ở backend.
@@ -78,11 +78,20 @@ Nếu bỏ trống FRONTEND_CACHE_ORIGINS, command không gửi gì. Không cầ
 
 ## Admin → Lưu lượng & API
 
+### Bật/tắt ghi nhận — bổ sung 16/09/2026
+
+- Vào `/admin/traffic`, bấm **Bật ghi nhận / Tắt ghi nhận**. Quyền `traffic.manage` được migration `2026_09_16_000001_add_traffic_manage_permission` cấp cho admin/super-admin hiện hữu; enum/seeder cấp cho lần seed sau. Tài khoản chỉ có `traffic.view` được xem, không đổi công tắc.
+- Mặc định tắt nếu chưa có trạng thái đã lưu và không khai báo bật trong môi trường. `.env` đang có `TRAFFIC_MONITOR_ENABLED=true` vẫn bật cho đến khi admin bấm tắt. Sau khi đổi `.env`, chạy `php artisan config:cache` theo quy trình deploy.
+- Nút admin lưu `1`/`0` vào `storage/app/private/traffic-monitor.state`, ngoài thư mục public; file này ưu tiên hơn `.env` và không bị `cache:clear`/`config:cache` xóa. Giữ file khi deploy, cho PHP quyền ghi thư mục chứa nó. Có thể đổi vị trí bằng `TRAFFIC_MONITOR_STATE_PATH`; không đặt trong public. Ghi lỗi sẽ báo trên form.
+- Khi tắt: request mới không bắt đầu đo thời gian, không đọc/ghi bộ đếm hoặc lấy lock thống kê trong Redis/file cache; trang admin cũng không đọc các bucket và ẩn bộ lọc/bảng. Mỗi request vẫn kiểm tra một file điều khiển nhỏ trên ổ đĩa, không cần hỏi Redis/DB để biết trạng thái. Request đang chạy khi đổi nút có thể hoàn tất lần ghi trước đó.
+- Không flush cache nghiệp vụ khi bật/tắt. Dữ liệu đã ghi tự hết TTL (tối đa 17 phút lưu vật lý, cửa sổ hiển thị tối đa 15 phút); bật lại sớm có thể còn số liệu cũ. Khoảng thời gian tắt không được ghi bù.
+- Build/deploy backend và assets admin, chạy migration quyền mới theo quy trình triển khai. Chưa áp dụng trên hosting trong phiên sửa source. Thay đổi này chỉ điều khiển thống kê, không đổi limiter hoặc cấu hình Cloudflare.
+
 ### Bổ sung cache kênh chat và preflight
 
 Xem [chu kỳ cache, chống gọi lặp và kiểm tra triển khai](chat-request-optimization-2026-09-15.md). Kết quả kênh giữ 60 giây khi không còn subscriber, đổi khoá ngay khi token/logout thay đổi; lỗi 429 có thời gian chờ riêng. Preflight có TTL mặc định 300 giây, không cache nội dung API.
 
-URL: `/admin/traffic`; quyền `traffic.view`, migration cấp cho admin/super-admin hiện hữu, enum/seeder cấp cho lần seed sau. Người dùng/CTV không tự có quyền.
+URL: `/admin/traffic`; quyền `traffic.view` hoặc `traffic.manage` để mở trang. Người dùng/CTV không tự có quyền. Các mô tả bên dưới áp dụng khi bật ghi nhận.
 
 - Cửa sổ 1/5/15 phút, top IP, top endpoint, lọc đúng IP/nhóm/HTTP; chi tiết tối đa 100 nhóm request.
 - Đếm HTTP 429, 401/403, 404, 5xx; trung bình/tối đa thời gian xử lý tại Laravel.

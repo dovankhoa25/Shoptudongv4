@@ -109,8 +109,11 @@ Route::prefix('admin')
             ->name('chats.index');
 
         Route::get('/traffic', [\App\Http\Controllers\Admin\TrafficController::class, 'index'])
-            ->middleware(Permission::middleware(Permission::TrafficView))
+            ->middleware(Permission::middleware(Permission::TrafficView, Permission::TrafficManage))
             ->name('traffic.index');
+        Route::patch('/traffic', [\App\Http\Controllers\Admin\TrafficController::class, 'update'])
+            ->middleware(Permission::middleware(Permission::TrafficManage))
+            ->name('traffic.update');
 
         // thống kê
         Route::get('/analytics', [AnalyticsController::class, 'index'])
