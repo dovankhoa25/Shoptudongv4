@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { echo } from '@laravel/echo-react';
+import { useEffect, useState } from 'react';
 import { router } from '@inertiajs/react';
 import axios from 'axios';
 import { Button, Collapse, Dropdown, Form, Space, Tabs, Tag, message } from 'antd';
@@ -61,8 +60,7 @@ export default function NroShop({
         try {
             await action();
             message.success(success);
-
-
+            window.dispatchEvent(new Event('admin:refresh-if-offline'));
         } catch (e) {
             message.error(axios.isAxiosError(e) ? e.response?.data?.message || 'Yêu cầu thất bại' : 'Yêu cầu thất bại');
         } finally {
@@ -140,7 +138,7 @@ export default function NroShop({
     ].filter(tab => tab.show);
 
     return (
-        <AdminLayout title="Quản lý acc & kho đồ NRO">
+        <>
             {importing && (
                 <NroAccountImport
                     open={importing}
@@ -277,6 +275,8 @@ export default function NroShop({
 
                 <Tabs items={tabs} destroyOnHidden onChange={key=>window.dispatchEvent(new CustomEvent('admin:nro-tab',{detail:key}))} />
             </div>
-        </AdminLayout>
+        </>
     );
 }
+
+NroShop.layout = (page: React.ReactNode) => <AdminLayout title="Quản lý acc & kho đồ NRO">{page}</AdminLayout>;

@@ -11,5 +11,11 @@ interface Props extends PageProps {
 export default function SpinEdit() {
     const { spin: raw, categories } = usePage<Props>().props;
     const spin = 'data' in raw ? raw.data : raw;
-    return <AdminLayout title={`Sửa vòng quay #${spin.id}`}><Head title={`Sửa vòng quay #${spin.id}`} /><SpinModal open spinId={spin.id} categories={categories} onClose={() => router.visit('/admin/spins')} /></AdminLayout>;
+    return <><Head title={`Sửa vòng quay #${spin.id}`} /><SpinModal open spinId={spin.id} categories={categories} onClose={() => router.visit('/admin/spins')} /></>;
 }
+
+SpinEdit.layout = (page: React.ReactElement<Props>) => {
+    const raw = page.props.spin;
+    const value = 'data' in raw ? raw.data : raw;
+    return <AdminLayout title={`Sửa vòng quay #${value.id}`}>{page}</AdminLayout>;
+};

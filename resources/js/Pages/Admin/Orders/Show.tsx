@@ -43,7 +43,7 @@ export default function GoldOrderShow() {
     ] as const;
 
     return (
-        <AdminLayout title={`${title} #${order.id}`}>
+        <>
             <Head title={`${title} #${order.id}`} />
             <div className="space-y-6">
                 <div className="flex items-center justify-between">
@@ -70,6 +70,12 @@ export default function GoldOrderShow() {
                     ))}
                 </div>
             </div>
-        </AdminLayout>
+        </>
     );
 }
+
+GoldOrderShow.layout = (page: React.ReactElement<Props>) => {
+    const raw = page.props.order;
+    const value = 'data' in raw ? raw.data : raw;
+    return <AdminLayout title={`${value.type === 'import' ? 'Chi tiết đơn nhập vàng' : 'Chi tiết đơn mua vàng'} #${value.id}`}>{page}</AdminLayout>;
+};

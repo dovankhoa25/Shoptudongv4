@@ -21,7 +21,9 @@ class HandleInertiaRequests extends Middleware
 
         return [
             ...parent::share($request),
-            'auth' => [
+            // JSON endpoints and redirects do not render shared page props. Defer
+            // balance locking, media/role queries and the realtime lease until needed.
+            'auth' => fn () => [
                 'user' => ($user ? [...$user->only(['id', 'username', 'chat_display_name', 'email', 'avatar', 'status']), ...\App\Services\UserBalanceSnapshot::read((int)$user->id)] : null),
                 'roles' => $user?->getRoleNames()->values() ?? [],
                 'permissions' => $user?->getAllPermissions()->pluck('name')->values() ?? [],

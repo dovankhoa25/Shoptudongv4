@@ -9,15 +9,19 @@ const roots=['/admin/orders','/admin/imports','/admin/gem-orders','/admin/servic
 export default function AdminRealtimeProvider({children}:{children:React.ReactNode}) {
     const {url,props}=usePage<PageProps>();const path=url.split('?')[0];
     const eligible=roots.includes(path) || /^\/admin\/(orders|imports|gem-orders)\/\d+$/.test(path);
-    const [mode,setMode]=useState('page');
-    useEffect(()=>setMode('page'),[path]);
+    const defaultMode=path==='/admin/nro-shop' && (props.capabilities as {accounts?:boolean}|undefined)?.accounts===false?'summary':'page';
+    const [selection,setSelection]=useState({path,mode:defaultMode});
+    // Reset before committing a subscription for the next page, including browser Back.
+    if(selection.path!==path)setSelection({path,mode:defaultMode});
+    const mode=selection.path===path?selection.mode:defaultMode;
     const live=useLiveView<Record<string,unknown>>(eligible && props.auth.user?.id?url:null,data=> {
         router.replace({props:current=>({...current,...data}),preserveState:true,preserveScroll:true});
     },path==='/admin/nro-shop'?mode:'page');
     useEffect(()=> {
-        const tab=(event:Event)=>setMode((event as CustomEvent).detail==='accounts'?'page':'summary');
-        const sync=()=>live.sync();window.addEventListener('admin:nro-tab',tab);window.addEventListener('admin:live-sync',sync);
-        return ()=>{window.removeEventListener('admin:nro-tab',tab);window.removeEventListener('admin:live-sync',sync);};
-    },[live.sync]);
-    return <>{eligible && live.status==='offline' && <div role="status" className="px-4 py-1 text-xs text-amber-600">Mất cập nhật trực tiếp. <button className="underline" onClick={live.sync}>Kết nối lại</button></div>}{eligible && live.status==='denied' && <div role="alert" className="px-4 py-1 text-xs text-red-600">Phiên cập nhật đã hết hạn hoặc quyền xem đã thay đổi.</div>}{children}</>;
+        const tab=(event:Event)=>setSelection({path,mode:(event as CustomEvent).detail==='accounts'?'page':'summary'});
+        const sync=()=>{if(live.status==='live')live.sync();else router.reload();};window.addEventListener('admin:nro-tab',tab);window.addEventListener('admin:live-sync',sync);
+        const afterWrite=()=>{if(live.status!=='live')router.reload();};window.addEventListener('admin:refresh-if-offline',afterWrite);
+        return ()=>{window.removeEventListener('admin:nro-tab',tab);window.removeEventListener('admin:live-sync',sync);window.removeEventListener('admin:refresh-if-offline',afterWrite);};
+    },[path,live.sync,live.status]);
+    return <>{eligible && ['offline','denied'].includes(live.status) && <div role="status" className="px-4 py-1 text-xs text-amber-600">Cập nhật trực tiếp đang gián đoạn. <button className="underline mr-3" onClick={()=>router.reload()}>Làm mới dữ liệu</button><button className="underline" onClick={live.sync}>Kết nối lại</button></div>}{children}</>;
 }

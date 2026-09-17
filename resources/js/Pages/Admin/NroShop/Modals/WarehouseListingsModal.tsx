@@ -1,6 +1,7 @@
-import { useLiveView } from '@/Realtime/useLiveView';
+import { useLiveResource } from '@/Realtime/useLiveResource';
+import { LiveDataNotice } from '@/Realtime/LiveDataNotice';
 import EditListingPrice from './EditListingPrice';
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import axios from 'axios';
 import { Eye, MoreVertical } from 'lucide-react';
 import { Dropdown, Button, Modal, Space, Table, Tag, message } from 'antd';
@@ -22,14 +23,11 @@ export default function WarehouseListingsModal({
     onClose: () => void;
     run: (action: () => Promise<unknown>, success?: string) => Promise<void>;
 }) {
-    const [rows, setRows] = useState<Paged<Listing>>({ data: [], total: 0, page: 1, perPage: 20 });
-    const [loading, setLoading] = useState(false);
-    const request = useRef(0);
-
-    const [page,setPage]=useState(1);
-    const live=useLiveView<Paged<Listing>>(account?`${base}/accounts/${account.id}/listings?page=${page}`:null,data=>{setRows(data);setLoading(false);});
-    const load=(next=1)=>{if(next===page)live.sync();else {setLoading(true);setPage(next);}};
-    useEffect(()=>{setPage(1);},[account?.id]);
+    const [pagination,setPagination]=useState({accountId:account?.id,page:1});
+    const page=pagination.accountId===account?.id?pagination.page:1;
+    const resource=useLiveResource<Paged<Listing>>(account?`${base}/accounts/${account.id}/listings?page=${page}`:null,'Không tải được gói đồ của acc');
+    const rows=resource.data ?? {data:[],total:0,page,perPage:20};
+    const load=(next=page)=>{if(next===page)resource.reload();else setPagination({accountId:account?.id,page:next});};
 
     return (
         <Modal
@@ -37,14 +35,14 @@ export default function WarehouseListingsModal({
             title={account ? `Gói đồ của ${account.account_name}` : 'Gói đồ của acc'}
             open={!!account}
             onCancel={() => {
-                request.current++;
                 onClose();
             }}
             footer={null}
         >
+            <LiveDataNotice {...resource} />
             <Table
                 rowKey="id"
-                loading={loading}
+                loading={resource.loading}
                 dataSource={rows.data}
                 scroll={{ x: 700 }}
                 pagination={{

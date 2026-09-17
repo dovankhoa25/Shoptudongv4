@@ -34,7 +34,7 @@ export default function TrafficPage() {
         router.get('/admin/traffic', next, { preserveScroll: true, preserveState: true });
     };
     const { totals } = traffic;
-    return <AdminLayout title="Lưu lượng & API">
+    return <>
         <Head title="Lưu lượng & API" />
         <div className="space-y-4 p-4 text-gray-900 dark:text-gray-100">
             <div><h1 className="text-xl font-semibold">Lưu lượng & API</h1>
@@ -103,5 +103,7 @@ export default function TrafficPage() {
             </p>
             </>}
         </div>
-    </AdminLayout>;
+    </>;
 }
+
+TrafficPage.layout = (page: React.ReactNode) => <AdminLayout title="Lưu lượng & API">{page}</AdminLayout>;

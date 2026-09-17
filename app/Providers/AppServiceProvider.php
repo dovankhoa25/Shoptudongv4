@@ -81,6 +81,16 @@ class AppServiceProvider extends ServiceProvider
             $model::observe(AdminRealtimeObserver::class);
         }
 
+        RateLimiter::for('public-read', fn (Request $request) => Limit::perMinute(60)
+            ->by('public-read:'.$request->ip())
+        );
+        RateLimiter::for('realtime-auth', fn (Request $request) => Limit::perMinute(60)
+            ->by('realtime-auth:'.($request->user()?->id ?? $request->ip()))
+        );
+        RateLimiter::for('authenticated-api', function (Request $request) {
+            $group = $request->isMethod('GET') ? 'read' : 'write';
+            return Limit::perMinute(60)->by('authenticated-api:'.$group.':'.($request->user()?->id ?? $request->ip()));
+        });
         RateLimiter::for('balance-deposit', fn (Request $request) => Limit::perMinute(10)
             ->by('balance-deposit:'.($request->user()?->id ?? $request->ip()))
         );

@@ -3,6 +3,7 @@ import { useState } from 'react';
 import axios from 'axios';
 import { dateTime, ItemStrip, money, statusName } from '../shared';
 import { usePagedTab } from '../usePagedTab';
+import { LiveDataNotice } from '@/Realtime/LiveDataNotice';
 import type { Order } from '../types';
 import OrderStockCheckModal from './OrderStockCheckModal';
 
@@ -11,7 +12,7 @@ import OrderStockCheckModal from './OrderStockCheckModal';
 const ORDER_STATUSES = [{value:'pending',label:'Chưa nhận đủ'},{value:'completed',label:'Đã nhận đủ'},{value:'refunded',label:'Đã hoàn tiền'}];
 
 export default function OrdersTab({ dataVersion, canRefund, canCheck, canReconcile }: { dataVersion: number; canRefund: boolean; canCheck: boolean; canReconcile: boolean }) {
-    const { rows, loading, filters, setFilters, apply, reload } = usePagedTab<Order>(
+    const { rows, loading, filters, setFilters, apply, reload, error, warning } = usePagedTab<Order>(
         '/orders',
         'Không tải được danh sách đơn giao đồ',
         dataVersion,
@@ -25,6 +26,7 @@ export default function OrdersTab({ dataVersion, canRefund, canCheck, canReconci
 
     return (
         <>
+            <LiveDataNotice error={error} warning={warning} reload={reload} />
             <div className="mb-3 flex flex-wrap gap-2">
                 <Input.Search
                     aria-label="Tìm đơn"

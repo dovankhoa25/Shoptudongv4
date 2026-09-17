@@ -67,6 +67,13 @@ class FirstPartyTokenService
                 app(ResponseInterface::class),
             );
         } catch (OAuthServerException $exception) {
+            if (($parameters['grant_type'] ?? null) === 'refresh_token' && $exception->getErrorType() === 'invalid_grant') {
+                throw new \Illuminate\Http\Exceptions\HttpResponseException(response()->json([
+                    'message' => 'Phiên đăng nhập không còn hợp lệ.',
+                    'error' => 'invalid_grant',
+                    'errors' => ['login' => ['Phiên đăng nhập không còn hợp lệ.']],
+                ], 422));
+            }
             throw ValidationException::withMessages([
                 'login' => $exception->getMessage(),
             ]);

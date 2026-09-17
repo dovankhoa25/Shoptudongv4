@@ -150,4 +150,37 @@ class AdminLiveViewTest extends TestCase {
         Event::assertDispatched(AdminViewPatched::class,fn($event)=>$event->frame['base']===0 && $event->frame['revision']>$second);
         $this->assertGreaterThan($second,$this->postJson('/admin/live-views/'.$id.'/sync')->assertOk()->json('revision'));
     }
+
+    public function test_nro_order_read_and_live_view_return_the_same_authorized_order(): void {
+        $user=User::factory()->create(['status'=>User::STATUS_ACTIVE]);
+        $user->givePermissionTo(Permission::findOrCreate('item-orders.view','web'));
+        $this->actingAs($user);
+        $account=\App\Models\NroAccount::create(['user_id'=>$user->id,'account_name'=>'live-test','game_password'=>'test-only','server'=>'vt1','server_index'=>0,'usage_type'=>'warehouse','status'=>'active']);
+        $listing=DB::table('item_listings')->insertGetId(['user_id'=>$user->id,'account_id'=>$account->id,'title'=>'Test listing','price'=>100]);
+        $order=DB::table('item_orders')->insertGetId(['buyer_id'=>$user->id,'seller_id'=>$user->id,'account_id'=>$account->id,'listing_id'=>$listing,'request_key'=>'live-test-order','recipient_name'=>'test','server_index'=>0,'price'=>100,'title'=>'Test order','status'=>'completed','created_at'=>now(),'updated_at'=>now()]);
+        $this->getJson('/admin/nro-shop/orders?page=1')->assertOk()->assertJsonPath('data.0.id',$order);
+        $view=$this->postJson('/admin/live-views',['url'=>'/admin/nro-shop/orders?page=1','mode'=>'page'])->assertOk()->json('id');
+        $this->postJson('/admin/live-views/'.$view.'/sync')->assertOk()->assertJsonPath('data.data.0.id',$order);
+    }
+
+    public function test_ordinary_order_read_does_not_bypass_missing_permissions(): void {
+        config(['app.debug'=>false]);
+        $this->actingAs(User::factory()->create(['status'=>User::STATUS_ACTIVE]));
+        $this->getJson('/admin/nro-shop/orders?page=1')->assertForbidden()->assertHeader('Content-Type','application/json');
+        $this->postJson('/admin/live-views',['url'=>'/admin/nro-shop/orders?page=1','mode'=>'page'])
+            ->assertForbidden()->assertHeader('Content-Type','application/json');
+        $this->assertDatabaseCount('admin_live_views',0);
+    }
+
+    public function test_revoked_realtime_credential_does_not_prevent_an_authorized_http_read(): void {
+        config(['app.debug'=>false]);
+        $user=User::factory()->create(['status'=>User::STATUS_ACTIVE]);
+        $user->givePermissionTo(Permission::findOrCreate('item-orders.view','web'));
+        $this->actingAs($user);
+        $payload=['url'=>'/admin/nro-shop/orders?page=1','mode'=>'page'];
+        $this->postJson('/admin/live-views',$payload)->assertOk();
+        DB::table('chat_realtime_sessions')->where('user_id',$user->id)->update(['revoked_at'=>now()]);
+        $this->postJson('/admin/live-views',$payload)->assertForbidden()->assertHeader('Content-Type','application/json');
+        $this->getJson($payload['url'])->assertOk();
+    }
 }

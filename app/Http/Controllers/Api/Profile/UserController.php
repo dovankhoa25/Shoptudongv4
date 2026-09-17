@@ -46,6 +46,12 @@ class UserController extends Controller
         ]);
     }
 
+    public function balance(Request $request): JsonResponse
+    {
+        return response()->json(\App\Services\UserBalanceSnapshot::forProfile((int)$request->user()->id))
+            ->header('Cache-Control', 'private, no-store');
+    }
+
     public function update(Request $request): JsonResponse
     {
         $user = $request->user();

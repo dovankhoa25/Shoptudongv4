@@ -4,9 +4,11 @@ import CategoryModal from './CategoryModal';
 
 export default function CategoryCreate() {
     return (
-        <AdminLayout title="Tạo danh mục">
+        <>
             <Head title="Tạo danh mục" />
             <CategoryModal onClose={() => router.visit('/admin/games/categories')} />
-        </AdminLayout>
+        </>
     );
 }
+
+CategoryCreate.layout = (page: React.ReactNode) => <AdminLayout title="Tạo danh mục">{page}</AdminLayout>;

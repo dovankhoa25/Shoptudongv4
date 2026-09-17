@@ -546,6 +546,32 @@ class ChatFeatureTest extends TestCase
             ->assertOk()
             ->assertJsonCount(50, 'data')
             ->assertJsonPath('unread_total', 55);
+
+        Passport::actingAs($customer, ['chat:read']);
+        $this->getJson('/api/chat/unread-summary')->assertOk()
+            ->assertExactJson(['unread_total' => 55]);
+    }
+
+    public function test_unread_summary_respects_visibility_internal_messages_and_read_cursor(): void
+    {
+        $customer = User::factory()->create();
+        $other = User::factory()->create();
+        $conversation = $this->conversationFor($customer);
+        $foreign = $this->conversationFor($other);
+        foreach ([$conversation, $foreign] as $chat) {
+            foreach ([false, true] as $internal) {
+                $chat->messages()->create(['sender_id' => null, 'sender_kind' => 'system',
+                    'type' => 'system', 'body' => 'Test', 'is_internal' => $internal]);
+            }
+        }
+        Passport::actingAs($customer, ['chat:read', 'chat:write']);
+        $this->getJson('/api/chat/unread-summary')->assertOk()->assertExactJson(['unread_total' => 1]);
+        $this->patchJson('/api/chat/conversations/'.$conversation->id.'/read', [
+            'last_read_message_id' => $conversation->messages()->where('is_internal', false)->value('id'),
+        ])->assertOk();
+        $this->getJson('/api/chat/unread-summary')->assertExactJson(['unread_total' => 0]);
+        Passport::actingAs($customer, ['profile:read']);
+        $this->getJson('/api/chat/unread-summary')->assertForbidden();
     }
 
     public function test_admin_inbox_separates_active_and_completed_conversations_with_scoped_counts(): void

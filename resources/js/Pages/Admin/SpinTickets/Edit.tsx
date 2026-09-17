@@ -11,5 +11,11 @@ interface Props extends PageProps {
 export default function SpinTicketEdit() {
     const { ticket: raw, spins } = usePage<Props>().props;
     const ticket = 'data' in raw ? raw.data : raw;
-    return <AdminLayout title={`Sửa lượt quay #${ticket.id}`}><Head title={`Sửa lượt quay #${ticket.id}`} /><SpinTicketModal open ticketId={ticket.id} spins={spins} onClose={() => router.visit('/admin/spin-tickets')} /></AdminLayout>;
+    return <><Head title={`Sửa lượt quay #${ticket.id}`} /><SpinTicketModal open ticketId={ticket.id} spins={spins} onClose={() => router.visit('/admin/spin-tickets')} /></>;
 }
+
+SpinTicketEdit.layout = (page: React.ReactElement<Props>) => {
+    const raw = page.props.ticket;
+    const value = 'data' in raw ? raw.data : raw;
+    return <AdminLayout title={`Sửa lượt quay #${value.id}`}>{page}</AdminLayout>;
+};

@@ -13,9 +13,15 @@ export default function CategoryEdit() {
     const category = 'data' in raw ? raw.data : raw;
 
     return (
-        <AdminLayout title={`Sửa danh mục ${category.name}`}>
+        <>
             <Head title={`Sửa danh mục ${category.name}`} />
             <CategoryModal category={category} onClose={() => router.visit('/admin/games/categories')} />
-        </AdminLayout>
+        </>
     );
 }
+
+CategoryEdit.layout = (page: React.ReactElement<Props>) => {
+    const raw = page.props.category;
+    const value = 'data' in raw ? raw.data : raw;
+    return <AdminLayout title={`Sửa danh mục ${value.name}`}>{page}</AdminLayout>;
+};

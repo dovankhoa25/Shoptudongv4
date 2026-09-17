@@ -83,6 +83,18 @@ class ApiAuthenticationTest extends TestCase
         ]);
     }
 
+    public function test_reused_refresh_token_has_machine_readable_session_rejection(): void
+    {
+        $client = $this->firstPartyPasswordClient();
+        $user = User::factory()->create();
+        $login = $this->withHeader('Origin', 'http://localhost:3000')->postJson('/api/auth/login', [
+            'login' => $user->username, 'password' => 'password', 'client_id' => (string) $client->id,
+        ])->assertOk();
+        $payload = ['client_id' => (string) $client->id, 'refresh_token' => $login->json('authorization.refresh_token')];
+        $this->postJson('/api/auth/refresh', $payload)->assertOk();
+        $this->postJson('/api/auth/refresh', $payload)->assertStatus(422)->assertJsonPath('error', 'invalid_grant');
+    }
+
     private function firstPartyPasswordClient(): Client
     {
         $client = app(ClientRepository::class)->createPasswordGrantClient(

@@ -1321,6 +1321,7 @@ export default function ChatWorkspace({
     const internalNotesRef = useRef<ChatMessage[]>(internalNotes);
     const unreadTotalRef = useRef(unreadTotal);
     const chatLiveSyncRef=useRef<()=>void>(()=>{});
+    const chatFallbackSignatureRef=useRef<string|null>(null);
     const fetchConversationsRef = useRef<(quiet?: boolean) => Promise<void>>(async () => undefined);
     const realtimeRefreshTimerRef = useRef<number | null>(null);
     const readTimersRef = useRef<Map<number, number>>(new Map());
@@ -1572,8 +1573,8 @@ export default function ChatWorkspace({
         localImageUrlsRef.current.clear();
     }, [commitSelected, selectedId]);
 
-    const fetchConversations = useCallback(async (quiet = false) => {
-        if(mode==='agent'){if(!quiet)chatLiveSyncRef.current();return;}
+    const fetchConversations = useCallback(async (quiet = false, forceHttp = false) => {
+        if(mode==='agent' && !forceHttp){if(!quiet)chatLiveSyncRef.current();return;}
         if (conversationFilterSignature !== conversationFilterSignatureRef.current) return;
 
         const requestSignature = conversationFilterSignature;
@@ -1591,9 +1592,9 @@ export default function ChatWorkspace({
                 params: {
                     search: search || undefined,
                     status: status || undefined,
-                    assignment: undefined,
-                    view: undefined,
-                    period: undefined,
+                    assignment: mode === 'agent' ? assignment || undefined : undefined,
+                    view: mode === 'agent' ? inboxView : undefined,
+                    period: mode === 'agent' && inboxView === 'completed' ? completedPeriod : undefined,
                     per_page: conversationPerPage,
                 },
                 signal: controller.signal,
@@ -1601,10 +1602,12 @@ export default function ChatWorkspace({
             if (controller.signal.aborted
                 || requestGeneration !== conversationListGenerationRef.current
                 || requestSignature !== conversationFilterSignatureRef.current) return;
-            const visibleConversations = response.data.data;
+            const visibleConversations = mode === 'agent'
+                ? response.data.data.filter(conversation => statusBelongsToView(conversation.status, inboxView))
+                : response.data.data;
             const nextConversations = sortConversations(
                 visibleConversations,
-                undefined,
+                mode === 'agent' ? inboxView : undefined,
             );
             recordConversationListSnapshot(nextConversations);
             setConversations(nextConversations);
@@ -1636,6 +1639,10 @@ export default function ChatWorkspace({
     const [liveQuery,setLiveQuery]=useState(liveParameters);
     useEffect(()=>{const timer=setTimeout(()=>setLiveQuery(liveParameters),250);return ()=>clearTimeout(timer);},[liveParameters]);
     const chatLive=useLiveView<ChatConversationListResponse>(mode==='agent'?`${baseUrl}/conversations?${liveQuery}`:null,data=> {
+        // A delayed fallback must not overwrite a newer live snapshot.
+        conversationListGenerationRef.current += 1;
+        conversationListAbortRef.current?.abort();
+        conversationListAbortRef.current = null;
         const next=sortConversations(data.data.filter(conversation=>statusBelongsToView(conversation.status,inboxView)),inboxView);
         recordConversationListSnapshot(next);conversationsRef.current=next;setConversations(next);
         unreadTotalRef.current=data.unread_total;setUnreadTotal(data.unread_total);
@@ -1665,6 +1672,19 @@ export default function ChatWorkspace({
             conversationMoreAbortRef.current?.abort();
         };
     }, [conversationFilterSignature, fetchConversations, search]);
+
+    // One authorized HTTP read per failed connection/filter, never a polling loop.
+    useEffect(() => {
+        if (chatLive.status === 'live') chatFallbackSignatureRef.current = null;
+        if (mode !== 'agent' || !['offline', 'denied'].includes(chatLive.status)) return;
+        const signature = JSON.stringify([currentUserId, props.auth.realtime_channel, conversationFilterSignature]);
+        if (chatFallbackSignatureRef.current === signature) return;
+        const timer = window.setTimeout(() => {
+            chatFallbackSignatureRef.current = signature;
+            void fetchConversations(false, true);
+        }, search ? 250 : 0);
+        return () => window.clearTimeout(timer);
+    }, [mode, chatLive.status, fetchConversations, search, currentUserId, props.auth.realtime_channel, conversationFilterSignature]);
 
     const clearUnreadLocally = useCallback((conversationId: number) => {
         const trackedConversation = conversationsRef.current.find(item => item.id === conversationId);
@@ -3609,6 +3629,12 @@ export default function ChatWorkspace({
                 )}
 
                 <div className="flex-1 overflow-y-auto p-2">
+                    {mode === 'agent' && ['offline', 'denied'].includes(chatLive.status) && (
+                        <div role="status" className="mb-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
+                            {error || 'Cập nhật trực tiếp đang gián đoạn.'}
+                            <button type="button" className="ml-2 underline" disabled={loadingList} onClick={() => void fetchConversations(false, true)}>Làm mới danh sách</button>
+                        </div>
+                    )}
                     {loadingList ? (
                         <div className="grid h-40 place-items-center text-slate-400"><LoaderCircle className="h-6 w-6 animate-spin" /></div>
                     ) : conversations.length === 0 ? (

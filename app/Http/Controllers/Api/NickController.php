@@ -296,312 +296,30 @@ class NickController extends Controller
         );
     }
 
-    // Method để mua random (chọn ngẫu nhiên)
     public function buyRandom(Request $request, $categorySlug, $boxId)
     {
-        $category = Category::where('slug', $categorySlug)->first();
-        if (! $category) {
-            return response()->json(['message' => 'Category not found'], 404);
-        }
-
-        try {
-            $buyer = $request->user();
-
-            $randomBox = RandomBox::where('id', $boxId)
-                ->where('category_id', $category->id)
-                ->where('is_public', true)
-                ->first();
-
-            if (! $randomBox) {
-                return response()->json(['message' => 'Random box not found'], 404);
-            }
-
-            // Bắt đầu transaction
-            DB::beginTransaction();
-
-            // Lock nick ngẫu nhiên đang còn available
-            $randomNick = RandomNick::where('random_box_id', $randomBox->id)
-                ->where('status', 'available')
-                ->inRandomOrder()
-                ->lockForUpdate() // ✅ Lock để tránh race condition
-                ->first();
-
-            if (! $randomNick) {
-                DB::rollBack();
-
-                return response()->json(['message' => 'Đã hết Phần quà'], 400);
-            }
-
-            // Kiểm tra số dư
-            if ($buyer->balance < $randomBox->price) {
-                DB::rollBack();
-
-                return response()->json([
-                    'message' => 'Số dư không đủ',
-                    'error_code' => 'INSUFFICIENT_BALANCE',
-                    'required' => $randomBox->price,
-                    'current' => $buyer->balance,
-                ], 400);
-            }
-
-            // Cập nhật nick
-            $randomNick->update([
-                'status' => 'taken',
-                'buyer_id' => $buyer->id,
-                'purchased_at' => now(),
-            ]);
-
-            // Trừ tiền
-            $buyerOldBalance = (int) $buyer->balance;
-            $buyer->decrement('balance', $randomBox->price);
-            $buyerNewBalance = $buyerOldBalance - (int) $randomBox->price;
-            // Log buyer
-            TransactionService::log(
-                userId: $buyer->id,
-                type: 'buy_random',
-                amount: -$randomBox->price,
-                description: "Mua random nick #{$randomNick->id} từ box #{$randomBox->id}",
-                performedBy: $buyer->id,
-                related: $randomNick,
-                relatedId: $randomNick->id,
-                oldBalance: $buyerOldBalance,
-                newBalance: $buyerNewBalance,
-                idempotencyKey: "random-nick-purchase:{$randomNick->id}:buyer:{$buyer->id}",
-                metadata: [
-                    'source' => 'api',
-                    'random_box_id' => $randomBox->id,
-                    'role' => 'buyer',
-                ],
-            );
-
-            RandomOrder::create([
-                'user_id' => $buyer->id,
-                'random_nick_id' => $randomNick->id,
-                'price' => $randomBox->price,
-            ]);
-
-            // Nếu có seller, cộng và log
-            if ($randomNick->user_id) {
-                $seller = User::where('id', $randomNick->user_id)->lockForUpdate()->first();
-                if ($seller) {
-                    $sellerOldBalance = (int) $seller->balance;
-                    $seller->increment('balance', $randomBox->price);
-                    $sellerNewBalance = $sellerOldBalance + (int) $randomBox->price;
-
-                    TransactionService::log(
-                        userId: $seller->id,
-                        type: 'sell_random',
-                        amount: $randomBox->price,
-                        description: "Bán random nick #{$randomNick->id} cho user #{$buyer->id}",
-                        performedBy: $buyer->id,
-                        related: $randomNick,
-                        relatedId: $randomNick->id,
-                        oldBalance: $sellerOldBalance,
-                        newBalance: $sellerNewBalance,
-                        idempotencyKey: "random-nick-purchase:{$randomNick->id}:seller:{$seller->id}",
-                        metadata: [
-                            'source' => 'api',
-                            'random_box_id' => $randomBox->id,
-                            'role' => 'seller',
-                            'buyer_id' => $buyer->id,
-                        ],
-                    );
-                }
-            }
-            DB::commit();
-            ApiCache::clearGroups(['public:nick']);
-
-            return response()->json([
-                'message' => 'Purchase successful',
-                'nick' => [
-                    'id' => $randomNick->id,
-                    'account' => $randomNick->account,
-                    'password' => $randomNick->password,
-                    'description' => $randomNick->description,
-                    'purchased_at' => $randomNick->purchased_at,
-                ],
-                'box' => [
-                    'id' => $randomBox->id,
-                    'name' => $randomBox->name,
-                    'price' => $randomBox->price,
-                ],
-
-            ], 200);
-        } catch (\Exception $e) {
-            DB::rollBack();
-            Log::error('Error in buyRandom: '.$e->getMessage());
-
-            return response()->json(['message' => 'Transaction failed', 'error_code' => 'TRANSACTION_FAILED'], 500);
-        }
+        return $this->purchaseRandom($request, $categorySlug, (int)$boxId, null);
     }
 
-    // Method để mua nick theo ID cụ thể - NEW
     public function buySpecificNick(Request $request, $categorySlug, $boxId, $nickId)
     {
+        return $this->purchaseRandom($request, $categorySlug, (int)$boxId, (int)$nickId);
+    }
+
+    private function purchaseRandom(Request $request, string $slug, int $boxId, ?int $nickId)
+    {
+        $data = $request->validate(['idempotency_key' => ['nullable', 'string', 'max:64', 'regex:/^[a-zA-Z0-9_-]+$/']]);
         try {
-            $category = Category::where('slug', $categorySlug)->first();
-            if (! $category) {
-                return response()->json([
-                    'message' => 'Category not found',
-                    'error_code' => 'CATEGORY_NOT_FOUND',
-                ], 404);
-            }
-
-            $buyer = $request->user();
-            if (! $buyer) {
-                return response()->json([
-                    'message' => 'yêu cầu đăng nhập',
-                    'error_code' => 'UNAUTHORIZED',
-                ], 401);
-            }
-
-            $randomBox = RandomBox::where('id', $boxId)
-                ->where('category_id', $category->id)
-                ->where('is_public', true)
-                ->first();
-
-            if (! $randomBox) {
-                return response()->json([
-                    'message' => 'Random box not found',
-                    'error_code' => 'BOX_NOT_FOUND',
-                ], 404);
-            }
-
-            if ($buyer->balance < $randomBox->price) {
-                return response()->json([
-                    'message' => 'số dư không đủ',
-                    'error_code' => 'INSUFFICIENT_BALANCE',
-                    'required' => $randomBox->price,
-                    'current' => $buyer->balance,
-                ], 400);
-            }
-
-            DB::beginTransaction();
-
-            try {
-                // Lock record tại đây - bên trong transaction
-                $specificNick = RandomNick::where('id', $nickId)
-                    ->where('random_box_id', $randomBox->id)
-                    ->lockForUpdate()
-                    ->first();
-
-                if (! $specificNick) {
-                    DB::rollBack();
-
-                    return response()->json([
-                        'message' => 'Nick not found in this box',
-                        'error_code' => 'NICK_NOT_FOUND',
-                    ], 404);
-                }
-
-                if ($specificNick->status !== 'available') {
-                    DB::rollBack();
-
-                    return response()->json([
-                        'message' => 'Nick đã bị mua rồi',
-                        'error_code' => 'NICK_NOT_AVAILABLE',
-                        'current_status' => $specificNick->status,
-                    ], 400);
-                }
-
-                $specificNick->update([
-                    'status' => 'taken',
-                    'buyer_id' => $buyer->id,
-                    'purchased_at' => now(),
-                ]);
-
-                $buyerOldBalance = (int) $buyer->balance;
-                $buyer->decrement('balance', $randomBox->price);
-                $buyerNewBalance = $buyerOldBalance - (int) $randomBox->price;
-                // log buyer
-                TransactionService::log(
-                    userId: $buyer->id,
-                    type: 'buy_random_specific',
-                    amount: -$randomBox->price,
-                    description: "Mua cụ thể random nick #{$specificNick->id} từ box #{$randomBox->id}",
-                    performedBy: $buyer->id,
-                    related: $specificNick,
-                    relatedId: $specificNick->id,
-                    oldBalance: $buyerOldBalance,
-                    newBalance: $buyerNewBalance,
-                    idempotencyKey: "random-nick-specific-purchase:{$specificNick->id}:buyer:{$buyer->id}",
-                    metadata: [
-                        'source' => 'api',
-                        'random_box_id' => $randomBox->id,
-                        'role' => 'buyer',
-                    ],
-                );
-
-                RandomOrder::create([
-                    'user_id' => $buyer->id,
-                    'random_nick_id' => $nickId,
-                    'price' => $randomBox->price,
-                ]);
-
-                // ✅ Cộng tiền cho người đăng nick (nếu có user_id)
-                // seller cộng và log
-                if ($specificNick->user_id) {
-                    $seller = User::where('id', $specificNick->user_id)->lockForUpdate()->first();
-                    if ($seller) {
-                        $sellerOldBalance = (int) $seller->balance;
-                        $seller->increment('balance', $randomBox->price);
-                        $sellerNewBalance = $sellerOldBalance + (int) $randomBox->price;
-
-                        TransactionService::log(
-                            userId: $seller->id,
-                            type: 'sell_random_specific',
-                            amount: $randomBox->price,
-                            description: "Bán random nick #{$specificNick->id} cho user #{$buyer->id}",
-                            performedBy: $buyer->id,
-                            related: $specificNick,
-                            relatedId: $specificNick->id,
-                            oldBalance: $sellerOldBalance,
-                            newBalance: $sellerNewBalance,
-                            idempotencyKey: "random-nick-specific-purchase:{$specificNick->id}:seller:{$seller->id}",
-                            metadata: [
-                                'source' => 'api',
-                                'random_box_id' => $randomBox->id,
-                                'role' => 'seller',
-                                'buyer_id' => $buyer->id,
-                            ],
-                        );
-                    }
-                }
-
-                DB::commit();
-                ApiCache::clearGroups(['public:nick']);
-
-                return response()->json([
-                    'message' => 'Nick purchased successfully',
-                    'nick' => [
-                        'id' => $specificNick->id,
-                        'account' => $specificNick->account,
-                        'password' => $specificNick->password,
-                        'description' => $specificNick->description,
-                        'purchased_at' => $specificNick->purchased_at,
-                    ],
-                    'box' => [
-                        'id' => $randomBox->id,
-                        'name' => $randomBox->name,
-                        'price' => $randomBox->price,
-                    ],
-
-                ], 200);
-            } catch (\Exception $e) {
-                DB::rollBack();
-
-                return response()->json([
-                    'message' => 'Transaction failed. Please try again.',
-                    'error_code' => 'TRANSACTION_FAILED',
-                ], 500);
-            }
-        } catch (\Exception $e) {
-            Log::error('Unexpected error in buySpecificNick: '.$e->getMessage());
-
-            return response()->json([
-                'message' => 'An unexpected error occurred',
-                'error_code' => 'INTERNAL_ERROR',
-            ], 500);
+            return response()->json(app(\App\Services\RandomPurchaseService::class)->purchase(
+                (int)$request->user()->id, $slug, $boxId, $nickId, $data['idempotency_key'] ?? null,
+            ));
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpExceptionInterface $error) {
+            return response()->json(['message' => $error->getMessage(),
+                'error_code' => $error->getStatusCode() === 400 ? 'INSUFFICIENT_BALANCE' : 'PURCHASE_REJECTED'], $error->getStatusCode());
+        } catch (\Throwable $error) {
+            Log::error('Random purchase could not be confirmed', ['exception' => get_class($error)]);
+            return response()->json(['message' => 'Chưa xác nhận kết quả. Kiểm tra lịch sử hoặc thử lại cùng lần mua.',
+                'error_code' => 'PURCHASE_UNCONFIRMED'], 500);
         }
     }
 
@@ -691,149 +409,88 @@ class NickController extends Controller
 
     public function purchase(Request $request)
     {
-        $request->validate([
-            'productId' => 'required|exists:nicks,id',
+        $validated = $request->validate([
+            'productId' => 'required|integer|exists:nicks,id',
             'voucherCode' => 'nullable|string',
         ]);
-
-        $buyer = $request->user();
-
+        $buyerId = (int) $request->user()->id;
+        $productId = (int) $validated['productId'];
+        $result = null;
+        $orderId = null;
         try {
-            DB::beginTransaction();
-            $existingNick = Nick::where('account_name', $request->input('account_name'))
-                ->where('status', 'not_sold')
-                ->first();
+            $result = DB::transaction(function () use ($buyerId, $productId, &$result, &$orderId) {
+                $nick = Nick::withoutGlobalScope(UserOwnedScope::class)->whereKey($productId)->lockForUpdate()->firstOrFail();
+                // Stable order for both money rows, including purchases in opposite directions.
+                $users = User::whereIn('id', array_unique([$buyerId, (int) $nick->user_id]))->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+                $buyer = $users->get($buyerId);
+                $seller = $users->get($nick->user_id);
+                abort_unless($buyer && $seller, 404, 'Tài khoản giao dịch không còn tồn tại.');
+                abort_if($buyer->isLocked(), 403, 'Tài khoản đã bị khóa.');
+                abort_if($buyer->roles()->exists(), 403, 'Bạn là cộng tác viên không được mua nick nhé');
+                abort_if($buyerId === (int) $nick->user_id, 403, 'Không thể tự mua nick của mình.');
 
-            if ($existingNick) {
-                return redirect()->back()->withInput()->with('error', 'Tài khoản đã tồn tại và đang trong trạng thái chưa bán.');
-            }
-            // Khóa row tránh mua trùng
-            $nick = Nick::with('user')->withoutGlobalScope(UserOwnedScope::class)
-                ->where('id', $request->productId)
-                ->where('status', 'not_sold')
-                ->lockForUpdate()
-                ->firstOrFail();
-
-            if ($buyer->roles()->exists()) {
-                return response()->json(['message' => 'Bạn Là Cộng tác viên không được mua nick nhé'], 403);
-            }
-
-            if (bccomp($buyer->balance, $nick->price, 2) < 0) {
-                return response()->json(['message' => 'số dư không đủ'], 400);
-            }
-            $buyerOldBalance = $buyer->balance;
-            if ($nick->game_account_id) {
-                $gameAccount = \App\Models\NroAccount::whereKey($nick->game_account_id)->lockForUpdate()->firstOrFail();
-                if (DB::table('nro_worker_jobs')->where('account_id', $gameAccount->id)->whereIn('status', ['queued', 'processing', 'review'])->exists()) {
-                    DB::rollBack();
-                    return response()->json(['message' => 'Nick đang được kiểm tra thông tin. Vui lòng thử lại sau.'], 409);
+                $order = NickOrder::where('nick_id', $nick->id)->where('buyer_id', $buyerId)->where('status', 'completed')->first();
+                if ($nick->status !== 'not_sold') {
+                    // A lost success response can be recovered by the original buyer only.
+                    abort_unless($nick->status === 'sold' && $order, 404, 'Nick không có sẵn');
+                } else {
+                    abort_if($order !== null, 409, 'Đơn đã tồn tại, vui lòng kiểm tra lịch sử mua.');
+                    abort_if(bccomp((string) $buyer->balance, (string) $nick->price, 2) < 0, 400, 'Số dư không đủ');
+                    // Fail before charging if credentials cannot be delivered.
+                    AccountEncrypt::decrypt($nick->account_password);
+                    if ($nick->game_account_id) {
+                        $gameAccount = \App\Models\NroAccount::whereKey($nick->game_account_id)->lockForUpdate()->firstOrFail();
+                        abort_if(DB::table('nro_worker_jobs')->where('account_id', $gameAccount->id)->whereIn('status', ['queued', 'processing', 'review'])->exists(), 409, 'Nick đang được kiểm tra thông tin. Vui lòng thử lại sau.');
+                        $gameAccount->update(['status' => 'sold', 'game_password' => null]);
+                    }
+                    $price = (int) $nick->price;
+                    $buyerOldBalance = (int) $buyer->balance;
+                    $sellerOldBalance = (int) $seller->balance;
+                    $buyer->decrement('balance', $price);
+                    $seller->increment('balance', $price);
+                    TransactionService::log(userId: $buyerId, type: 'buy_nick', amount: -$price,
+                        description: "Mua nick #{$nick->id}", performedBy: $buyerId, related: $nick, relatedId: $nick->id,
+                        oldBalance: $buyerOldBalance, newBalance: $buyerOldBalance - $price,
+                        idempotencyKey: "nick-purchase:{$nick->id}:buyer:{$buyerId}",
+                        metadata: ['source' => 'api', 'role' => 'buyer', 'seller_id' => $seller->id]);
+                    TransactionService::log(userId: $seller->id, type: 'sell_nick', amount: $price,
+                        description: "Bán nick #{$nick->id} cho user #{$buyerId}", performedBy: $buyerId, related: $nick, relatedId: $nick->id,
+                        oldBalance: $sellerOldBalance, newBalance: $sellerOldBalance + $price,
+                        idempotencyKey: "nick-purchase:{$nick->id}:seller:{$seller->id}",
+                        metadata: ['source' => 'api', 'role' => 'seller', 'buyer_id' => $buyerId]);
+                    $nick->update(['status' => 'sold']);
+                    $order = NickOrder::create(['nick_id' => $nick->id, 'buyer_id' => $buyerId, 'seller_id' => $seller->id,
+                        'price' => $price, 'commission' => 0, 'status' => 'completed']);
                 }
-                $gameAccount->update(['status' => 'sold', 'game_password' => null]);
-            }
-            // Trừ tiền Buyer an toàn
-            $affected = User::where('id', $buyer->id)
-                ->where('balance', '>=', $nick->price)
-                ->decrement('balance', $nick->price);
-
-            if (! $affected) {
-                DB::rollBack();
-
-                return response()->json(['success' => false, 'message' => 'Số dư không đủ'], 400);
-            }
-            $buyerNewBalance = $buyerOldBalance - $nick->price;
-            // Ghi lịch sử cho buyer (âm)
-            TransactionService::log(
-                userId: $buyer->id,
-                type: 'buy_nick',
-                amount: -$nick->price,
-                description: "Mua nick #{$nick->id}",
-                performedBy: $buyer->id,
-                related: $nick,
-                relatedId: $nick->id,
-                oldBalance: $buyerOldBalance,
-                newBalance: $buyerNewBalance,
-                idempotencyKey: "nick-purchase:{$nick->id}:buyer:{$buyer->id}",
-                metadata: [
-                    'source' => 'api',
-                    'role' => 'buyer',
-                    'seller_id' => $nick->user_id,
-                ],
-            );
-
-            // Lấy seller
-            $seller = $nick->user()->lockForUpdate()->first();
-            if (! $seller) {
-                DB::rollBack();
-
-                return response()->json(['success' => false, 'message' => 'Trang không tồn tại'], 404);
-            }
-            // Lưu balance CŨ của seller
-            $sellerOldBalance = $seller->balance;
-            $seller->increment('balance', $nick->price);
-            // Ghi lịch sử cho seller (dương)
-            // Tính balance MỚI của seller
-            $sellerNewBalance = $sellerOldBalance + $nick->price;
-            TransactionService::log(
-                userId: $seller->id,
-                type: 'sell_nick',
-                amount: $nick->price,
-                description: "Bán nick #{$nick->id} cho user #{$buyer->id}",
-                performedBy: $buyer->id,
-                related: $nick,
-                relatedId: $nick->id,
-                oldBalance: $sellerOldBalance,
-                newBalance: $sellerNewBalance,
-                idempotencyKey: "nick-purchase:{$nick->id}:seller:{$seller->id}",
-                metadata: [
-                    'source' => 'api',
-                    'role' => 'seller',
-                    'buyer_id' => $buyer->id,
-                ],
-            );
-            $nick->status = 'sold';
-            $nick->save();
-
-            // Tạo order
-            $order = NickOrder::create([
-                'nick_id' => $nick->id,
-                'buyer_id' => $buyer->id,
-                'seller_id' => $seller->id,
-                'price' => $nick->price,
-                'commission' => 0,
-                'status' => 'completed',
-            ]);
-
-            DB::commit();
-            ApiCache::clearGroups(['public:nick']);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Mua nick thành công',
-                'nick' => [
-                    'id' => $nick->id,
-                    'account' => $nick->account_name,
-                    'password' => AccountEncrypt::decrypt($nick->account_password),
-                    'description' => $nick->description,
-                ],
-                'box' => [
-                    'id' => 0,
-                    'name' => $nick->category->name ?? 'Nick Game',
-                ],
-                'transaction' => [
-                    'order_id' => $order->id,
-                    'amount_paid' => $nick->price,
-                    'remaining_balance' => $buyer->balance,
-                ],
-            ]);
+                $balance = \App\Services\UserBalanceSnapshot::read($buyerId);
+                $orderId = $order->id;
+                return $result = [
+                    'success' => true, 'message' => 'Mua nick thành công',
+                    'nick' => ['id' => $nick->id, 'account' => $nick->account_name,
+                        'password' => AccountEncrypt::decrypt($nick->account_password), 'description' => $nick->description],
+                    'box' => ['id' => 0, 'name' => $nick->category->name ?? 'Nick Game'],
+                    'transaction' => ['order_id' => $order->id, 'amount_paid' => $order->price,
+                        'remaining_balance' => $balance['balance'], 'balance_revision' => $balance['balance_revision']],
+                ];
+            }, 3);
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            DB::rollBack();
-
             return response()->json(['message' => 'Nick không có sẵn'], 404);
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpExceptionInterface $e) {
+            return response()->json(['message' => $e->getMessage()], $e->getStatusCode());
         } catch (\Throwable $e) {
-            DB::rollBack();
-            Log::error('Purchase error:', ['error' => $e->getMessage()]);
-
-            return response()->json(['message' => 'mua nicks thất bại do lỗi server'], 500);
+            // An after-commit observer may fail even though the financial transaction succeeded.
+            $committed = false;
+            try {
+                $committed = $result && $orderId && NickOrder::whereKey($orderId)->where('buyer_id', $buyerId)->where('status', 'completed')->exists();
+            } catch (\Throwable) {}
+            Log::error('Nick purchase error', ['nick_id' => $productId, 'order_id' => $orderId, 'committed' => $committed, 'error' => $e->getMessage()]);
+            if (!$committed) return response()->json(['message' => 'Chưa xác nhận được kết quả mua. Vui lòng kiểm tra lịch sử hoặc thử lại cùng nick.'], 500);
         }
+        try {
+            ApiCache::clearGroups(['public:nick']);
+        } catch (\Throwable $e) {
+            Log::warning('Nick purchase cache invalidation failed', ['nick_id' => $productId, 'error' => $e->getMessage()]);
+        }
+        return response()->json($result);
     }
 }

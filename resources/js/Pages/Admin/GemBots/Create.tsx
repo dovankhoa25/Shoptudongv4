@@ -13,9 +13,11 @@ interface Props extends PageProps {
 export default function GemBotCreate() {
     const { servers, logins } = usePage<Props>().props;
     return (
-        <AdminLayout title="Thêm bot ngọc">
+        <>
             <Head title="Thêm bot ngọc" />
             <GemBotModal open gemBot={null} servers={servers} logins={logins} onClose={() => router.visit('/admin/gem-bots')} />
-        </AdminLayout>
+        </>
     );
 }
+
+GemBotCreate.layout = (page: React.ReactNode) => <AdminLayout title="Thêm bot ngọc">{page}</AdminLayout>;

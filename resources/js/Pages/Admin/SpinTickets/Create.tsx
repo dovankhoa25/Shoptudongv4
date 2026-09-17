@@ -7,5 +7,7 @@ interface Props extends PageProps { spins: Array<{ id: number; name: string }> }
 
 export default function SpinTicketCreate() {
     const { spins } = usePage<Props>().props;
-    return <AdminLayout title="Cấp lượt quay"><Head title="Cấp lượt quay" /><SpinTicketModal open spins={spins} onClose={() => router.visit('/admin/spin-tickets')} /></AdminLayout>;
+    return <><Head title="Cấp lượt quay" /><SpinTicketModal open spins={spins} onClose={() => router.visit('/admin/spin-tickets')} /></>;
 }
+
+SpinTicketCreate.layout = (page: React.ReactNode) => <AdminLayout title="Cấp lượt quay">{page}</AdminLayout>;

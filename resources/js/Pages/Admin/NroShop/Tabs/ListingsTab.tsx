@@ -4,6 +4,7 @@ import { Eye, MoreVertical } from 'lucide-react';
 import { Dropdown, Button, Input, Select, Space, Table, Tag } from 'antd';
 import { base, ListingAvailability, ItemStrip, money, statusName } from '../shared';
 import { usePagedTab } from '../usePagedTab';
+import { LiveDataNotice } from '@/Realtime/LiveDataNotice';
 import type { Capabilities, Listing } from '../types';
 
 export default function ListingsTab({
@@ -19,7 +20,7 @@ export default function ListingsTab({
     busy: boolean;
     dataVersion: number;
 }) {
-    const { rows, loading, filters, setFilters, apply, reload } = usePagedTab<Listing>(
+    const { rows, loading, filters, setFilters, apply, reload, error, warning } = usePagedTab<Listing>(
         '/listings',
         'Không tải được danh sách gói đồ',
         dataVersion,
@@ -27,6 +28,7 @@ export default function ListingsTab({
 
     return (
         <>
+            <LiveDataNotice error={error} warning={warning} reload={reload} />
             <div className="mb-3 flex flex-wrap gap-2">
                 <Input.Search
                     aria-label="Tìm gói đồ"

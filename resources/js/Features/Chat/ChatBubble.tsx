@@ -94,7 +94,7 @@ export default function ChatBubble({ mode, baseUrl }: ChatBubbleProps) {
     );
     const channel = props.auth.realtime_channel;
     const fullPageUrl = mode === 'agent' ? '/admin/chats' : '/messages';
-    const hidden = url.split('?')[0] === fullPageUrl;
+    const hidden = url.split('?')[0] === fullPageUrl || (mode === 'agent' && !props.auth.is_super_admin && !permissions.includes('chats.view'));
     const unreadRequestGenerationRef = useRef(0);
     const unreadAbortRef = useRef<AbortController | null>(null);
     const unreadRefreshTimerRef = useRef<number | null>(null);

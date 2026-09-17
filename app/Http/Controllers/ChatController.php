@@ -41,6 +41,16 @@ class ChatController extends Controller
         private readonly UserRealtimeNotifier $userRealtime,
     ) {}
 
+    public function unreadSummary(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        abort_if($user->isLocked() || ($user->isChatAgent() && $user->status !== User::STATUS_ACTIVE), 403);
+
+        return response()->json([
+            'unread_total' => $this->unreadTotal(ChatConversation::query()->visibleTo($user), $user),
+        ])->header('Cache-Control', 'private, no-store');
+    }
+
     public function index(Request $request)
     {
         $user = $request->user();

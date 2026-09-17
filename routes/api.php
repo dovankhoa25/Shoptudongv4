@@ -67,11 +67,11 @@ Route::prefix('auth')->group(function (): void {
 
 Route::get('/card-types', [CardTypeController::class, 'index']);
 
-Route::middleware('throttle:60,1')->group(function (): void {
-    Route::post('/broadcasting/auth', function (Request $request) {
-        return Broadcast::auth($request);
-    })->middleware('auth:api');
+Route::post('/broadcasting/auth', function (Request $request) {
+    return Broadcast::auth($request);
+})->middleware(['auth:api', 'throttle:realtime-auth']);
 
+Route::middleware('throttle:public-read')->group(function (): void {
     Route::get('/game-types-with-categories', [CategoryController::class, 'index']);
     Route::get('/categories/{slug}/nicks', [NickController::class, 'getByCategory']);
     Route::get('/nick/{id}', [NickController::class, 'show']);
@@ -108,6 +108,9 @@ Route::prefix('chat')
     ->name('api.chat.')
     ->middleware(['auth:api', 'unlocked.user', 'throttle:chat'])
     ->group(function (): void {
+        Route::get('/unread-summary', [ChatController::class, 'unreadSummary'])
+            ->middleware(CheckToken::using('chat:read'))
+            ->name('unread-summary');
         Route::get('/realtime-channel', ChatRealtimeChannelController::class)
             ->middleware(CheckToken::using('chat:read'))
             ->name('realtime-channel.show');
@@ -149,12 +152,14 @@ Route::prefix('chat')
             ->name('status');
     });
 
-Route::middleware(['auth:api', 'throttle:60,1'])->group(function (): void {
+Route::middleware(['auth:api', 'throttle:authenticated-api'])->group(function (): void {
     Route::get('/auth/user', [UserController::class, 'getUser'])
         ->middleware(CheckToken::using('profile:read'));
     Route::post('/auth/logout', LogoutController::class);
 
     Route::get('/me', [UserController::class, 'me'])
+        ->middleware(CheckToken::using('profile:read'));
+    Route::get('/me/balance', [UserController::class, 'balance'])
         ->middleware(CheckToken::using('profile:read'));
 
     Route::post('/purchase', [NickController::class, 'purchase']);

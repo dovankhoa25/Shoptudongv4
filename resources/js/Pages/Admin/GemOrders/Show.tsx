@@ -32,7 +32,7 @@ export default function GemOrderShow() {
     ] as const;
 
     return (
-        <AdminLayout title={`Chi tiết đơn ngọc #${order.id}`}>
+        <>
             <Head title={`Chi tiết đơn ngọc #${order.id}`} />
             <div className="space-y-6">
                 <div className="flex flex-wrap items-start justify-between gap-4">
@@ -100,6 +100,12 @@ export default function GemOrderShow() {
                     order={order}
                 />
             </div>
-        </AdminLayout>
+        </>
     );
 }
+
+GemOrderShow.layout = (page: React.ReactElement<Props>) => {
+    const raw = page.props.order;
+    const value = 'data' in raw ? raw.data : raw;
+    return <AdminLayout title={`Chi tiết đơn ngọc #${value.id}`}>{page}</AdminLayout>;
+};

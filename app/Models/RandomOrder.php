@@ -11,6 +11,8 @@ class RandomOrder extends Model
         'user_id',
         'random_nick_id',
         'price',
+        'purchase_key',
+        'purchase_fingerprint',
     ];
 
 

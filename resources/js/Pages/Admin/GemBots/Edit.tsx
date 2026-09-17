@@ -16,9 +16,15 @@ export default function GemBotEdit() {
     const { gemBot: raw, servers, logins } = usePage<Props>().props;
     const gemBot = 'data' in raw ? raw.data : raw;
     return (
-        <AdminLayout title={`Sửa bot ngọc #${gemBot.id}`}>
+        <>
             <Head title={`Sửa bot ngọc #${gemBot.id}`} />
             <GemBotModal open gemBot={gemBot} servers={servers} logins={logins} onClose={() => router.visit('/admin/gem-bots')} />
-        </AdminLayout>
+        </>
     );
 }
+
+GemBotEdit.layout = (page: React.ReactElement<Props>) => {
+    const raw = page.props.gemBot;
+    const value = 'data' in raw ? raw.data : raw;
+    return <AdminLayout title={`Sửa bot ngọc #${value.id}`}>{page}</AdminLayout>;
+};

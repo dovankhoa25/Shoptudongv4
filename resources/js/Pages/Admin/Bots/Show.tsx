@@ -26,7 +26,7 @@ export default function BotShow() {
     const bot = 'data' in rawBot ? rawBot.data : rawBot;
 
     return (
-        <AdminLayout title={`Bot #${bot.id}`}>
+        <>
             <Head title={`Bot #${bot.id}`} />
             <div className="space-y-6">
                 <div className="flex items-center justify-between">
@@ -48,9 +48,15 @@ export default function BotShow() {
                     <Info icon={BotIcon} label="Vai trò" value={bot.type_labels.join(', ') || '—'} />
                 </div>
             </div>
-        </AdminLayout>
+        </>
     );
 }
+
+BotShow.layout = (page: React.ReactElement<Props>) => {
+    const raw = page.props.bot;
+    const value = 'data' in raw ? raw.data : raw;
+    return <AdminLayout title={`Bot #${value.id}`}>{page}</AdminLayout>;
+};
 
 function Info({ icon: Icon, label, value }: { icon: typeof BotIcon; label: string; value: string }) {
     return (

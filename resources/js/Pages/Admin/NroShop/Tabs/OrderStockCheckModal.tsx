@@ -1,7 +1,7 @@
-import { useLiveView } from '@/Realtime/useLiveView';
+import { useLiveResource } from '@/Realtime/useLiveResource';
+import { LiveDataNotice } from '@/Realtime/LiveDataNotice';
 import { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
-import { echo } from '@laravel/echo-react';
 import { Alert, Button, Checkbox, Form, Input, InputNumber, Modal, Select, Spin, Table, Tag, message } from 'antd';
 import { NroIcon } from '@/Components/Nro/NroSnapshot';
 import type { Order } from '../types';
@@ -17,22 +17,23 @@ type Report = {
 export default function OrderStockCheckModal({ order, canReconcile, onClose, onChanged }: {
     order: Order; canReconcile: boolean; onClose: () => void; onChanged: () => void;
 }) {
-    const [report, setReport] = useState<Report | null>(null);
-    const [error, setError] = useState('');
     const [busy, setBusy] = useState(false);
     const [stopped, setStopped] = useState(false);
     const [form] = Form.useForm();
     const initialized = useRef(false);
     const requestId = useRef(0);
     const url = `${base}/orders/${order.id}/stock-check`;
-    const apply = (data: Report) => {
-        setReport(data); setError('');
+    const resource = useLiveResource<Report>(url, 'Không tải được dữ liệu kiểm tra kho');
+    const report = resource.data;
+    const apply = resource.replace;
+    useEffect(() => {
+        const data = report;
+        if (!data) return;
         if (!initialized.current && data.reviewJobs.length) {
             initialized.current = true;
             form.setFieldsValue({ jobId: data.reviewJobs[0].id, items: data.items.map(i => ({ id: i.id, delivered: i.delivered })) });
         }
-    };
-    const live = useLiveView<Report>(url,apply);
+    }, [report, form]);
     const check = async () => {
         setBusy(true); const id = ++requestId.current;
         try { const { data } = await axios.post<Report>(url, { confirmedStopped: stopped }); if (id === requestId.current) apply(data); message.success('Đã yêu cầu tool kiểm tra kho'); onChanged(); }
@@ -50,8 +51,8 @@ export default function OrderStockCheckModal({ order, canReconcile, onClose, onC
         <p className="mb-3 text-sm">Acc kho: <strong>{order.accountName || `#${order.accountId}`}</strong> · Người mua: {order.buyerUsername || '—'}</p>
         <Alert type="info" showIcon message="Tool chỉ lấy dữ liệu, không giao đồ hoặc hoàn tiền."
             description="Tồn kho dùng để kiểm tra khả năng giao phần còn lại. Đồ còn hay mất không tự chứng minh khách đã nhận; hãy đối chiếu lịch sử giao trước khi chốt." />
-        {error && <Alert className="mt-3" type="error" message={error} />}
-        {!report && !error && <div className="py-6 text-center"><Spin /></div>}
+        <LiveDataNotice {...resource} />
+        {!report && resource.loading && <div className="py-6 text-center"><Spin /></div>}
         {report && <>
             <div className="my-3 rounded-lg border border-slate-300 p-3 dark:border-slate-700">
                 {report.check && <p className="mb-2 text-xs">Kiểm tra #{report.check.id} · <Tag>{statusName[report.check.status] || report.check.status}</Tag> · {report.check.requestedBy} · {dateTime(report.check.requestedAt)}</p>}

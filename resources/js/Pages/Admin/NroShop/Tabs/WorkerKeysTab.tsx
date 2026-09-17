@@ -1,5 +1,6 @@
-import { useLiveView } from '@/Realtime/useLiveView';
-import { useEffect, useState } from 'react';
+import { useLiveResource } from '@/Realtime/useLiveResource';
+import { LiveDataNotice } from '@/Realtime/LiveDataNotice';
+import { useState } from 'react';
 import axios from 'axios';
 import { Alert, Button, Input, Modal, Space, Table, Tag, message } from 'antd';
 import { base, dateTime } from '../shared';
@@ -12,15 +13,16 @@ export default function WorkerKeysTab({
     run: (action: () => Promise<unknown>, success?: string) => Promise<void>;
     busy: boolean;
 }) {
-    const [keys, setKeys] = useState<WorkerKey[]>([]);
-    const [loading, setLoading] = useState(false);
     const [keyName, setKeyName] = useState('Máy NRO');
     const [newKey, setNewKey] = useState('');
 
-    const live=useLiveView<{data:WorkerKey[]}>(`${base}/worker-keys`,data=>{setKeys(data.data);setLoading(false);});
-    const load=live.sync;
+    const resource=useLiveResource<{data:WorkerKey[]}>(`${base}/worker-keys`,'Không tải được danh sách API key');
+    const keys=resource.data?.data ?? [];
+    const loading=resource.loading;
+    const load=resource.reload;
     return (
         <div className="space-y-4">
+            <LiveDataNotice {...resource} />
             <Alert
                 type="info"
                 showIcon
@@ -41,7 +43,7 @@ export default function WorkerKeysTab({
                         run(async () => {
                             const { data } = await axios.post(`${base}/worker-keys`, { name: keyName });
                             setNewKey(data.token);
-
+                            load();
                         }, 'Đã tạo API key')
                     }
                 >
@@ -88,7 +90,7 @@ export default function WorkerKeysTab({
                                             onOk: () =>
                                                 run(async () => {
                                                     await axios.delete(`${base}/worker-keys/${k.id}`);
-                        
+                                                    load();
                                                 }, 'Đã thu hồi key'),
                                         })
                                     }

@@ -120,6 +120,7 @@ class ChatSubjectResolver
 
         $nickOrders = NickOrder::query()
             ->where('buyer_id', $customer->getKey())
+            ->where('created_at', '>=', now()->subHours(24))
             ->with('nick.category:id,name')
             ->latest('id')
             ->limit(25)
@@ -129,6 +130,7 @@ class ChatSubjectResolver
         $goldOrders = GoldTransaction::query()
             ->where('user_id', $customer->getKey())
             ->where('type', GoldTransaction::TYPE_ORDER)
+            ->whereIn('status', ['pending', 'processing'])
             ->with('server:id,name,name_view')
             ->latest('id')
             ->limit(25)
@@ -137,6 +139,7 @@ class ChatSubjectResolver
 
         $gemOrders = GemTransaction::query()
             ->where('user_id', $customer->getKey())
+            ->whereIn('status', [GemTransaction::STATUS_PENDING, GemTransaction::STATUS_PROCESSING])
             ->with('server:id,name,name_view')
             ->latest('id')
             ->limit(25)

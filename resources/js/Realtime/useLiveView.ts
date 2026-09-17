@@ -6,17 +6,32 @@ import {applyLiveDelta, type LiveOp} from './liveDelta';
 
 type Frame={viewId:string;revoked?:boolean;batch:string;base:number;revision:number;part:number;total:number;chunk:string};
 type State<T>={revision:number;data:T};
-/** Subscribe only while this view is visible. Change events carry rows/fields, never trigger a GET. */
+/** Keep brief tab switches connected; suspend after 30 seconds hidden. Updates carry deltas. */
 export function useLiveView<T>(url:string|null,onData:(data:T)=>void,mode='page') {
-    const owner=(usePage().props.auth as any)?.user?.id;
+    const auth=usePage().props.auth as any;
+    const owner=JSON.stringify([auth?.user?.id,auth?.realtime_channel]);
     const callback=useRef(onData);callback.current=onData;
     const syncRef=useRef<()=>void>(()=>{});
-    const [status,setStatus]=useState<'connecting'|'live'|'offline'|'denied'>('connecting');
+    const [status,setStatus]=useState<'idle'|'connecting'|'live'|'offline'|'denied'>('idle');
     useEffect(()=> {
-        if(!url)return;
+        if(!url){setStatus('idle');return;}
+        setStatus('connecting');
         const isHidden=()=>document.visibilityState==='hidden';
         let epoch=0,starting=false;
         let active=true,id:string|null=null,channel:any=null,renew:ReturnType<typeof setTimeout>|null=null;
+        let hiddenTimer:ReturnType<typeof setTimeout>|null=null;
+        let denied=false,retryAt=0,lastStatus='connecting';
+        const statusChanged=(next:'connecting'|'live'|'offline'|'denied')=>{lastStatus=next;if(active)setStatus(next);};
+        const failed=(error:any)=> {
+            const code=error?.response?.status ?? error?.status;
+            denied=[401,403].includes(code);
+            const header=error?.response?.headers?.['retry-after'];
+            const seconds=Number(header);
+            const deadline=header && !Number.isFinite(seconds)?Date.parse(header):Date.now()+Math.max(0,seconds || 0)*1000;
+            retryAt=code===429 ? Math.max(Date.now()+1000,Number.isFinite(deadline) && header?deadline:Date.now()+60000) : Date.now()+30000;
+            statusChanged(denied?'denied':'offline');
+            if(denied || code===404)void close();
+        };
         let state:State<T>|null=null,syncing=false,resync=false;
         const controller=new AbortController();
         const batches=new Map<string,{frame:Frame;parts:Map<number,string>;at:number;timeout:ReturnType<typeof setTimeout>}>();
@@ -30,7 +45,7 @@ export function useLiveView<T>(url:string|null,onData:(data:T)=>void,mode='page'
         };
         const receive=(frame:Frame)=> {
             if(!active || frame.viewId!==id)return;
-            if(frame.revoked){setStatus('denied');void close();return;}
+            if(frame.revoked){denied=true;statusChanged('denied');void close();return;}
             if(!Number.isSafeInteger(frame.revision) || frame.total<1 || frame.total>2048 || frame.part<0 || frame.part>=frame.total)return;
             if(state && frame.revision<=state.revision)return;
             for(const [key,value] of batches)if(Date.now()-value.at>30000){clearTimeout(value.timeout);batches.delete(key);}
@@ -47,16 +62,17 @@ export function useLiveView<T>(url:string|null,onData:(data:T)=>void,mode='page'
             } catch {resync=true;void synchronize();}
         };
         async function synchronize() {
-            if(!active || !id)return;
+            if(!active || !id || Date.now()<retryAt)return;
             if(syncing)return;syncing=true;resync=false;
             const currentId=id,currentEpoch=epoch;let success=false;
             try {
                 const {data}=await axios.post<State<T>>(`/admin/live-views/${currentId}/sync`,{}, {signal:controller.signal});
                 if(!active || currentEpoch!==epoch || currentId!==id)return;
+                if(!data || !Number.isSafeInteger(data.revision) || data.revision<0 || typeof data.data!=='object' || data.data===null)throw new Error('Invalid live snapshot');
                 success=true;
                 if(!state || data.revision>=state.revision){state=data;callback.current(data.data);}
-                setStatus('live');
-            } catch(error:any) {if(active && currentEpoch===epoch)setStatus([401,403].includes(error.response?.status)?'denied':'offline');if(error.response?.status===404 && currentEpoch===epoch)void close();}
+                retryAt=0;statusChanged('live');
+            } catch(error:any) {if(active && currentEpoch===epoch && currentId===id)failed(error);}
             finally {
                 if(currentEpoch!==epoch)return;
                 syncing=false;
@@ -73,40 +89,48 @@ export function useLiveView<T>(url:string|null,onData:(data:T)=>void,mode='page'
                 if(!active || !id)return;
                 const currentId=id,currentEpoch=epoch;
                 try {await axios.patch(`/admin/live-views/${currentId}`,{}, {signal:controller.signal});if(active && currentEpoch===epoch && currentId===id)lease();}
-                catch {if(active && currentEpoch===epoch)setStatus('offline');}
+                catch(error:any) {if(active && currentEpoch===epoch && currentId===id)failed(error);}
             },15*60*1000);
         }
         async function close() {
             epoch++;starting=false;syncing=false;state=null;queued.length=0;
             for(const batch of batches.values())clearTimeout(batch.timeout);batches.clear();
             if(renew)clearTimeout(renew);
-            if(channel){channel.stopListening('.AdminViewPatched',receive);echo().leave(`Admin.View.${id}`);channel=null;}
+            if(channel){try{channel.stopListening('.AdminViewPatched',receive);echo().leave(`Admin.View.${id}`);}catch{/* Cleanup still deletes the lease if the socket has gone away. */}channel=null;}
             if(id){const old=id;id=null;try{await axios.delete(`/admin/live-views/${old}`);}catch{/* Server lease expires if disconnect prevents cleanup. */}}
         }
         async function start() {
-            if(!active || starting || id || isHidden())return;
+            if(!active || starting || id || isHidden() || Date.now()<retryAt)return;
             starting=true;const currentEpoch=epoch;
-            setStatus('connecting');
+            statusChanged('connecting');
             try {
                 const {data}=await axios.post<{id:string;channel:string}>('/admin/live-views',{url,mode},{signal:controller.signal});
+                if(!data || typeof data.id!=='string' || typeof data.channel!=='string')throw new Error('Invalid live registration');
                 if(!active || currentEpoch!==epoch || isHidden()){void axios.delete(`/admin/live-views/${data.id}`).catch(()=>{});return;}
                 id=data.id;state=null;channel=echo().private(data.channel);
                 channel.listen('.AdminViewPatched',receive);
-                channel.on('pusher:subscription_succeeded',synchronize);
-                channel.error(()=>active && setStatus('offline'));
+                channel.on('pusher:subscription_succeeded',()=>{if(active && currentEpoch===epoch)void synchronize();});
+                channel.error((error:unknown)=>{if(active && currentEpoch===epoch){failed(error);void close();}});
                 if(channel.subscription?.subscribed)void synchronize();
                 lease();
-            } catch(error:any){if(active && currentEpoch===epoch)setStatus([401,403].includes(error.response?.status)?'denied':'offline');}
+            } catch(error:any){if(active && currentEpoch===epoch){failed(error);if(id && !channel)void close();}}
             finally {if(currentEpoch===epoch)starting=false;}
         }
-        const refresh=()=>{if(id)void synchronize();else void start();};syncRef.current=refresh;
-        const visible=()=>{if(isHidden())void close();else refresh();};
-        const connection=(echo() as any).connector?.pusher?.connection;
-        const disconnected=(change:{current?:string})=>{if(active && id && ['disconnected','unavailable','failed'].includes(change.current || ''))setStatus('offline');};
+        const refresh=(manual=false)=>{if(!active || isHidden() || (!manual && denied) || Date.now()<retryAt)return;if(manual)denied=false;if(id)void synchronize();else void start();};
+        syncRef.current=()=>refresh(true);
+        const online=()=>refresh();
+        const visible=()=>{
+            if(hiddenTimer)clearTimeout(hiddenTimer);
+            if(isHidden())hiddenTimer=setTimeout(()=>{if(active && isHidden()){void close();statusChanged(denied?'denied':'offline');}},30000);
+            else if(!id || lastStatus!=='live')refresh();
+        };
+        let connection:any;
+        try{connection=(echo() as any).connector?.pusher?.connection;}catch{/* A missing socket config must not break ordinary page reads. */}
+        const disconnected=(change:{current?:string})=>{if(active && id && ['disconnected','unavailable','failed'].includes(change.current || ''))statusChanged('offline');};
         connection?.bind('state_change',disconnected);
-        window.addEventListener('online',refresh);document.addEventListener('visibilitychange',visible);
+        window.addEventListener('online',online);document.addEventListener('visibilitychange',visible);
         void start();
-        return ()=> {active=false;connection?.unbind('state_change',disconnected);controller.abort();void close();batches.clear();queued.length=0;syncRef.current=()=>{};window.removeEventListener('online',refresh);document.removeEventListener('visibilitychange',visible);};
+        return ()=> {active=false;if(hiddenTimer)clearTimeout(hiddenTimer);connection?.unbind('state_change',disconnected);controller.abort();void close();batches.clear();queued.length=0;syncRef.current=()=>{};window.removeEventListener('online',online);document.removeEventListener('visibilitychange',visible);};
     },[url,mode,owner]);
     return {status,sync:useCallback(()=>syncRef.current(),[])};
 }

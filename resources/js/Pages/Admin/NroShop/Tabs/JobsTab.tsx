@@ -3,6 +3,7 @@ import axios from 'axios';
 import { Alert, Button, Form, Input, InputNumber, Modal, Select, Space, Table, Tag } from 'antd';
 import { base, dateTime, statusName } from '../shared';
 import { usePagedTab } from '../usePagedTab';
+import { LiveDataNotice } from '@/Realtime/LiveDataNotice';
 import type { Job } from '../types';
 
 const jobType = (type: string) => (type === 'snapshot' ? 'Lấy dữ liệu' : type === 'delivery' ? 'Giao đồ' : type);
@@ -34,7 +35,7 @@ export default function JobsTab({
     busy: boolean;
     dataVersion: number;
 }) {
-    const { rows, loading, filters, apply, reload } = usePagedTab<Job>(
+    const { rows, loading, filters, apply, reload, error, warning } = usePagedTab<Job>(
         '/jobs',
         'Không tải được danh sách công việc tool',
         dataVersion,
@@ -52,6 +53,7 @@ export default function JobsTab({
 
     return (
         <>
+            <LiveDataNotice error={error} warning={warning} reload={reload} />
             <div className="mb-3 flex flex-wrap gap-2">
                 <Select
                     aria-label="Lọc trạng thái công việc"
@@ -151,6 +153,7 @@ export default function JobsTab({
                         run(async () => {
                             await axios.post(`${base}/jobs/${reconcile?.id}/reconcile`, v);
                             setReconcile(null);
+                            reload();
                         }, 'Đã ghi nhận kết quả đối soát')
                     }
                 >

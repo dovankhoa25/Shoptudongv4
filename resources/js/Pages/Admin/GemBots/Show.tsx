@@ -19,13 +19,19 @@ export default function GemBotShow() {
     ] as const;
 
     return (
-        <AdminLayout title={`Bot ngọc #${gemBot.id}`}>
+        <>
             <Head title={`Bot ngọc #${gemBot.id}`} />
             <Link href="/admin/gem-bots" className="inline-flex items-center gap-2 text-sm text-blue-600"><ArrowLeft className="h-4 w-4" /> Quay lại</Link>
             <h1 className="my-4 text-2xl font-bold text-gray-900 dark:text-white">{gemBot.name || gemBot.account_name}</h1>
             <div className="grid gap-4 rounded-xl bg-white p-6 shadow dark:bg-gray-800 md:grid-cols-2">
                 {items.map(([label, value, Icon]) => <div key={label} className="flex gap-3 rounded-lg border p-4 dark:border-gray-700"><Icon className="h-5 w-5 text-purple-500" /><div><p className="text-xs uppercase text-gray-500">{label}</p><p className="font-medium dark:text-white">{value}</p></div></div>)}
             </div>
-        </AdminLayout>
+        </>
     );
 }
+
+GemBotShow.layout = (page: React.ReactElement<Props>) => {
+    const raw = page.props.gemBot;
+    const value = 'data' in raw ? raw.data : raw;
+    return <AdminLayout title={`Bot ngọc #${value.id}`}>{page}</AdminLayout>;
+};
