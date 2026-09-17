@@ -23,7 +23,7 @@ class RegisterController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'username' => ['required', 'string', 'max:191', 'unique:users,username'],
+            'username' => ['required', 'string', 'max:191', new \App\Rules\AccountUsername, 'unique:users,username'],
             'email' => ['nullable', 'email', 'max:191', 'unique:users,email'],
             'password' => ['required', 'string', 'min:8', 'max:72', 'confirmed'],
             'client_id' => ['required', 'uuid'],

@@ -72,7 +72,7 @@ class NroShopWorkflowTest extends TestCase
         $listingId = $this->listing($seller, $account);
         $buyer = User::factory()->create(['balance' => 1000]);
         User::factory()->create();
-        Passport::actingAs($buyer);
+        Passport::actingAs($buyer, ['profile:read', 'profile:write']);
         Event::fake([NroShopUpdated::class]);
         $this->postJson('/api/nro-shop/orders', [
             'listingId' => $listingId, 'recipientName' => 'khachgame',
@@ -80,6 +80,51 @@ class NroShopWorkflowTest extends TestCase
         ])->assertOk();
         Event::assertDispatchedTimes(NroShopUpdated::class, 1);
         Event::assertDispatched(NroShopUpdated::class, fn (NroShopUpdated $event): bool => $event->catalog && $event->buyerIds === [$buyer->id]);
+    }
+
+    public function test_recipient_case_is_normalized_and_retry_is_idempotent(): void
+    {
+        $seller = $this->seller(); $account = $this->warehouse($seller); $listing = $this->listing($seller, $account);
+        $buyer = User::factory()->create(['balance' => 1000]);
+        $key = (string) Str::uuid();
+        $order = app(NroShopService::class)->purchase($buyer, $listing, 'KhachGAME', 10, $key);
+        $this->assertSame($order, app(NroShopService::class)->purchase($buyer, $listing, 'khachgame', 10, $key));
+        Passport::actingAs($buyer, ['profile:read', 'profile:write']);
+        $request = ['mode' => 'manual', 'recipientName' => 'KhachGAME', 'requestKey' => (string) Str::uuid()];
+        $this->postJson('/api/nro-shop/orders/'.$order.'/receive', $request)->assertOk();
+        $this->postJson('/api/nro-shop/orders/'.$order.'/receive', [...$request, 'recipientName' => 'khachgame'])->assertOk();
+        $this->assertSame(1, DB::table('nro_delivery_sessions')->where('order_id', $order)->count());
+        $this->assertDatabaseHas('nro_delivery_sessions', ['order_id' => $order, 'recipient_name' => 'khachgame']);
+        $job = $this->withToken($this->token)->postJson('/app/nro-worker/claim', ['protocolVersion' => 3, 'types' => ['delivery']])->assertOk()->json('data');
+        $this->assertSame('khachgame', $job['receiving']['recipientName']);
+        $ready = ['leaseToken' => $job['leaseToken'], 'characterId' => 10, 'name' => 'bot', 'mapId' => 5, 'zone' => 7, 'recipientName' => 'WrongName'];
+        $this->postJson('/app/nro-worker/jobs/'.$job['id'].'/ready', $ready)->assertStatus(422);
+        $this->postJson('/app/nro-worker/jobs/'.$job['id'].'/ready', [...$ready, 'recipientName' => 'KHACHGAME'])->assertOk();
+        $this->assertDatabaseHas('nro_delivery_sessions', ['order_id' => $order, 'recipient_name' => 'khachgame', 'status' => 'ready']);
+    }
+
+    public function test_card_summary_filters_bounds_and_backfills_saved_data(): void
+    {
+        $item = ['templateId' => 1, 'iconId' => 1, 'name' => 'Cải trang', 'type' => 5, 'quantity' => 1, 'options' => []];
+        $data = ['character' => ['name' => 'demo', 'gold' => 123, 'password' => 'PRIVATE'], 'bag' => array_fill(0, 20, $item)];
+        $data['bag'][] = [...$item, 'type' => 0, 'name' => 'Rác'];
+        $data['bag'][] = [...$item, 'type' => 0, 'name' => 'Áo', 'options' => [['optionId' => 107, 'param' => 7]]];
+        $data['bag'][] = [...$item, 'type' => 12, 'name' => 'Đá', 'quantity' => 99];
+        $summary = \App\Services\NroCardSummary::fromData($data);
+        $this->assertSame(20, $summary['featuredPreviews']['costumes']['count']);
+        $this->assertCount(20, $summary['featuredPreviews']['costumes']['items']);
+        $this->assertSame('Hành trang', $summary['featuredPreviews']['gear']['items'][0]['location']);
+        $this->assertNull($summary['featuredPreviews']['gear']['items'][0]['filledStars']);
+        $this->assertSame(1, $summary['featuredPreviews']['gear']['count']);
+        $this->assertSame(99, $summary['featuredPreviews']['stones']['items'][0]['quantity']);
+        $this->assertArrayNotHasKey('password', $summary['character']);
+        $seller = $this->seller(); $account = $this->warehouse($seller);
+        $row = DB::table('nro_account_snapshots')->where('account_id', $account->id)->first();
+        DB::table('nro_account_snapshots')->where('id', $row->id)->update(['data_json' => json_encode($data)]);
+        $this->artisan('nro:refresh-card-summaries')->assertSuccessful();
+        $updated = DB::table('nro_account_snapshots')->where('id', $row->id)->first();
+        $this->assertSame(json_encode($data), $updated->data_json);
+        $this->assertSame(123, json_decode($updated->summary_json, true)['character']['gold']);
     }
 
     private function seller(): User
@@ -285,7 +330,7 @@ class NroShopWorkflowTest extends TestCase
     public function test_bundle_purchase_is_atomic_idempotent_and_cannot_oversell(): void
     {
         $seller = $this->seller(); $a = $this->warehouse($seller); $id = $this->listing($seller, $a);
-        $buyer = User::factory()->create(['balance' => 1000]); Passport::actingAs($buyer);
+        $buyer = User::factory()->create(['balance' => 1000]); Passport::actingAs($buyer, ['profile:read', 'profile:write']);
         $body = ['listingId' => $id, 'recipientName' => 'khachgame', 'serverId' => 10, 'requestKey' => (string) Str::uuid()];
         $order = $this->postJson('/api/nro-shop/orders', $body)->assertOk()->json('data.id');
         $this->postJson('/api/nro-shop/orders', $body)->assertOk()->assertJsonPath('data.id', $order);
@@ -297,7 +342,7 @@ class NroShopWorkflowTest extends TestCase
         $this->getJson('/api/nro-shop/listings/'.$id)->assertNotFound();
         $this->getJson('/api/nro-shop/orders')->assertOk()->assertJsonPath('data.0.id', $order);
         // Another listing may use the remaining physical stock, but cannot oversell it.
-        $next = $this->listing($seller, $a); Passport::actingAs($buyer);
+        $next = $this->listing($seller, $a); Passport::actingAs($buyer, ['profile:read', 'profile:write']);
         $this->postJson('/api/nro-shop/orders', [...$body, 'listingId' => $next, 'requestKey' => (string) Str::uuid()])->assertOk();
         $this->postJson('/api/nro-shop/orders', [...$body, 'listingId' => $next, 'requestKey' => (string) Str::uuid()])->assertUnprocessable();
         $this->assertEquals(600, $buyer->fresh()->balance);
@@ -346,7 +391,7 @@ class NroShopWorkflowTest extends TestCase
         $this->patchJson('/admin/nro-shop/listings/'.$id, ['status' => 'paused'])->assertOk();
         $this->patchJson('/admin/nro-shop/listings/'.$id, ['status' => 'active'])->assertUnprocessable();
         DB::table('item_listings')->where('id', $id)->update(['status' => 'active']);
-        $buyer = User::factory()->create(['balance' => 1000]); Passport::actingAs($buyer);
+        $buyer = User::factory()->create(['balance' => 1000]); Passport::actingAs($buyer, ['profile:read', 'profile:write']);
         $this->postJson('/api/nro-shop/orders', ['listingId' => $id, 'serverId' => 10, 'requestKey' => (string) Str::uuid()])->assertUnprocessable();
         $this->assertEquals(1000, $buyer->fresh()->balance);
         $this->assertDatabaseCount('item_orders', 0);
@@ -558,7 +603,7 @@ class NroShopWorkflowTest extends TestCase
     public function test_insufficient_bundle_and_balance_leave_no_partial_order(): void
     {
         $seller = $this->seller(); $a = $this->warehouse($seller); $listing = $this->listing($seller, $a);
-        $buyer = User::factory()->create(['balance' => 100]); Passport::actingAs($buyer);
+        $buyer = User::factory()->create(['balance' => 100]); Passport::actingAs($buyer, ['profile:read', 'profile:write']);
         $body = ['listingId' => $listing, 'recipientName' => 'khach', 'serverId' => 10, 'requestKey' => (string) Str::uuid()];
         $this->postJson('/api/nro-shop/orders', $body)->assertUnprocessable();
         $buyer->update(['balance' => 1000]);
@@ -865,7 +910,7 @@ class NroShopWorkflowTest extends TestCase
     public function test_shop_requires_delivery_worker_but_accepts_complete_old_snapshot(): void
     {
         $seller = $this->seller(); $a = $this->warehouse($seller); $id = $this->listing($seller, $a);
-        $buyer = User::factory()->create(['balance' => 1000]); Passport::actingAs($buyer);
+        $buyer = User::factory()->create(['balance' => 1000]); Passport::actingAs($buyer, ['profile:read', 'profile:write']);
         DB::table('nro_worker_keys')->update(['accepts_delivery' => false]);
         $body = ['listingId' => $id, 'recipientName' => 'khach', 'serverId' => 10, 'requestKey' => (string) Str::uuid()];
         $this->postJson('/api/nro-shop/orders', $body)->assertUnprocessable();
@@ -957,7 +1002,7 @@ class NroShopWorkflowTest extends TestCase
         $seller = $this->seller(); $a = $this->warehouse($seller); $listing = $this->listing($seller, $a);
         $buyer = User::factory()->create(['balance' => 1000]);
         $order = app(NroShopService::class)->purchase($buyer, $listing, '', 10, (string) Str::uuid());
-        Passport::actingAs(User::factory()->create());
+        Passport::actingAs(User::factory()->create(), ['profile:read', 'profile:write']);
         $this->postJson('/api/nro-shop/orders/'.$order.'/receive', ['mode' => 'manual', 'recipientName' => 'khach', 'requestKey' => (string) Str::uuid()])->assertNotFound();
         $this->withToken($this->token)->postJson('/app/nro-worker/claim', ['types' => ['delivery']])->assertUnprocessable();
         $this->assertDatabaseCount('nro_delivery_sessions', 0);
@@ -1465,7 +1510,7 @@ class NroShopWorkflowTest extends TestCase
         $this->assertDatabaseHas('item_listings', ['id' => $available, 'status' => 'active']);
         $this->getJson('/api/nro-shop/listings')->assertJsonPath('total', 0);
         $this->getJson('/api/nro-shop/listings/'.$available)->assertNotFound();
-        Passport::actingAs($buyer);
+        Passport::actingAs($buyer, ['profile:read', 'profile:write']);
         $this->postJson('/api/nro-shop/orders', ['listingId' => $available, 'serverId' => 10, 'requestKey' => (string) Str::uuid()])->assertUnprocessable();
         $this->assertEquals(800, $buyer->fresh()->balance);
         $this->assertDatabaseCount('item_orders', 1);
@@ -1778,7 +1823,7 @@ class NroShopWorkflowTest extends TestCase
     {
         [$seller,$a,$buyer,$order,$job]=$this->controlsFixture();
         $this->postJson('/app/nro-worker/jobs/'.$job['id'].'/complete',['leaseToken'=>$job['leaseToken'],'outcome'=>'missing_items','payload'=>$this->payload(0)])->assertOk();
-        Passport::actingAs($buyer);
+        Passport::actingAs($buyer, ['profile:read', 'profile:write']);
         $url='/api/nro-shop/orders/'.$order.'/cancel';
         $this->postJson($url)->assertOk()->assertJsonPath('data.status','refunded')->assertJsonPath('data.refundAmount',200);
         $this->postJson($url)->assertOk();
@@ -1795,7 +1840,7 @@ class NroShopWorkflowTest extends TestCase
         $lines=DB::table('item_order_items')->where('order_id',$order)->orderBy('id')->get()->values()->map(fn($i,$n)=>['id'=>$i->id,'delivered'=>$n===0?1:0])->all();
         $this->postJson($url.'/progress',[...$lease,'items'=>$lines])->assertOk();
         $this->postJson($url.'/complete',[...$lease,'outcome'=>'missing_items','payload'=>$this->payload(0)])->assertOk();
-        Passport::actingAs($buyer);
+        Passport::actingAs($buyer, ['profile:read', 'profile:write']);
         $this->postJson('/api/nro-shop/orders/'.$order.'/cancel')->assertUnprocessable();
         $this->postJson('/api/nro-shop/orders/'.$order.'/receive',['requestKey'=>(string)Str::uuid(),'mode'=>'manual','recipientName'=>'khach'])->assertUnprocessable();
         app(NroSnapshotService::class)->ingest($a,$this->payload(2));
@@ -1829,7 +1874,7 @@ class NroShopWorkflowTest extends TestCase
     {
         [$seller,$a,$buyer,$order,$job]=$this->controlsFixture();$url='/app/nro-worker/jobs/'.$job['id'];$lease=['leaseToken'=>$job['leaseToken']];
         $this->postJson($url.'/heartbeat',[...$lease,'loginWaiting'=>true,'loginRetryAt'=>now()->addMinute()->toIso8601String(),'message'=>'Chờ game'])->assertOk();
-        Passport::actingAs($buyer);
+        Passport::actingAs($buyer, ['profile:read', 'profile:write']);
         $this->assertFalse(app(NroShopService::class)->order($order)['flow']['canRequestRefund']);
         $this->postJson('/api/nro-shop/orders/'.$order.'/cancel')->assertUnprocessable();
         $this->withToken($this->token)->postJson($url.'/heartbeat',$lease)->assertOk()->assertJsonPath('cancelRequested',false);
@@ -1869,7 +1914,7 @@ class NroShopWorkflowTest extends TestCase
     {
         $seller=$this->seller();$a=$this->warehouse($seller);$listing=$this->listing($seller,$a);
         $a->update(['publish_status'=>'login_blocked','login_failure_kind'=>'AccountLocked','publish_error'=>'private full account login failure']);
-        $buyer=User::factory()->create(['balance'=>1000]);Passport::actingAs($buyer);
+        $buyer=User::factory()->create(['balance'=>1000]);Passport::actingAs($buyer, ['profile:read', 'profile:write']);
         $id=$this->postJson('/api/nro-shop/orders',['listingId'=>$listing,'serverId'=>10,'requestKey'=>(string)Str::uuid()])->assertOk()->json('data.id');
         $data=$this->postJson('/api/nro-shop/orders/'.$id.'/receive',['mode'=>'manual','recipientName'=>'khach','requestKey'=>(string)Str::uuid()])->assertOk()->assertJsonPath('data.failureCode','account_locked')->assertJsonPath('data.canCancel',true)->json('data');
         $this->assertStringNotContainsString('private full account',json_encode($data));
@@ -1880,7 +1925,7 @@ class NroShopWorkflowTest extends TestCase
         [$seller,$a,$buyer,$order,$job]=$this->controlsFixture();$url='/app/nro-worker/jobs/'.$job['id'];$lease=['leaseToken'=>$job['leaseToken']];
         $this->postJson($url.'/result-issue',[...$lease,'httpStatus'=>422])->assertOk();
         $this->assertDatabaseHas('item_orders',['id'=>$order,'status'=>'review','failure_code'=>'result_rejected']);
-        Passport::actingAs($buyer);$this->postJson('/api/nro-shop/orders/'.$order.'/cancel')->assertUnprocessable();
+        Passport::actingAs($buyer, ['profile:read', 'profile:write']);$this->postJson('/api/nro-shop/orders/'.$order.'/cancel')->assertUnprocessable();
         $this->assertEquals(800,$buyer->fresh()->balance);
     }
 
@@ -1905,7 +1950,7 @@ class NroShopWorkflowTest extends TestCase
         $this->postJson($url.'/ready',[...$lease,'characterId'=>10,'name'=>'bot','mapId'=>5,'zone'=>7,'recipientName'=>'khach'])->assertOk();
         $this->postJson($url.'/begin-round',$lease)->assertOk();
         DB::table('item_orders')->where('id',$order)->update(['failure_code'=>'missing_items']);
-        Passport::actingAs($buyer);$this->postJson('/api/nro-shop/orders/'.$order.'/cancel')->assertOk();
+        Passport::actingAs($buyer, ['profile:read', 'profile:write']);$this->postJson('/api/nro-shop/orders/'.$order.'/cancel')->assertOk();
         $this->withToken($this->token)->postJson($url.'/begin-round',$lease)->assertConflict();
         $lines=DB::table('item_order_items')->where('order_id',$order)->orderBy('id')->get()->values()->map(fn($i,$n)=>['id'=>$i->id,'delivered'=>$n===0?1:0])->all();
         $this->postJson($url.'/progress',[...$lease,'items'=>$lines])->assertOk();
@@ -2307,7 +2352,7 @@ class NroShopWorkflowTest extends TestCase
         $buyer->assignRole('admin'); // The customer endpoint must not turn into an admin override.
         DB::table('nro_worker_jobs')->where('order_id',$order)->update(['status'=>'failed']);
         DB::table('nro_delivery_sessions')->where('order_id',$order)->update(['status'=>'failed']);
-        Passport::actingAs($buyer);
+        Passport::actingAs($buyer, ['profile:read', 'profile:write']);
         foreach(['login_wait','login_failed',null] as $code) {
             DB::table('item_orders')->where('id',$order)->update(['status'=>'awaiting_receipt','failure_code'=>$code,'refund_requested'=>true,'cancel_requested'=>false]);
             $this->assertFalse(app(NroShopService::class)->order($order)['flow']['canRequestRefund']);
@@ -2326,7 +2371,7 @@ class NroShopWorkflowTest extends TestCase
         ])->assertOk();
         $this->assertDatabaseHas('nro_accounts',['id'=>$a->id,'login_failure_kind'=>'AccountLocked']);
         $this->assertTrue(app(NroShopService::class)->order($order)['flow']['canRequestRefund']);
-        Passport::actingAs($buyer);
+        Passport::actingAs($buyer, ['profile:read', 'profile:write']);
         $this->postJson('/api/nro-shop/orders/'.$order.'/cancel')->assertOk()->assertJsonPath('data.status','refunded');
         $this->assertEquals(1000,$buyer->fresh()->balance);
     }
@@ -2338,7 +2383,7 @@ class NroShopWorkflowTest extends TestCase
                 'leaseToken'=>$job['leaseToken'],'outcome'=>'login_failed','loginFailureKind'=>$kind,'retryable'=>false,'loginAccountRole'=>$role,'message'=>'Login bị từ chối',
             ])->assertOk();
             $this->assertFalse(app(NroShopService::class)->order($order)['flow']['canRequestRefund']);
-            Passport::actingAs($buyer);$this->postJson('/api/nro-shop/orders/'.$order.'/cancel')->assertUnprocessable();
+            Passport::actingAs($buyer, ['profile:read', 'profile:write']);$this->postJson('/api/nro-shop/orders/'.$order.'/cancel')->assertUnprocessable();
             $this->assertEquals(800,$buyer->fresh()->balance);
         }
     }

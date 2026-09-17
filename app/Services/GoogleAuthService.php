@@ -66,6 +66,10 @@ class GoogleAuthService
 
             if ($user) {
                 abort_if($user->isLocked(), 423, 'This account is locked.');
+                // Never merge accounts based only on a matching, user-editable email.
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'email' => 'Email đã thuộc một tài khoản. Vui lòng đăng nhập bằng phương thức đã liên kết hoặc đặt lại mật khẩu.',
+                ]);
             }
 
             if (! $user) {

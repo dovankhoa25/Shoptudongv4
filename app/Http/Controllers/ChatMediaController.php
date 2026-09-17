@@ -19,6 +19,8 @@ class ChatMediaController extends Controller
             404,
         );
 
+        abort_unless(in_array($media->mime_type, ['image/jpeg', 'image/png', 'image/webp'], true), 404);
+
         $disk = Storage::disk($media->disk);
         $path = $media->getPathRelativeToRoot();
         abort_unless($disk->exists($path), 404);
@@ -27,6 +29,7 @@ class ChatMediaController extends Controller
             'Content-Type' => $media->mime_type ?: 'application/octet-stream',
             'Cache-Control' => 'private, max-age=300',
             'X-Content-Type-Options' => 'nosniff',
+            'Content-Security-Policy' => "sandbox; default-src 'none'",
         ], 'inline');
     }
 }

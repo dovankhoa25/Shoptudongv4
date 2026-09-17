@@ -23,6 +23,7 @@ class PublicCatalogPerformanceTest extends TestCase
             $category = Category::create(['game_type_id' => $game->id, 'name' => 'Category '.$i, 'sort_order' => $i]);
             $category->media()->create([
                 'collection_name' => 'image', 'name' => 'cover', 'file_name' => 'cover.jpg',
+                'mime_type' => 'image/jpeg',
                 'disk' => 'public', 'size' => 100, 'manipulations' => [],
                 'custom_properties' => [], 'generated_conversions' => [], 'responsive_images' => [],
             ]);

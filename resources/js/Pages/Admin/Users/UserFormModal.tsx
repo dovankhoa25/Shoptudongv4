@@ -17,7 +17,7 @@ export default function UserFormModal({ user, onClose, onSaved }: Props) {
     const submit = async (values: Record<string, any>) => {
         setSubmitting(true);
         const payload = {
-            username: values.username.trim(),
+            ...(!editing ? { username: values.username.trim() } : {}),
             chat_display_name: values.chat_display_name?.trim() || null,
             email: values.email?.trim() || null,
             avatar: values.avatar?.trim() || null,
@@ -60,7 +60,7 @@ export default function UserFormModal({ user, onClose, onSaved }: Props) {
                         { required: true, whitespace: true, message: 'Vui lòng nhập tên đăng nhập.' },
                         { max: 191, message: 'Tên đăng nhập tối đa 191 ký tự.' },
                     ]}>
-                        <Input prefix={<UserOutlined />} autoComplete="off" placeholder="username" />
+                        <Input readOnly={editing} prefix={<UserOutlined />} autoComplete="off" placeholder="username" />
                     </Form.Item>
                     <Form.Item
                         name="chat_display_name"

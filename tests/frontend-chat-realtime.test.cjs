@@ -32,6 +32,7 @@ function harness(root, handler) {
                 if (name === '@/lib') return { api };
                 if (name === '@/lib/chatRealtimeQuery') return load('lib/chatRealtimeQuery.ts');
                 if (name === './chatCredential') return load('store/chatCredential.ts');
+                if (name === './sessionBoundary') return load('store/sessionBoundary.ts');
                 if (name === './slices/authSlice') return load('store/slices/authSlice.ts');
                 if (name === './slices/uiSlice' || name === './slices/cartSlice') return stubReducer;
                 if (name === '@/lib/balanceRealtime') return { mergeBalanceProfile: (old, next) => ({ ...old, ...next }) };
@@ -131,7 +132,9 @@ for (const root of ['123nick.com v4', 'shophhp.net v4', 'vanghhp.vn v4']) {
         h.login('B');
         const current = h.query();
         pending[0]({ data: { data: { channel: 'old-private-channel' } } });
-        assert.equal((await old).error.status, 'CUSTOM_ERROR');
+        // The session boundary now aborts and removes the previous query entirely.
+        assert.equal((await old).data, undefined);
+        assert.equal(JSON.stringify(h.store.getState()[h.api.reducerPath]).includes('old-private-channel'), false);
         pending[1]({ error: { status: 403, data: {} } });
         const denied = await current;
         assert.equal(denied.error.retryAutomatically, false);

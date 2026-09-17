@@ -152,18 +152,18 @@ Route::prefix('chat')
             ->name('status');
     });
 
-Route::middleware(['auth:api', 'throttle:authenticated-api'])->group(function (): void {
+Route::middleware(['auth:api', 'unlocked.user', 'throttle:authenticated-api'])->group(function (): void {
     Route::get('/auth/user', [UserController::class, 'getUser'])
         ->middleware(CheckToken::using('profile:read'));
-    Route::post('/auth/logout', LogoutController::class);
+    Route::post('/auth/logout', LogoutController::class)->name('api.logout');
 
     Route::get('/me', [UserController::class, 'me'])
         ->middleware(CheckToken::using('profile:read'));
     Route::get('/me/balance', [UserController::class, 'balance'])
         ->middleware(CheckToken::using('profile:read'));
 
-    Route::post('/purchase', [NickController::class, 'purchase']);
-    Route::get('/user/profile', [UserController::class, 'getUser']);
+    Route::post('/purchase', [NickController::class, 'purchase'])->middleware(CheckToken::using('profile:write'));
+    Route::get('/user/profile', [UserController::class, 'getUser'])->middleware(CheckToken::using('profile:read'));
 
     Route::prefix('profile')->name('api.profile.')->group(function (): void {
         Route::get('/', [UserController::class, 'show'])
@@ -198,31 +198,31 @@ Route::middleware(['auth:api', 'throttle:authenticated-api'])->group(function ()
             ->name('balance-transactions');
 
         // Route trùng giữa hai dự án: ưu tiên OrderController mặc định của backend.
-        Route::get('/orders', [OrderController::class, 'index'])->name('orders');
+        Route::get('/orders', [OrderController::class, 'index'])->middleware(CheckToken::using('profile:read'))->name('orders');
         Route::get('/history-card', [CardHistoryController::class, 'index'])
             ->middleware(CheckToken::using('profile:read'))
             ->name('history-card');
         Route::get('/balance-history', [UserController::class, 'getUserBalanceHistory'])
             ->middleware(CheckToken::using('profile:read'))
             ->name('balance-history');
-        Route::get('/services', [UserController::class, 'getUserServiceHistory'])->name('services');
-        Route::get('/service-orders/stats', [UserController::class, 'getUserServiceStats'])
+        Route::get('/services', [UserController::class, 'getUserServiceHistory'])->middleware(CheckToken::using('profile:read'))->name('services');
+        Route::get('/service-orders/stats', [UserController::class, 'getUserServiceStats'])->middleware(CheckToken::using('profile:read'))
             ->name('service-orders.stats');
-        Route::put('/services/{id}/cancel', [UserController::class, 'cancelServiceOrder'])->name('services.cancel');
-        Route::get('/random', [UserController::class, 'getUserRandomHistory'])->name('random');
-        Route::get('/random-stats', [UserController::class, 'getUserRandomStats'])->name('random-stats');
-        Route::post('/avatar', [UserController::class, 'updateAvatar'])->name('avatar.update');
-        Route::delete('/avatar', [UserController::class, 'deleteAvatar'])->name('avatar.delete');
+        Route::put('/services/{id}/cancel', [UserController::class, 'cancelServiceOrder'])->middleware(CheckToken::using('profile:write'))->name('services.cancel');
+        Route::get('/random', [UserController::class, 'getUserRandomHistory'])->middleware(CheckToken::using('profile:read'))->name('random');
+        Route::get('/random-stats', [UserController::class, 'getUserRandomStats'])->middleware(CheckToken::using('profile:read'))->name('random-stats');
+        Route::post('/avatar', [UserController::class, 'updateAvatar'])->middleware(CheckToken::using('profile:write'))->name('avatar.update');
+        Route::delete('/avatar', [UserController::class, 'deleteAvatar'])->middleware(CheckToken::using('profile:write'))->name('avatar.delete');
 
         /*
          * Route profile bổ sung từ Vangtudong mà backend chưa có.
          */
-        Route::get('/gems', [ApiGemOrderController::class, 'index'])->name('gems');
-        Route::get('/withdrawal', [UserController::class, 'getWithdrawal'])->name('withdrawal.index');
-        Route::post('/withdrawal', [UserController::class, 'storeWithdrawal'])->name('withdrawal.store');
+        Route::get('/gems', [ApiGemOrderController::class, 'index'])->middleware(CheckToken::using('profile:read'))->name('gems');
+        Route::get('/withdrawal', [UserController::class, 'getWithdrawal'])->middleware(CheckToken::using('profile:read'))->name('withdrawal.index');
+        Route::post('/withdrawal', [UserController::class, 'storeWithdrawal'])->middleware(CheckToken::using('profile:write'))->name('withdrawal.store');
     });
 
-    Route::put('/auth/change-password', [PasswordController::class, 'update']);
+    Route::put('/auth/change-password', [PasswordController::class, 'update'])->middleware(CheckToken::using('profile:write'));
 
     Route::prefix('account')->name('account.')->group(function (): void {
         Route::post('/logout', LogoutController::class)->name('logout');
@@ -248,23 +248,23 @@ Route::middleware(['auth:api', 'throttle:authenticated-api'])->group(function ()
             'throttle:balance-deposit',
         ]);
 
-    Route::get('/carot/recharges', [CarotRechargeController::class, 'index']);
-    Route::post('/carot/recharges', [CarotRechargeController::class, 'store']);
-    Route::get('/carot/recharges/statistics', [CarotRechargeController::class, 'statistics']);
-    Route::get('/carot/recharges/{id}', [CarotRechargeController::class, 'show']);
+    Route::get('/carot/recharges', [CarotRechargeController::class, 'index'])->middleware(CheckToken::using('profile:read'));
+    Route::post('/carot/recharges', [CarotRechargeController::class, 'store'])->middleware(CheckToken::using('profile:write'));
+    Route::get('/carot/recharges/statistics', [CarotRechargeController::class, 'statistics'])->middleware(CheckToken::using('profile:read'));
+    Route::get('/carot/recharges/{id}', [CarotRechargeController::class, 'show'])->middleware(CheckToken::using('profile:read'));
 
-    Route::post('/service/orders', [ServiceOrderController::class, 'store']);
-    Route::post('/categories/{categorySlug}/random-boxes/{boxId}/buy', [NickController::class, 'buyRandom']);
-    Route::post('/categories/{categorySlug}/random-boxes/{boxId}/buy-nick/{nickId}', [NickController::class, 'buySpecificNick']);
+    Route::post('/service/orders', [ServiceOrderController::class, 'store'])->middleware(CheckToken::using('profile:write'));
+    Route::post('/categories/{categorySlug}/random-boxes/{boxId}/buy', [NickController::class, 'buyRandom'])->middleware(CheckToken::using('profile:write'));
+    Route::post('/categories/{categorySlug}/random-boxes/{boxId}/buy-nick/{nickId}', [NickController::class, 'buySpecificNick'])->middleware(CheckToken::using('profile:write'));
 
     /*
      * Route giao dịch bổ sung từ Vangtudong mà backend chưa có.
      */
-    Route::get('/gold/orders', [ApiOrderController::class, 'index'])->name('gold-orders.index');
-    Route::post('/imports', [ImportController::class, 'store'])->name('imports.store');
-    Route::post('/orders', [ApiOrderController::class, 'store'])->name('orders.store');
-    Route::get('/gem/orders', [ApiGemOrderController::class, 'index'])->name('gem-orders.index');
-    Route::post('/gem/orders', [ApiGemOrderController::class, 'store'])->name('gem-orders.store');
+    Route::get('/gold/orders', [ApiOrderController::class, 'index'])->middleware(CheckToken::using('profile:read'))->name('gold-orders.index');
+    Route::post('/imports', [ImportController::class, 'store'])->middleware(CheckToken::using('profile:write'))->name('imports.store');
+    Route::post('/orders', [ApiOrderController::class, 'store'])->middleware(CheckToken::using('profile:write'))->name('orders.store');
+    Route::get('/gem/orders', [ApiGemOrderController::class, 'index'])->middleware(CheckToken::using('profile:read'))->name('gem-orders.index');
+    Route::post('/gem/orders', [ApiGemOrderController::class, 'store'])->middleware(CheckToken::using('profile:write'))->name('gem-orders.store');
 
     Route::prefix('admin/oauth-clients')
         ->middleware([

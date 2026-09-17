@@ -35,7 +35,7 @@ export default function UpdateProfileInformation({
             <header>
                 <h2 className="text-lg font-medium text-slate-900 dark:text-white">Thông tin tài khoản</h2>
                 <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-                    Cập nhật tên đăng nhập và địa chỉ email của bạn.
+                    Cập nhật địa chỉ email. Tên đăng nhập không thể thay đổi.
                 </p>
             </header>
 
@@ -46,7 +46,7 @@ export default function UpdateProfileInformation({
                         id="username"
                         className="mt-1 block w-full dark:border-slate-600 dark:bg-slate-900 dark:text-white"
                         value={data.username}
-                        onChange={event => setData('username', event.target.value)}
+                        readOnly
                         required
                         isFocused
                         autoComplete="username"

@@ -43,7 +43,7 @@ class GoldTradingApiTest extends TestCase
             'status' => GoldTransaction::STATUS_PROCESSING,
         ]);
 
-        Passport::actingAs($user);
+        Passport::actingAs($user, ['profile:read', 'profile:write']);
 
         $this->getJson('/api/gold/orders?type=order&status=processing&search=hero&per_page=1')
             ->assertOk()
@@ -63,7 +63,7 @@ class GoldTradingApiTest extends TestCase
     {
         [$server] = $this->market();
         $user = User::factory()->create(['balance' => 1000000]);
-        Passport::actingAs($user);
+        Passport::actingAs($user, ['profile:read', 'profile:write']);
 
         $this->postJson('/api/orders', [
             'server_id' => $server->id,
@@ -102,7 +102,7 @@ class GoldTradingApiTest extends TestCase
     {
         [$server] = $this->market();
         $user = User::factory()->create(['balance' => 100000]);
-        Passport::actingAs($user);
+        Passport::actingAs($user, ['profile:read', 'profile:write']);
 
         $this->postJson('/api/orders', [
             'server_id' => $server->id,
@@ -123,7 +123,7 @@ class GoldTradingApiTest extends TestCase
     {
         [$server] = $this->market();
         $user = User::factory()->create(['balance' => 400000]);
-        Passport::actingAs($user);
+        Passport::actingAs($user, ['profile:read', 'profile:write']);
 
         $this->postJson('/api/orders', [
             'server_id' => $server->id,
@@ -142,7 +142,7 @@ class GoldTradingApiTest extends TestCase
     {
         [$server] = $this->market();
         $user = User::factory()->create(['balance' => 25000]);
-        Passport::actingAs($user);
+        Passport::actingAs($user, ['profile:read', 'profile:write']);
 
         $this->postJson('/api/imports', [
             'server_id' => $server->id,
@@ -170,7 +170,7 @@ class GoldTradingApiTest extends TestCase
     public function test_import_requires_at_least_one_gold_quantity(): void
     {
         [$server] = $this->market();
-        Passport::actingAs(User::factory()->create());
+        Passport::actingAs(User::factory()->create(), ['profile:read', 'profile:write']);
 
         $this->postJson('/api/imports', [
             'server_id' => $server->id,
@@ -211,7 +211,7 @@ class GoldTradingApiTest extends TestCase
             'status' => GemTransaction::STATUS_PENDING,
             'updated_by' => 'web',
         ]);
-        Passport::actingAs($user);
+        Passport::actingAs($user, ['profile:read', 'profile:write']);
 
         $this->postJson('/api/gem/orders', [
             'server_id' => $server->id,

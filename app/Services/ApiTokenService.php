@@ -36,8 +36,13 @@ class ApiTokenService
     public function revokeAll(User $user, string $reason): int
     {
         return DB::transaction(function () use ($user, $reason): int {
+            if (config('session.driver') === 'database') {
+                DB::connection(config('session.connection'))->table(config('session.table', 'sessions'))
+                    ->where('user_id', $user->id)->delete();
+            }
+            $user->forceFill(['remember_token' => null])->saveQuietly();
+
             $tokenIds = $user->tokens()
-                ->where('revoked', false)
                 ->lockForUpdate()
                 ->pluck('id');
 

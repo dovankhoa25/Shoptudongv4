@@ -94,7 +94,7 @@ class NroWorkerController extends Controller
                     'account' => ['id' => $account->id, 'username' => $account->account_name, 'password' => $account->game_password, 'serverIndex' => $account->server_index ?? 0,
                         'host' => $endpoint->ip, 'port' => (int) $endpoint->port, 'serverId' => $account->server_id,
                         'deliveryMap' => $account->delivery_map, 'deliveryZone' => $account->delivery_zone, 'deliveryZoneMode' => $account->delivery_zone_mode],
-                    'receiving' => $session ? ['id' => $session->id, 'mode' => $session->mode, 'recipientName' => $session->recipient_name,
+                    'receiving' => $session ? ['id' => $session->id, 'mode' => $session->mode, 'recipientName' => $session->recipient_name === null ? null : mb_strtolower(trim($session->recipient_name), 'UTF-8'),
                         'receiver' => $session->receiver_credentials ? json_decode(\Illuminate\Support\Facades\Crypt::decryptString($session->receiver_credentials), true) : null] : null,
                     'order' => $job->order_id ? $shop->order($job->order_id) : null]])->header('Cache-Control', 'no-store');
             }
@@ -431,6 +431,7 @@ class NroWorkerController extends Controller
             'mapId' => 'required|integer|min:0|max:10000', 'mapName' => 'nullable|string|max:100', 'zone' => 'required|integer|min:0|max:255',
             'x' => 'nullable|integer|min:-10000|max:10000', 'y' => 'nullable|integer|min:-10000|max:10000',
             'recipientName' => 'required|string|max:50']);
+        $v['recipientName'] = mb_strtolower(trim($v['recipientName']), 'UTF-8');
         return DB::transaction(function () use ($r, $id, $v) {
             $accountId = DB::table('nro_worker_jobs')->where('id', $id)->value('account_id');
             NroAccount::whereKey($accountId)->lockForUpdate()->firstOrFail();
@@ -438,9 +439,9 @@ class NroWorkerController extends Controller
             abort_unless($job->status === 'processing' && $job->lease_until >= now()->toDateTimeString(), 409);
             $s = DB::table('nro_delivery_sessions')->where('id', $job->delivery_session_id)->lockForUpdate()->first();
             abort_unless($s && in_array($s->status, ['preparing','ready']), 409);
-            if ($s->mode === 'manual') abort_unless($v['recipientName'] === $s->recipient_name, 422);
+            if ($s->mode === 'manual') abort_unless($v['recipientName'] === mb_strtolower(trim($s->recipient_name), 'UTF-8'), 422);
             if (DB::table('nro_delivery_sessions as s')->join('item_orders as o', 'o.id', '=', 's.order_id')
-                ->where('o.account_id', $accountId)->where('s.id', '!=', $s->id)->where('s.recipient_name', $v['recipientName'])
+                ->where('o.account_id', $accountId)->where('s.id', '!=', $s->id)->whereRaw('LOWER(s.recipient_name) = ?', [$v['recipientName']])
                 ->whereIn('s.status', ['ready', 'trading'])->exists()) {
                 abort_unless($job->worker_instance && $s->mode === 'manual', 409, 'Nhân vật đang nhận một đơn khác.');
                 return response()->json(['waitingForRecipient' => true], 202);

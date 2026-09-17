@@ -116,6 +116,9 @@ class FacebookAuthService
 
             if ($user) {
                 abort_if($user->isLocked(), 423, 'This account is locked.');
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'email' => 'Email đã thuộc một tài khoản. Vui lòng đăng nhập bằng phương thức đã liên kết hoặc đặt lại mật khẩu.',
+                ]);
             } else {
                 $user = User::create([
                     'username' => $this->uniqueUsername($this->makeUsername($name, $email, $providerId)),

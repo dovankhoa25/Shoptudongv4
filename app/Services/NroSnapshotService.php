@@ -103,6 +103,7 @@ class NroSnapshotService
             'capturedAt' => $source['capturedAt'], 'highlights' => array_slice($data['equipped'], 0, 6),
             'itemPreviews' => self::cardItemPreviews($data),
             'disciple' => is_array($data['disciple'] ?? null) ? Arr::only($data['disciple'], ['exists', 'hasDetails', 'name', 'power']) : null];
+        $summary = array_replace($summary, NroCardSummary::fromData($data));
         return DB::transaction(function () use ($account, $payload, $data, $summary, $groups) {
             $account = NroAccount::whereKey($account->id)->lockForUpdate()->firstOrFail();
             $snapshot = NroAccountSnapshot::create(['account_id' => $account->id, 'schema_version' => 1,

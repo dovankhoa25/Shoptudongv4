@@ -11,11 +11,10 @@ class ProfileUpdateRequest extends FormRequest
     {
         return [
             'username' => [
+                'sometimes',
                 'required',
                 'string',
-                'min:3',
-                'max:191',
-                Rule::unique('users', 'username')->ignore($this->user()->id),
+                new \App\Rules\AccountUsername($this->user()->username),
             ],
             'email' => [
                 'nullable',

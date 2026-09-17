@@ -24,6 +24,8 @@ class PasswordController extends Controller
             'password' => Hash::make($validated['password']),
         ]);
 
+        app(\App\Services\ApiTokenService::class)->revokeAll($request->user(), 'password_changed');
+
         return back();
     }
 }

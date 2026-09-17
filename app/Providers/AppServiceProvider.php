@@ -34,6 +34,7 @@ class AppServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
+        $this->app->bind(\Laravel\Passport\Bridge\RefreshTokenRepository::class, \App\Services\AccountRefreshTokenRepository::class);
         $this->app->singleton(ChatRealtimeChannel::class);
         $this->app->singleton(\App\Services\AdminLive\Updates::class);
     }
@@ -46,6 +47,7 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         Schema::defaultStringLength(191);
+        \Spatie\MediaLibrary\MediaCollections\Models\Media::observe(\App\Observers\ImageMediaObserver::class);
         Event::listen(\Illuminate\Foundation\Http\Events\RequestHandled::class, [\App\Services\TrafficMonitor::class, 'record']);
         foreach (array_keys(\App\Observers\PublicCacheObserver::GROUPS) as $model) {
             $model::observe(\App\Observers\PublicCacheObserver::class);

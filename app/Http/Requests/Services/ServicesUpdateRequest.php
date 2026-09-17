@@ -23,7 +23,7 @@ class ServicesUpdateRequest extends FormRequest
     {
         return [
             'name' => ['required', 'max:50'],
-            'default_price' => ['required'],
+            'default_price' => ['required', 'integer', 'min:0'],
             'description' => ['nullable', 'string'],
             'status' => ['nullable'],
             'original_price' => ['nullable', 'numeric', 'min:0'],

@@ -23,7 +23,8 @@ class GemMinimumAmountTest extends TestCase
         GemPrice::create(['server_id' => $server->id, 'multiplier' => 13, 'min_amount' => $minimum, 'status' => true]);
         GemPrice::create(['server_id' => $server->id, 'multiplier' => 13, 'min_amount' => 99999, 'status' => false]);
         $payload = ['server_id' => $server->id, 'character_name' => 'hero', 'money_amount' => $minimum - 1];
-        $this->actingAs($user, 'api')->postJson('/api/gem/orders', $payload)
+        \Laravel\Passport\Passport::actingAs($user, ['profile:read', 'profile:write']);
+        $this->postJson('/api/gem/orders', $payload)
             ->assertUnprocessable()->assertJsonValidationErrors('money_amount');
         $this->assertSame(100000, (int) $user->fresh()->balance);
         $this->assertDatabaseCount('gem_transactions', 0);

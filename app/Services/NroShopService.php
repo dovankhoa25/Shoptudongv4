@@ -98,11 +98,12 @@ class NroShopService
 
     public function purchase(User $buyer, int $listingId, string $name, int $server, string $key): int
     {
+        $name = mb_strtolower(trim($name), 'UTF-8');
         return DB::transaction(function () use ($buyer, $listingId, $name, $server, $key) {
             $buyer = User::whereKey($buyer->id)->lockForUpdate()->firstOrFail();
             $existing = DB::table('item_orders')->where(['buyer_id' => $buyer->id, 'request_key' => $key])->first();
             if ($existing) {
-                self::require($existing->listing_id == $listingId && $existing->recipient_name === $name && $existing->server_id == $server, 'Mã yêu cầu đã được dùng cho đơn khác.');
+                self::require($existing->listing_id == $listingId && mb_strtolower(trim($existing->recipient_name), 'UTF-8') === $name && $existing->server_id == $server, 'Mã yêu cầu đã được dùng cho đơn khác.');
                 return $existing->id;
             }
             $listing = DB::table('item_listings')->where('id', $listingId)->first(); abort_unless($listing, 404);

@@ -11,6 +11,7 @@ class NroReceivingService
 {
     public function start(User $user, int $id, array $v): int
     {
+        if ($v['mode'] === 'manual') $v['recipientName'] = mb_strtolower(trim($v['recipientName']), 'UTF-8');
         return DB::transaction(function () use ($user, $id, $v) {
             // Lock the buyer first, matching purchase lock ordering.
             User::whereKey($user->id)->lockForUpdate()->firstOrFail();
@@ -66,7 +67,7 @@ class NroReceivingService
 
     private function sameRequest(object $session,array $v): bool {
         if ($session->mode !== $v['mode']) return false;
-        if ($v['mode']==='manual') return trim($v['recipientName']) === $session->recipient_name;
+        if ($v['mode']==='manual') return mb_strtolower(trim($v['recipientName']), 'UTF-8') === mb_strtolower(trim($session->recipient_name), 'UTF-8');
         if (!$session->receiver_credentials) return true;
         $login=json_decode(Crypt::decryptString($session->receiver_credentials),true);
         return trim($v['username']) === $login['username'] && hash_equals($login['password'],$v['password']);

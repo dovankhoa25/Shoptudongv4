@@ -285,7 +285,7 @@ class ChatOutboundConversationTest extends TestCase
             AppPermission::ChatsView,
             AppPermission::ChatsReply,
         ]);
-        $ctv->update(['username' => 'lookup_staff']);
+        $ctv->update(['email' => 'lookup_staff@example.test']);
         $matching = User::factory()->create([
             'username' => 'khach_can_tim',
             'email' => 'lookup@example.test',

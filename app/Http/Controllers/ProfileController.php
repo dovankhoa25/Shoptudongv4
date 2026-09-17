@@ -37,6 +37,18 @@ class ProfileController extends Controller
 
         $request->user()->save();
 
+        $request->user()->authProviders()->where('provider', 'password')->update([
+            'provider_email' => $request->user()->email,
+        ]);
+
+        \App\Models\UserSecurityLog::create([
+            'user_id' => $request->user()->id,
+            'event' => 'profile_updated',
+            'ip_address' => $request->ip(),
+            'user_agent' => $request->userAgent(),
+            'meta' => ['changed_fields' => array_keys($request->validated()), 'channel' => 'web'],
+        ]);
+
         return Redirect::route('profile.edit');
     }
 

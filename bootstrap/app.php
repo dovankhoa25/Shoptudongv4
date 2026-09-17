@@ -30,10 +30,12 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->prepend(\App\Http\Middleware\StartTrafficTiming::class);
 
         $middleware->web(append: [
+            \Illuminate\Session\Middleware\AuthenticateSession::class,
             \App\Http\Middleware\HandleInertiaRequests::class,
             \Illuminate\Http\Middleware\AddLinkHeadersForPreloadedAssets::class,
         ]);
         $middleware->alias([
+            'auth' => \App\Http\Middleware\Authenticate::class,
             'permission' => \App\Http\Middleware\RequirePermission::class,
             'https.required' => \App\Http\Middleware\RequireHttps::class,
             'app' => \App\Http\Middleware\CheckApiAppKey::class,

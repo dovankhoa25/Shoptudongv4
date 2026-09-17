@@ -31,16 +31,21 @@ class ServiceOrderController extends Controller
 
         try {
             // Lấy service
-            $service = Service::findOrFail($validated['service_id']);
+            $service = Service::query()->lockForUpdate()->findOrFail($validated['service_id']);
+            if (! $service->status || ! is_numeric($service->default_price) || $service->default_price < 0) {
+                throw ValidationException::withMessages(['service_id' => 'Dịch vụ hiện không khả dụng.']);
+            }
 
             // Kiểm tra số dư
             if ($user->balance < $service->default_price) {
+                DB::rollBack();
                 return response()->json([
                     'success' => false,
                     'message' => 'Số dư không đủ để đặt dịch vụ này.',
                 ], 400);
             }
             if ($user->roles()->exists()) {
+                DB::rollBack();
                 return response()->json(['message' => 'Bạn Là Cộng tác viên không được mua nick nhé'], 403);
             }
 
@@ -138,7 +143,7 @@ class ServiceOrderController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => $e->getMessage(),
+                'message' => $e instanceof ValidationException ? $e->getMessage() : 'Không thể đặt dịch vụ. Vui lòng thử lại.',
             ], 422);
         }
     }

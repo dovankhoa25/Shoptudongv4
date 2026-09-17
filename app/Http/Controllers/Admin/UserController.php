@@ -90,7 +90,7 @@ class UserController extends Controller
     public function store(Request $request, TransactionService $transactions): JsonResponse
     {
         $data = $request->validate([
-            'username' => ['required', 'string', 'max:191', 'unique:users,username'],
+            'username' => ['required', 'string', 'max:191', new \App\Rules\AccountUsername, 'unique:users,username'],
             'chat_display_name' => ['nullable', 'string', 'max:80'],
             'email' => ['nullable', 'string', 'email', 'max:191', 'unique:users,email'],
             'password' => ['required', 'string', 'min:6'],
@@ -156,7 +156,7 @@ class UserController extends Controller
         $this->authorize('update', $user);
 
         $data = $request->validate([
-            'username' => ['required', 'string', 'max:191', Rule::unique('users', 'username')->ignore($user->id)],
+            'username' => ['sometimes', 'required', 'string', new \App\Rules\AccountUsername($user->username)],
             'chat_display_name' => ['nullable', 'string', 'max:80'],
             'email' => ['nullable', 'string', 'email', 'max:191', Rule::unique('users', 'email')->ignore($user->id)],
             'password' => ['nullable', 'string', 'min:6'],
@@ -164,7 +164,7 @@ class UserController extends Controller
         ]);
 
         $user->fill([
-            'username' => $data['username'],
+            'username' => $user->username,
             'chat_display_name' => $this->normalizeChatDisplayName($data['chat_display_name'] ?? null),
             'email' => $data['email'] ?? null,
             'avatar' => $data['avatar'] ?? null,
@@ -175,6 +175,10 @@ class UserController extends Controller
         }
 
         $user->save();
+
+        if ($user->wasChanged('password')) {
+            app(\App\Services\ApiTokenService::class)->revokeAll($user, 'admin_password_changed');
+        }
 
         // Giữ đồng bộ hồ sơ đăng nhập bằng mật khẩu nếu username/email thay đổi
         $passwordProvider = $user->authProviders()->where('provider', 'password')->first();
@@ -319,6 +323,9 @@ class UserController extends Controller
             'locked_reason' => $data['reason'],
             'locked_by' => $request->user()->id,
         ])->save();
+
+        // Re-applying a ban must also revoke legacy tokens, even when status is unchanged.
+        app(\App\Services\ApiTokenService::class)->revokeAll($user, 'account_locked');
 
         return response()->json(['message' => 'Đã khóa tài khoản.']);
     }

@@ -56,7 +56,7 @@ class UserController extends Controller
     {
         $user = $request->user();
         $data = $request->validate([
-            'username' => ['sometimes', 'string', 'min:3', 'max:191', Rule::unique('users')->ignore($user->id)],
+            'username' => ['sometimes', 'required', 'string', new \App\Rules\AccountUsername($user->username)],
             'email' => ['sometimes', 'nullable', 'email', 'max:191', Rule::unique('users')->ignore($user->id)],
             'avatar' => ['sometimes', 'nullable', 'url', 'max:2048'],
         ]);
@@ -369,7 +369,7 @@ class UserController extends Controller
 
             return response()->json([
                 'message' => 'An error occurred while fetching random history',
-                'error' => $e->getMessage(),
+                'error' => 'Internal server error',
             ], 500);
         }
     }
@@ -401,7 +401,7 @@ class UserController extends Controller
 
             return response()->json([
                 'message' => 'An error occurred while fetching stats',
-                'error' => $e->getMessage(),
+                'error' => 'Internal server error',
             ], 500);
         }
     }

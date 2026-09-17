@@ -59,6 +59,30 @@ class User extends Authenticatable implements HasMedia
         'remember_token',
     ];
 
+    protected static function booted(): void
+    {
+        static::creating(function (self $user): void {
+            \Illuminate\Support\Facades\Validator::make(['username' => $user->username], [
+                'username' => ['required', 'string', 'max:191', new \App\Rules\AccountUsername],
+            ])->validate();
+        });
+        static::updating(function (self $user): void {
+            if ($user->isDirty('username')) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'username' => 'Tên đăng nhập không được phép thay đổi.',
+                ]);
+            }
+        });
+
+        static::updated(function (self $user): void {
+            if ($user->wasChanged(['status', 'locked_until']) && $user->isLocked()) {
+                app(\App\Services\ApiTokenService::class)->revokeAll(
+                    $user, 'account_locked',
+                );
+            }
+        });
+    }
+
     protected function casts(): array
     {
         return [

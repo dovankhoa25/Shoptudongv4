@@ -15,7 +15,7 @@ class AdminGoogleAuthenticationTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_existing_authorized_admin_can_login_with_google(): void
+    public function test_previously_linked_authorized_admin_can_login_with_google(): void
     {
         $admin = User::factory()->create([
             'email' => 'admin@example.com',
@@ -23,6 +23,11 @@ class AdminGoogleAuthenticationTest extends TestCase
         ]);
         Permission::findOrCreate(PermissionName::DashboardView->value, 'web');
         $admin->givePermissionTo(PermissionName::DashboardView->value);
+        $admin->authProviders()->create([
+            'provider' => 'google',
+            'provider_id' => 'google-admin-id',
+            'is_enabled' => true,
+        ]);
         $this->mockGoogleUser('google-admin-id', 'admin@example.com');
 
         $this->get(route('social.google.callback'))

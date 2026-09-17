@@ -69,7 +69,7 @@ Route::get('/chat/media/{media:uuid}', ChatMediaController::class)
     ->middleware(['signed', 'throttle:600,1'])
     ->name('chat.media.show');
 
-Route::middleware('auth')->group(function () {
+Route::middleware(['auth', 'unlocked.user'])->group(function () {
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
