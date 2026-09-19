@@ -59,6 +59,11 @@ class ChatRealtimeWebLeaseTest extends TestCase
         config()->set('session.lifetime', 120);
         $this->freezeTime();
 
+        // Admin approval now resolves its default through the shared settings cache.
+        Schema::create('settings', function (Blueprint $table): void {
+            $table->string('key')->primary();
+            $table->text('value')->nullable();
+        });
         Schema::create('users', function (Blueprint $table): void {
             $table->id();
             $table->string('status');

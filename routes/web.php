@@ -175,6 +175,7 @@ Route::prefix('admin')
             ->middleware(Permission::middleware(Permission::AccessSecurityManage))->group(function () {
                 $controller = \App\Http\Controllers\Admin\AccessSecurityController::class;
                 Route::get('/', [$controller, 'index'])->name('index');
+                Route::post('/policy', [$controller, 'policy'])->name('policy');
                 Route::post('/devices/{device}/approve', [$controller, 'approve'])->name('approve');
                 Route::post('/devices/{device}/revoke', [$controller, 'revoke'])->name('revoke');
                 Route::post('/blocks', [$controller, 'block'])->name('block');
@@ -417,7 +418,7 @@ Route::prefix('admin')
                 ->name('index');
         });
 
-       Route::prefix('services')->name('services.')->middleware(['auth', 'throttle:10,1'])->group(function () {
+       Route::prefix('services')->name('services.')->group(function () {
             Route::get('/', [ServiceController::class, 'index'])
                 ->middleware(Permission::middleware(Permission::ServicesView, Permission::ServicesManage))
                 ->name('index');

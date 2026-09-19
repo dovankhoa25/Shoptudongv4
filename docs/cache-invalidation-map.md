@@ -25,7 +25,7 @@
 | `public:nro-metadata`: server / bộ lọc | 60 / 900 giây | Server đổi; bộ lọc có key chứa hash overrides + mtime catalog; chỉ đọc file catalog khi thực sự cần dựng bộ lọc |
 | `admin:analytics` | 120 giây | `stats:compute` hoàn tất; tên Category hoặc username/email User đổi; key riêng theo ngày + toàn hệ thống hoặc seller ID |
 | `frontend-clients:allowed-origins:v1` | 300 giây | FrontendClientController tạo/sửa/bật/tắt client gọi registry forget |
-| `internal:settings` | 3600 giây | Setting::set đổi generation sau commit và xóa key `settings` cũ; chống producer cũ ghi lại giá trị tồn tại vô hạn |
+| `internal:settings` | 3600 giây | Setting::set đổi generation sau commit và xóa key `settings` cũ; gồm công tắc `admin_access_approval_required` dùng chung cho login/middleware/SSO/realtime; chống producer cũ ghi lại giá trị tồn tại vô hạn |
 | `admin-live:state:{viewId}` | 3600 giây | Snapshot/refresh thay state; hết quyền/credential thì xóa view và state; view hết hạn bị dọn; mỗi lượt flush mới đọc lại dữ liệu |
 | `access-security:ip-blocks:v1:{DB-scope}:rules` | 60 giây mặc định | AccessIpBlock saved/deleted đổi generation và xóa snapshot sau commit ngoài cùng; rollback giữ cache cũ; thời hạn từng lệnh chặn vẫn được xét ở mọi lần đọc |
 | Các khóa lease, chống gửi lặp, maintenance | Tùy chức năng | Giữ quy tắc hiện có: ví dụ maintenance 15 giây, balance revision 3600 giây; không dùng làm cache dữ liệu public |

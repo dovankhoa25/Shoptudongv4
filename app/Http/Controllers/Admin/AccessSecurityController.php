@@ -43,12 +43,13 @@ class AccessSecurityController extends Controller
         ]);
     }
 
-    public function index(Request $request)
+    public function index(Request $request, AdminAccessService $service)
     {
         $data = $request->validate(['status' => ['nullable', 'in:pending,approved,revoked'],
             'page' => ['nullable', 'integer', 'min:1'], 'block_page' => ['nullable', 'integer', 'min:1']]);
 
         return response()->json([
+            'admin_approval_required' => $service->approvalRequired(),
             'devices' => AdminAccessDevice::with('user:id,username')
                 ->when($data['status'] ?? null, fn ($q, $status) => $q->where('status', $status))
                 ->latest('id')->paginate(20),
@@ -57,6 +58,19 @@ class AccessSecurityController extends Controller
                 ->latest('id')->paginate(20, ['*'], 'block_page'),
             'current_ip' => $request->ip(),
             'ip_source' => $request->attributes->get('security_ip_source', 'peer'),
+        ]);
+    }
+
+    public function policy(Request $request, AdminAccessService $service)
+    {
+        $data = $request->validate(['enabled' => ['required', 'boolean']]);
+        $enabled = (bool) $data['enabled'];
+        $service->setApprovalRequired($enabled, $request);
+
+        return response()->json([
+            'admin_approval_required' => $enabled,
+            'message' => $enabled ? 'Đã bật duyệt đăng nhập admin. IP và trình duyệt hiện tại đã được duyệt.'
+                : 'Đã tắt duyệt đăng nhập admin. Các lệnh chặn IP và khóa tài khoản vẫn có hiệu lực.',
         ]);
     }
 

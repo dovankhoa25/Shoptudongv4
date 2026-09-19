@@ -16,8 +16,8 @@ class EnsureSsoAdmin
             'SSO administrator access is required.',
         );
 
-        abort_if(config('access_security.admin_approval_required')
-            && ! app(\App\Services\AdminAccessService::class)->approved($request->user(), $request),
+        $access = app(\App\Services\AdminAccessService::class);
+        abort_if($access->approvalRequired() && ! $access->approved($request->user(), $request),
             403, 'IP và thiết bị quản trị chưa được duyệt.');
 
         return $next($request);

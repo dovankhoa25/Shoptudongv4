@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import axios from 'axios';
-import { Alert, Button, ConfigProvider, Form, Input, InputNumber, Modal, Select, Table, Tabs, Tag, theme } from 'antd';
+import { Alert, Button, ConfigProvider, Form, Input, InputNumber, Modal, Select, Switch, Table, Tabs, Tag, theme } from 'antd';
 import { useTheme } from '@/Providers/ThemeProvider';
 type Row = Record<string, any>;
 const date = (value?: string) => value ? new Date(value).toLocaleString('vi-VN') : '—';
@@ -8,7 +8,7 @@ const statuses: Record<string, string> = { pending: 'Chờ duyệt', approved: '
 
 export default function AccessSecurityModal({ onClose }: { onClose: () => void }) {
     const { darkMode } = useTheme();
-    const [data, setData] = useState<{ devices: { data: Row[]; total: number }; blocks: { data: Row[]; total: number }; current_ip: string } | null>(null);
+    const [data, setData] = useState<{ devices: { data: Row[]; total: number }; blocks: { data: Row[]; total: number }; current_ip: string; admin_approval_required: boolean } | null>(null);
     const [status, setStatus] = useState('pending');
     const [page, setPage] = useState(1);
     const [blockPage, setBlockPage] = useState(1);
@@ -30,6 +30,9 @@ export default function AccessSecurityModal({ onClose }: { onClose: () => void }
         try {
             const response = remove ? await axios.delete(url) : await axios.post(url, body);
             setNotice(response.data.message);
+            if (typeof response.data.admin_approval_required === 'boolean') {
+                setData(current => current ? { ...current, admin_approval_required: response.data.admin_approval_required } : current);
+            }
             if (body?.network) form.resetFields();
             await load();
         } catch (e: any) { setError(Object.values(e.response?.data?.errors || {}).flat().join(' ') || e.response?.data?.message || 'Thao tác thất bại.'); }
@@ -41,6 +44,20 @@ export default function AccessSecurityModal({ onClose }: { onClose: () => void }
             {notice && <Alert className="mb-3" type="success" message={notice} />}
             <Tabs items={[
                 { key: 'devices', label: 'Duyệt IP và thiết bị quản trị', children: <>
+                    <div className="mb-3 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                        <div className="flex items-center justify-between gap-3">
+                            <b>Duyệt đăng nhập admin</b>
+                            <Switch aria-label="Duyệt đăng nhập admin" checked={data?.admin_approval_required ?? true}
+                                checkedChildren="Bật" unCheckedChildren="Tắt" loading={busy}
+                                disabled={!data || loading || busy}
+                                onChange={enabled => void mutate('/admin/access-security/policy', { enabled })} />
+                        </div>
+                        <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">
+                            Khi bật, đăng nhập từ IP hoặc trình duyệt mới phải được duyệt. IP và trình duyệt đang dùng của người bật được duyệt để tiếp tục quản trị.
+                        </p>
+                    </div>
+                    {data && !data.admin_approval_required && <Alert className="mb-3" type="warning"
+                        message="Đang tắt duyệt đăng nhập admin: IP và trình duyệt mới có thể đăng nhập sau khi xác thực tài khoản. Chặn IP và khóa tài khoản vẫn có hiệu lực; lịch sử duyệt được giữ nguyên." />}
                     <Alert className="mb-3" type="info" message="Chỉ duyệt khi đã xác nhận với chủ tài khoản. Mỗi lần duyệt gắn với một trình duyệt và đúng IP, có hiệu lực 90 ngày. Sau khi duyệt, người dùng đăng nhập lại." />
                     <div className="mb-3 flex gap-2"><Select value={status} onChange={value => { setStatus(value); setPage(1); }} options={[
                         { value: 'pending', label: 'Chờ duyệt' }, { value: 'approved', label: 'Đã duyệt' }, { value: 'revoked', label: 'Đã thu hồi' }, { value: '', label: 'Tất cả' },

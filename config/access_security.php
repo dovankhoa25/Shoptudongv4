@@ -1,6 +1,7 @@
 <?php
 
 return [
+    // Initial default only; the admin switch in settings takes precedence once saved.
     'admin_approval_required' => (bool) env('ADMIN_ACCESS_APPROVAL_REQUIRED', true),
     'device_cookie' => 'admin_access_device',
     'device_days' => 90,

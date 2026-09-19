@@ -4,12 +4,15 @@
 
 - **Quản lý người dùng → Chi tiết**: xem đăng nhập thành công/thất bại, IP, kênh, nguồn IP, User-Agent, các IP đã dùng, sự kiện bảo mật và phiên API. Lịch sử đăng nhập có phân trang và lọc IP. Ô tìm người dùng cũng nhận địa chỉ IP đầy đủ đã có trong lịch sử.
 - **Quản lý người dùng → Duyệt thiết bị / Chặn IP**: duyệt/thu hồi một trình duyệt tại một IP cụ thể; chặn một IP hoặc CIDR IPv4/IPv6; chọn số giờ hoặc để trống để chặn đến khi mở thủ công.
+- Trong tab **Duyệt IP và thiết bị quản trị**, công tắc **Duyệt đăng nhập admin** bật/tắt việc yêu cầu duyệt IP và trình duyệt mới. Cần quyền `access-security.manage`. Khi bật từ giao diện, IP và trình duyệt hiện tại của người bật được duyệt để tránh tự khóa; các phiên khác chưa được duyệt bị chặn từ yêu cầu tiếp theo. Tắt không xóa lịch sử/yêu cầu duyệt và không tắt kiểm tra mật khẩu, khóa tài khoản hoặc chặn IP tại HTTP. Mọi lần thay đổi có sự kiện `admin_access_policy_changed` ghi người thao tác, IP và trạng thái trước/sau.
 - Quyền đọc lịch sử: `users.view`. Quyền duyệt và chặn: `access-security.manage`. Migration chỉ cấp thêm quyền mới cho các role `admin`/`super-admin` đang tồn tại, không đồng bộ lại các quyền khác. Role tùy chỉnh cần được cấp quyền thích hợp.
 - CIDR được chuẩn hóa, ví dụ `198.51.100.25/24` thành `198.51.100.0/24`. Không tự suy ra dải từ một IP. Từ chối `/0` và dải chứa IP quản trị đang thực hiện thao tác.
 
 ## Chính sách đăng nhập đã chọn
 
-Mặc định `ADMIN_ACCESS_APPROVAL_REQUIRED=true`. Áp dụng cho tài khoản có vai trò/quyền quản trị, kể cả cộng tác viên có quyền và ID quản trị SSO được cấu hình. Người mua thông thường không phải xin duyệt thiết bị.
+Mặc định ban đầu lấy từ `ADMIN_ACCESS_APPROVAL_REQUIRED=true`. Sau lần lưu công tắc hoặc lệnh console `enable`/`disable`, giá trị `settings.admin_access_approval_required` được ưu tiên hơn `.env`. Áp dụng cho tài khoản có vai trò/quyền quản trị, kể cả cộng tác viên có quyền và ID quản trị SSO được cấu hình. Người mua thông thường không phải xin duyệt thiết bị.
+
+Công tắc dùng `Setting::get/set` và nhóm cache sẵn có `internal:settings`, tự đổi generation sau commit; không thêm bảng/key cache riêng và không flush Redis. Middleware, password/Google login, SSO và realtime đọc cùng chính sách; worker không giữ giá trị trong bộ nhớ giữa các lượt xử lý. Cache đọc lỗi thì đọc setting trực tiếp từ DB; giá trị không hợp lệ yêu cầu duyệt. Không cần migration cho phần công tắc này; triển khai source và `public/build` mới, cập nhật route/config cache theo quy trình hiện có và restart queue worker. Không cần restart mỗi lần bật/tắt.
 
 Sau khi xác minh đúng mật khẩu hoặc tài khoản Google đã liên kết, đăng nhập từ **IP mới hoặc cookie trình duyệt mới** tạo yêu cầu chờ duyệt. Chưa tạo phiên đăng nhập quản trị. Không tự đổi tài khoản sang `banned`, tránh việc một lần đăng nhập lạ khóa luôn mọi thiết bị của chủ tài khoản. Sau khi duyệt, đăng nhập lại trên đúng trình duyệt đó.
 
@@ -49,7 +52,15 @@ Thu hồi khẩn cấp:
 php artisan security:admin-access revoke 123
 ```
 
-Lệnh console là đường khôi phục khi mọi admin đều đổi IP/mất cookie. Không có URL bỏ qua xét duyệt. Tài khoản đang bị khóa không được duyệt cho đến khi mở khóa tài khoản theo quy trình hiện có. `ADMIN_ACCESS_APPROVAL_REQUIRED=false` chỉ dành cho việc chủ động tắt chính sách trong cấu hình server; không cần tắt để duyệt thiết bị đầu tiên.
+Lệnh console là đường khôi phục khi mọi admin đều đổi IP/mất cookie. Không có URL bỏ qua xét duyệt. Tài khoản đang bị khóa không được duyệt cho đến khi mở khóa tài khoản theo quy trình hiện có. Không cần tắt chính sách để duyệt thiết bị đầu tiên. Nếu cần xem hoặc chủ động đổi toàn bộ chính sách từ SSH/Terminal đáng tin cậy:
+
+```sh
+php artisan security:admin-access status
+php artisan security:admin-access disable
+php artisan security:admin-access enable
+```
+
+`enable` qua console không tự duyệt thiết bị nào; dùng `list` và `approve <id>` khi cần. `.env` chỉ còn là mặc định khi chưa lưu setting, vì vậy không dùng việc đổi `.env` để ghi đè một công tắc đã lưu. Nên dùng giao diện/console để tự làm mới cache; sửa bảng `settings` bằng SQL trực tiếp không phát invalidation.
 
 ## IP thật qua proxy và frontend
 

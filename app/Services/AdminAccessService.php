@@ -4,18 +4,62 @@ namespace App\Services;
 
 use App\Models\AdminAccessDevice;
 use App\Models\LoginAttempt;
+use App\Models\Setting;
 use App\Models\User;
 use App\Models\UserSecurityLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cookie;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class AdminAccessService
 {
+    public const APPROVAL_SETTING = 'admin_access_approval_required';
+
+    public function approvalRequired(): bool
+    {
+        // Use the existing shared settings cache; do not memoize across worker requests.
+        $default = config('access_security.admin_approval_required', true);
+        try {
+            $value = Setting::get(self::APPROVAL_SETTING, $default);
+        } catch (\Throwable) {
+            // A cache outage must not switch off the policy or prevent a DB fallback.
+            $value = Setting::query()->useWritePdo()->where('key', self::APPROVAL_SETTING)->value('value') ?? $default;
+        }
+
+        // Only an explicit saved zero (or the boolean config default) disables approval.
+        // Empty/malformed values must not accidentally switch off access protection.
+        return ! in_array($value, [false, 0, '0'], true);
+    }
+
+    public function setApprovalRequired(bool $enabled, ?Request $request = null): void
+    {
+        $previous = $this->approvalRequired();
+        $actor = $request?->user();
+        DB::transaction(function () use ($enabled, $previous, $request, $actor): void {
+            // The authorized operator explicitly trusts this browser when enabling the policy.
+            // Other browsers/sessions remain subject to approval on their next request.
+            if ($enabled && $actor && ! $this->approved($actor, $request)) {
+                $device = AdminAccessDevice::firstOrCreate([
+                    'user_id' => $actor->id, 'device_hash' => $this->deviceHash($request, true),
+                    'ip_address' => $request->ip(),
+                ], ['user_agent' => Str::limit((string) $request->userAgent(), 1000, ''), 'last_seen_at' => now()]);
+                $this->approve($device, $actor);
+            }
+            Setting::set(self::APPROVAL_SETTING, $enabled ? '1' : '0');
+            UserSecurityLog::create([
+                'user_id' => $actor?->id, 'event' => 'admin_access_policy_changed',
+                'ip_address' => $request?->ip(),
+                'meta' => ['enabled' => $enabled, 'previous_enabled' => $previous,
+                    'actor_id' => $actor?->id, 'source' => $actor ? 'admin' : 'console'],
+            ]);
+        });
+    }
+
     public function applies(User $user): bool
     {
-        return (bool) config('access_security.admin_approval_required')
+        return $this->approvalRequired()
             && ($user->roleLevel() > 0 || $user->getAllPermissions()->isNotEmpty()
                 || in_array((string) $user->id, config('sso.admin_user_ids', []), true));
     }

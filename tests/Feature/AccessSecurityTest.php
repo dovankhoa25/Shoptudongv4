@@ -7,6 +7,7 @@ use App\Models\AdminAccessDevice;
 use App\Models\ChatConversation;
 use App\Models\ChatMessage;
 use App\Models\LoginAttempt;
+use App\Models\Setting;
 use App\Models\User;
 use App\Rules\DecodableImage;
 use App\Services\AdminAccessService;
@@ -69,6 +70,106 @@ class AccessSecurityTest extends TestCase
         $this->assertDatabaseHas('admin_access_devices', ['user_id' => $admin->id, 'status' => 'pending', 'ip_address' => $this->ip]);
         $this->assertDatabaseHas('login_attempts', ['user_id' => $admin->id, 'is_success' => false, 'failure_reason' => 'admin_access_pending']);
         $this->assertSame('active', $admin->fresh()->status);
+    }
+
+    public function test_admin_can_disable_policy_without_deleting_existing_approvals(): void
+    {
+        $admin = $this->admin();
+        $device = $this->approved($admin);
+        $this->actingAs($admin)->withCookie(config('access_security.device_cookie'), $this->token);
+        $this->getJson('/admin/access-security')->assertOk()->assertJsonPath('admin_approval_required', true);
+        $this->postJson('/admin/access-security/policy', ['enabled' => false])->assertOk()
+            ->assertJsonPath('admin_approval_required', false);
+        $this->getJson('/admin/access-security')->assertOk()->assertJsonPath('admin_approval_required', false);
+        $this->assertSame('approved', $device->fresh()->status);
+        $this->assertDatabaseHas('settings', ['key' => AdminAccessService::APPROVAL_SETTING, 'value' => '0']);
+        $event = \App\Models\UserSecurityLog::where('event', 'admin_access_policy_changed')->sole();
+        $this->assertSame($admin->id, $event->user_id);
+        $this->assertFalse($event->meta['enabled']);
+        $this->assertTrue($event->meta['previous_enabled']);
+    }
+
+    public function test_enabling_from_an_unknown_browser_keeps_operator_access_but_blocks_other_browsers(): void
+    {
+        Setting::set(AdminAccessService::APPROVAL_SETTING, '0');
+        $admin = $this->admin();
+        $this->actingAs($admin);
+        $name = config('access_security.device_cookie');
+        $response = $this->postJson('/admin/access-security/policy', ['enabled' => true]);
+        $response->assertOk()->assertJsonPath('admin_approval_required', true)->assertCookie($name);
+        $token = $response->getCookie($name)->getValue();
+        $this->assertDatabaseHas('admin_access_devices', ['user_id' => $admin->id,
+            'device_hash' => hash('sha256', $token), 'ip_address' => $this->ip, 'status' => 'approved']);
+        $this->withCookie($name, $token)->getJson('/admin/access-security')->assertOk();
+        $this->withCookie($name, str_repeat('b', 64))->getJson('/admin/access-security')->assertForbidden();
+        $this->assertGuest();
+    }
+
+    public function test_disabled_policy_allows_verified_admin_login_but_still_checks_credentials_and_account_lock(): void
+    {
+        Setting::set(AdminAccessService::APPROVAL_SETTING, '0');
+        $admin = $this->admin();
+        $this->postJson('/login', ['username' => $admin->username, 'password' => 'wrong'])->assertUnprocessable();
+        $this->assertGuest();
+        $admin->update(['status' => 'banned']);
+        $this->postJson('/login', ['username' => $admin->username, 'password' => 'password'])->assertUnprocessable();
+        $this->assertGuest();
+        $admin->update(['status' => 'active']);
+        $this->post('/login', ['username' => $admin->username, 'password' => 'password'])->assertRedirect('/admin');
+        $this->assertAuthenticatedAs($admin);
+        $this->assertDatabaseCount('admin_access_devices', 0);
+    }
+
+    public function test_disabled_approval_does_not_disable_ip_blocks(): void
+    {
+        Setting::set(AdminAccessService::APPROVAL_SETTING, '0');
+        $admin = $this->admin();
+        AccessIpBlock::create(['network' => '203.0.113.0/24', 'reason' => 'test']);
+        $this->postJson('/login', ['username' => $admin->username, 'password' => 'password'])->assertForbidden();
+        $this->assertGuest();
+    }
+
+    public function test_policy_mutation_requires_security_permission_and_valid_boolean(): void
+    {
+        Setting::set(AdminAccessService::APPROVAL_SETTING, '0');
+        $this->actingAs(User::factory()->create());
+        $this->postJson('/admin/access-security/policy', ['enabled' => true])->assertForbidden();
+        $this->actingAs($this->admin());
+        $this->postJson('/admin/access-security/policy', ['enabled' => 'not-a-boolean'])->assertUnprocessable();
+        $this->postJson('/admin/access-security/policy', [])->assertUnprocessable();
+        $this->assertFalse(app(AdminAccessService::class)->approvalRequired());
+    }
+
+    public function test_policy_uses_shared_settings_cache_and_updates_existing_service_instances(): void
+    {
+        config(['access_security.admin_approval_required' => false]);
+        $service = app(AdminAccessService::class);
+        $this->assertFalse($service->approvalRequired());
+        $service->setApprovalRequired(true);
+        $this->assertTrue($service->approvalRequired());
+        \Illuminate\Support\Facades\DB::enableQueryLog();
+        $this->assertTrue($service->approvalRequired());
+        $this->assertSame([], \Illuminate\Support\Facades\DB::getQueryLog());
+        \Illuminate\Support\Facades\DB::disableQueryLog();
+        $service->setApprovalRequired(false);
+        $this->assertFalse($service->approvalRequired());
+        Setting::set(AdminAccessService::APPROVAL_SETTING, 'invalid');
+        $this->assertTrue($service->approvalRequired());
+        Setting::set(AdminAccessService::APPROVAL_SETTING, '');
+        $this->assertTrue($service->approvalRequired());
+    }
+
+    public function test_console_can_recover_policy_and_report_current_state(): void
+    {
+        $this->artisan('security:admin-access', ['action' => 'disable'])
+            ->expectsOutput('Admin login approval: DISABLED')->assertSuccessful();
+        $this->assertFalse(app(AdminAccessService::class)->approvalRequired());
+        $this->artisan('security:admin-access', ['action' => 'enable'])
+            ->expectsOutput('Admin login approval: ENABLED')->assertSuccessful();
+        $this->artisan('security:admin-access', ['action' => 'status'])
+            ->expectsOutput('Admin login approval: ENABLED')->assertSuccessful();
+        $this->assertTrue(app(AdminAccessService::class)->approvalRequired());
+        $this->assertDatabaseCount('admin_access_devices', 0);
     }
 
     public function test_wrong_password_does_not_create_an_approval_request(): void
@@ -136,8 +237,15 @@ class AccessSecurityTest extends TestCase
         $this->assertDatabaseCount('admin_access_devices', 0);
     }
 
-    public function test_google_cannot_bypass_pending_admin_device(): void
+    public static function approvalModes(): array
     {
+        return ['enabled' => [true], 'disabled' => [false]];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('approvalModes')]
+    public function test_google_login_follows_the_current_approval_policy(bool $enabled): void
+    {
+        Setting::set(AdminAccessService::APPROVAL_SETTING, $enabled ? '1' : '0');
         $admin = $this->admin();
         $admin->authProviders()->create(['provider' => 'google', 'provider_id' => 'known-google', 'is_enabled' => true]);
         $social = (new SocialUser)->setRaw(['sub' => 'known-google', 'email' => $admin->email])
@@ -145,6 +253,13 @@ class AccessSecurityTest extends TestCase
         $provider = \Mockery::mock();
         $provider->shouldReceive('user')->once()->andReturn($social);
         Socialite::shouldReceive('driver')->with('google')->once()->andReturn($provider);
+        if (! $enabled) {
+            $this->getJson('/auth/google/callback')->assertRedirect();
+            $this->assertAuthenticatedAs($admin);
+            $this->assertDatabaseCount('admin_access_devices', 0);
+
+            return;
+        }
         $this->getJson('/auth/google/callback')->assertUnprocessable();
         $this->assertGuest();
         $this->assertDatabaseHas('login_attempts', ['user_id' => $admin->id, 'provider' => 'google', 'failure_reason' => 'admin_access_pending']);
@@ -231,7 +346,8 @@ class AccessSecurityTest extends TestCase
 
     public static function realtimeDenials(): array
     {
-        return ['revoked' => ['revoked'], 'expired' => ['expired'], 'ip_blocked' => ['ip_blocked']];
+        return ['revoked' => ['revoked'], 'expired' => ['expired'], 'ip_blocked' => ['ip_blocked'],
+            'policy_enabled' => ['policy_enabled']];
     }
 
     #[\PHPUnit\Framework\Attributes\DataProvider('realtimeDenials')]
@@ -242,6 +358,9 @@ class AccessSecurityTest extends TestCase
         Event::fake([\App\Events\AdminViewPatched::class, \App\Events\UserEvent::class, \App\Events\AdminEvent::class]);
         $admin = $this->admin();
         $device = $this->approved($admin);
+        if ($mode === 'policy_enabled') {
+            Setting::set(AdminAccessService::APPROVAL_SETTING, '0');
+        }
         $this->actingAs($admin)->withSession([
             \Illuminate\Support\Facades\Auth::guard('web')->getName() => $admin->id,
         ])->withCookie(config('session.cookie'), app('session')->getId())
@@ -250,9 +369,11 @@ class AccessSecurityTest extends TestCase
         $this->postJson('/admin/live-views/'.$id.'/sync')->assertOk();
         $this->assertAuthenticatedAs($admin);
         $this->assertDatabaseHas('chat_realtime_sessions', [
-            'user_id' => $admin->id, 'admin_access_device_id' => $device->id,
+            'user_id' => $admin->id, 'admin_access_device_id' => $mode === 'policy_enabled' ? null : $device->id,
         ]);
-        if ($mode === 'ip_blocked') {
+        if ($mode === 'policy_enabled') {
+            Setting::set(AdminAccessService::APPROVAL_SETTING, '1');
+        } elseif ($mode === 'ip_blocked') {
             AccessIpBlock::create(['network' => '203.0.113.0/24', 'reason' => 'Blocked by another admin']);
         } else {
             $device->update($mode === 'revoked' ? ['status' => 'revoked'] : ['expires_at' => now()->subMinute()]);
@@ -341,6 +462,10 @@ class AccessSecurityTest extends TestCase
         $user = User::factory()->create();
         config(['sso.admin_user_ids' => [(string) $user->id]]);
         Passport::actingAs($user, ['oauth-clients:manage']);
+        $this->getJson('/api/admin/oauth-clients')->assertForbidden();
+        Setting::set(AdminAccessService::APPROVAL_SETTING, '0');
+        $this->getJson('/api/admin/oauth-clients')->assertOk();
+        Setting::set(AdminAccessService::APPROVAL_SETTING, '1');
         $this->getJson('/api/admin/oauth-clients')->assertForbidden();
         $this->approved($user);
         $this->withCookie(config('access_security.device_cookie'), $this->token)->getJson('/api/admin/oauth-clients')->assertOk();

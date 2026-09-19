@@ -8,13 +8,21 @@ use Illuminate\Console\Command;
 
 class AdminAccessCommand extends Command
 {
-    protected $signature = 'security:admin-access {action=list : list, approve or revoke} {id? : Access request ID}';
+    protected $signature = 'security:admin-access {action=list : list, approve, revoke, status, enable or disable} {id? : Access request ID}';
 
-    protected $description = 'List or approve/revoke an admin device and exact IP from a trusted server console';
+    protected $description = 'Manage admin device approvals and the approval policy from a trusted server console';
 
     public function handle(AdminAccessService $service): int
     {
         $action = $this->argument('action');
+        if (in_array($action, ['status', 'enable', 'disable'], true)) {
+            if ($action !== 'status') {
+                $service->setApprovalRequired($action === 'enable');
+            }
+            $this->info('Admin login approval: '.($service->approvalRequired() ? 'ENABLED' : 'DISABLED'));
+
+            return self::SUCCESS;
+        }
         if ($action === 'list') {
             $this->table(['ID', 'User ID', 'Username', 'IP', 'Status', 'Last seen', 'User-Agent'],
                 AdminAccessDevice::with('user:id,username')->latest('id')->limit(100)->get()->map(fn ($row) => [
@@ -25,7 +33,7 @@ class AdminAccessCommand extends Command
             return self::SUCCESS;
         }
         if (! in_array($action, ['approve', 'revoke'], true) || ! $this->argument('id')) {
-            $this->error('Use list, approve <request-id> or revoke <request-id>.');
+            $this->error('Use list, approve <request-id>, revoke <request-id>, status, enable or disable.');
 
             return self::FAILURE;
         }
