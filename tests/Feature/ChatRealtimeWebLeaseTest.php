@@ -68,6 +68,7 @@ class ChatRealtimeWebLeaseTest extends TestCase
         Schema::create('chat_realtime_sessions', function (Blueprint $table): void {
             $table->id();
             $table->unsignedBigInteger('user_id');
+            $table->unsignedBigInteger('admin_access_device_id')->nullable();
             $table->char('credential_hash', 64)->unique();
             $table->text('session_locator');
             $table->dateTime('last_seen_at');

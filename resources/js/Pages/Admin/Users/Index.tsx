@@ -14,11 +14,12 @@ import UserFormModal from './UserFormModal';
 import UserPermissionModal from './UserPermissionModal';
 import LockUserModal from './LockUserModal';
 import BalanceAdjustmentModal from './BalanceAdjustmentModal';
+import AccessSecurityModal from './AccessSecurityModal';
 
 interface UsersPageProps extends PageProps {
     users: PaginatedData<IUser>;
     filters: { search?: string; role?: string; is_locked?: number };
-    can: { create: boolean };
+    can: { create: boolean; security: boolean };
 }
 
 const STATUS_META: Record<string, { label: string; className: string }> = {
@@ -41,6 +42,7 @@ export default function UserPage() {
     const [selectedUser, setSelectedUser] = useState<IUser | null>(null);
     const [modal, setModal] = useState<'form' | 'detail' | 'permission' | 'lock' | 'balance' | null>(null);
     const [unlockingId, setUnlockingId] = useState<number | null>(null);
+    const [securityOpen, setSecurityOpen] = useState(false);
 
     const { filters, loading, handleSearch, handleResetFilters, handlePageChange, setColumnFilters } = useTableFilters({
         routeName: 'admin.users.index',
@@ -152,6 +154,7 @@ export default function UserPage() {
 
     return (
         <>
+            {can.security && <div className="mb-3 flex justify-end"><button type="button" onClick={() => setSecurityOpen(true)} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white">Duyệt thiết bị / Chặn IP</button></div>}
             <DataTable<IUser>
                 storageKey="admin-users-table"
                 density="compact"
@@ -164,7 +167,7 @@ export default function UserPage() {
                 loading={loading}
                 searchValue={filters.search}
                 searchPreset="users"
-                searchPlaceholder="Tìm username, tên chat, email hoặc #ID chính xác..."
+                searchPlaceholder="Tìm username, tên chat, email, #ID hoặc IP đăng nhập..."
                 title="Quản lý người dùng"
                 description={`${users.meta.total.toLocaleString('vi-VN')} tài khoản trong hệ thống`}
                 addButtonText="Thêm người dùng"
@@ -206,6 +209,7 @@ export default function UserPage() {
             />
 
             {modal === 'form' && <UserFormModal user={selectedUser} onClose={close} />}
+            {securityOpen && <AccessSecurityModal onClose={() => setSecurityOpen(false)} />}
             {modal === 'detail' && selectedUser && <UserDetailModal user={selectedUser} onClose={close} />}
             {modal === 'permission' && selectedUser && <UserPermissionModal user={selectedUser} onClose={close} onSaved={reloadUsers} />}
             {modal === 'balance' && selectedUser && (

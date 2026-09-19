@@ -15,6 +15,7 @@ enum Permission: string
     case UsersLock = 'users.lock';
     case UsersManageRoles = 'users.manage-roles';
     case UsersAdjustBalance = 'users.adjust-balance';
+    case AccessSecurityManage = 'access-security.manage';
     case UserCategoriesManage = 'user-categories.manage';
 
     case RolesView = 'roles.view';

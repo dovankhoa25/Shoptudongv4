@@ -496,6 +496,8 @@ class ChatController extends Controller
                 'mimetypes:image/jpeg,image/png,image/webp',
                 'max:'.max(1, (int) config('chat.attachments.max_kilobytes', 5120)),
                 'dimensions:max_width=8000,max_height=8000',
+                new \App\Rules\DecodableImage,
+                new \App\Rules\DecodableImage,
             ],
         ]);
 

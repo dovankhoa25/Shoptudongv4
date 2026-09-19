@@ -34,7 +34,10 @@ class Reader {
             $router=app(Router::class);$route=clone $router->getRoutes()->match($request);$route->bind($request);$request->setRouteResolver(fn()=>$route);
             // Infrastructure for cookies/session/CSRF/assets is unnecessary for a server-side projection.
             // Auth, unlocked-user, role/permission/policy and route binding middleware are retained.
+            // Browser/IP checks run on the outer HTTP request and on the stored realtime lease
+            // before every publication. A synthetic projection has no browser cookie or peer IP.
             $skip=[\Illuminate\Cookie\Middleware\EncryptCookies::class,\Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse::class,
+                \App\Http\Middleware\RequireApprovedAdminDevice::class,\App\Http\Middleware\EnforceIpBlock::class,
                 \Illuminate\Session\Middleware\StartSession::class,\Illuminate\View\Middleware\ShareErrorsFromSession::class,
                 \Illuminate\Foundation\Http\Middleware\ValidateCsrfToken::class,\Illuminate\Foundation\Http\Middleware\VerifyCsrfToken::class,
                 \App\Http\Middleware\HandleInertiaRequests::class,\Illuminate\Http\Middleware\AddLinkHeadersForPreloadedAssets::class,

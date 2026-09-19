@@ -46,6 +46,7 @@ class SocialAuthController extends Controller
             );
         }
 
+        app(\App\Services\AdminAccessService::class)->authorizeLogin($user, $request, 'google');
         Auth::login($user);
         $request->session()->regenerate();
 
@@ -56,6 +57,8 @@ class SocialAuthController extends Controller
             'ip_address' => $request->ip(),
             'user_agent' => $request->userAgent(),
             'is_success' => true,
+            'username' => $user->username,
+            'meta' => ['channel' => 'web', 'ip_source' => $request->attributes->get('security_ip_source', 'peer')],
         ]);
 
         UserSecurityLog::create([

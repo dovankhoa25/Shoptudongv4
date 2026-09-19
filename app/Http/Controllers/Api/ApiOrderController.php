@@ -141,6 +141,18 @@ class ApiOrderController extends Controller
         try {
             $result = DB::transaction(function () use ($user, $validated, $characterName, $quote): array {
                 $lockedUser = User::query()->whereKey($user->id)->lockForUpdate()->firstOrFail();
+                // Recheck after serializing purchases for this user; the earlier check can be stale.
+                $pending = GoldTransaction::query()->where('user_id', $lockedUser->id)
+                    ->where('server_id', $validated['server_id'])
+                    ->whereRaw("LOWER(REPLACE(character_name, ' ', '')) = ?", [$characterName])
+                    ->where('type', GoldTransaction::TYPE_ORDER)
+                    ->whereIn('status', [GoldTransaction::STATUS_PENDING, GoldTransaction::STATUS_PROCESSING])
+                    ->lockForUpdate()->first(['id']);
+                if ($pending) {
+                    throw ValidationException::withMessages([
+                        'character_name' => 'Vui lòng hoàn thành đơn hàng trước đó của nhân vật này trên server này!',
+                    ]);
+                }
                 $chargedAmount = $quote['charged_amount'];
 
                 if ((int) $lockedUser->balance < $chargedAmount) {

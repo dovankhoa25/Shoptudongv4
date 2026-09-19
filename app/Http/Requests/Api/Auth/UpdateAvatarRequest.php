@@ -21,6 +21,7 @@ class UpdateAvatarRequest extends FormRequest
                 'mimes:jpeg,png,jpg,gif,webp',
                 'max:5120',
                 'dimensions:min_width=100,min_height=100,max_width=4000,max_height=4000',
+                new \App\Rules\DecodableImage,
             ],
         ];
     }

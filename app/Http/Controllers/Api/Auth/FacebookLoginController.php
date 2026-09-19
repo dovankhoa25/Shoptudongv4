@@ -96,6 +96,8 @@ class FacebookLoginController extends Controller
             'user_agent' => $request->userAgent(),
             'is_success' => $success,
             'failure_reason' => $failureReason,
+            'username' => $user?->username,
+            'meta' => ['channel' => 'api', 'ip_source' => $request->attributes->get('security_ip_source', 'peer')],
         ]);
     }
 }

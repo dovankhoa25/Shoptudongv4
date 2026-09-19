@@ -268,6 +268,7 @@ Route::middleware(['auth:api', 'unlocked.user', 'throttle:authenticated-api'])->
 
     Route::prefix('admin/oauth-clients')
         ->middleware([
+            \Illuminate\Cookie\Middleware\EncryptCookies::class,
             EnsureSsoAdmin::class,
             CheckToken::using('oauth-clients:manage'),
         ])

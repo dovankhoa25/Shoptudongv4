@@ -311,6 +311,20 @@ class ApiGemOrderController extends Controller
 
         DB::beginTransaction();
         try {
+            User::query()->whereKey($user->id)->lockForUpdate()->firstOrFail();
+            $pending = GemTransaction::query()->where('user_id', $user->id)
+                ->where('server_id', $validated['server_id'])
+                ->whereRaw("LOWER(REPLACE(character_name, ' ', '')) = ?", [$characterName])
+                ->whereIn('status', [GemTransaction::STATUS_PENDING, GemTransaction::STATUS_PROCESSING])
+                ->lockForUpdate()->first(['id']);
+            if ($pending) {
+                DB::rollBack();
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Vui lòng hoàn thành đơn hàng trước đó cho nhân vật này!',
+                ], 422);
+            }
             // ✅ Trừ tiền user
             $affected = User::where('id', $user->id)
                 ->where('balance', '>=', $moneyAmount)

@@ -197,6 +197,7 @@ class GoldTradingApiTest extends TestCase
         GemPrice::query()->create([
             'server_id' => $server->id,
             'multiplier' => 1.5,
+            'min_amount' => 3000,
             'status' => true,
         ]);
         $user = User::factory()->create(['balance' => 100000]);

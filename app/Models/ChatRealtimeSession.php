@@ -10,6 +10,7 @@ class ChatRealtimeSession extends Model
     protected $fillable = [
         'user_id',
         'credential_hash',
+        'admin_access_device_id',
         'session_locator',
         'last_seen_at',
         'expires_at',

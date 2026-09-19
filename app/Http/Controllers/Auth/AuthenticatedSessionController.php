@@ -66,6 +66,7 @@ class AuthenticatedSessionController extends Controller
             ]);
         }
 
+        app(\App\Services\AdminAccessService::class)->authorizeLogin($user, $request, 'password');
         Auth::login($user, $validated['remember'] ?? false);
         $request->session()->regenerate();
 
@@ -108,6 +109,7 @@ class AuthenticatedSessionController extends Controller
             'user_agent' => $request->userAgent(),
             'is_success' => $success,
             'failure_reason' => $failureReason,
+            'meta' => ['channel' => 'web', 'ip_source' => $request->attributes->get('security_ip_source', 'peer')],
         ]);
     }
 }

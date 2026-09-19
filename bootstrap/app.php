@@ -26,14 +26,19 @@ return Application::configure(basePath: dirname(__DIR__))
         },
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        $middleware->replace(\Illuminate\Http\Middleware\TrustProxies::class,
+            \App\Http\Middleware\ResolveSecurityClientIp::class);
         $middleware->prepend(\App\Http\Middleware\ApplyFrontendClientCors::class);
         $middleware->prepend(\App\Http\Middleware\StartTrafficTiming::class);
 
         $middleware->web(append: [
+            \App\Http\Middleware\EnforceIpBlock::class,
             \Illuminate\Session\Middleware\AuthenticateSession::class,
+            \App\Http\Middleware\RequireApprovedAdminDevice::class,
             \App\Http\Middleware\HandleInertiaRequests::class,
             \Illuminate\Http\Middleware\AddLinkHeadersForPreloadedAssets::class,
         ]);
+        $middleware->api(prepend: [\App\Http\Middleware\EnforceIpBlock::class]);
         $middleware->alias([
             'auth' => \App\Http\Middleware\Authenticate::class,
             'permission' => \App\Http\Middleware\RequirePermission::class,

@@ -32,8 +32,12 @@ class WithdrawalRequestController extends Controller
         $this->applyFilters($query, $request);
 
         // Sort
-        $sortBy = $request->get('sort_by', 'created_at');
-        $sortOrder = $request->get('sort_order', 'desc');
+        $sorting = $request->validate([
+            'sort_by' => ['nullable', 'in:id,created_at,amount,status,fee,net_amount'],
+            'sort_order' => ['nullable', 'in:asc,desc'],
+        ]);
+        $sortBy = $sorting['sort_by'] ?? 'created_at';
+        $sortOrder = $sorting['sort_order'] ?? 'desc';
         $query->orderBy($sortBy, $sortOrder);
 
         $withdrawals = $query->paginate(20)->withQueryString();
@@ -178,6 +182,10 @@ class WithdrawalRequestController extends Controller
 
         DB::beginTransaction();
         try {
+            $withdrawal = WithdrawalRequest::whereKey($withdrawal->id)->lockForUpdate()->firstOrFail();
+            if ($withdrawal->status !== 'pending') {
+                throw new \RuntimeException('Chỉ có thể duyệt yêu cầu đang chờ xử lý');
+            }
             // Tính phí
             $fee = 0;
             if ($validated['fee_type'] === 'percentage') {
@@ -301,19 +309,25 @@ class WithdrawalRequestController extends Controller
             'note' => 'nullable|string|max:500',
         ]);
 
-        // Upload payment proof nếu có
-        $paymentProofPath = $withdrawal->payment_proof;
-        if ($request->hasFile('payment_proof')) {
-            $paymentProofPath = $request->file('payment_proof')->store('withdrawals/proofs', 'public');
-        }
+        return DB::transaction(function () use ($request, $withdrawal, $validated) {
+            $withdrawal = WithdrawalRequest::whereKey($withdrawal->id)->lockForUpdate()->firstOrFail();
+            if ($withdrawal->status !== 'approved') {
+                return back()->with('error', 'Chỉ có thể đánh dấu đã trả cho yêu cầu đã duyệt');
+            }
+            // Upload payment proof nếu có
+            $paymentProofPath = $withdrawal->payment_proof;
+            if ($request->hasFile('payment_proof')) {
+                $paymentProofPath = $request->file('payment_proof')->store('withdrawals/proofs', 'public');
+            }
 
-        $withdrawal->update([
-            'status' => 'paid',
-            'payment_proof' => $paymentProofPath,
-            'note' => $validated['note'] ?? $withdrawal->note,
-            'paid_at' => now(),
-        ]);
+            $withdrawal->update([
+                'status' => 'paid',
+                'payment_proof' => $paymentProofPath,
+                'note' => $validated['note'] ?? $withdrawal->note,
+                'paid_at' => now(),
+            ]);
 
-        return back()->with('success', 'Đã đánh dấu là đã thanh toán');
+            return back()->with('success', 'Đã đánh dấu là đã thanh toán');
+        });
     }
 }

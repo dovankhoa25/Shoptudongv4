@@ -27,11 +27,13 @@
 | `frontend-clients:allowed-origins:v1` | 300 giây | FrontendClientController tạo/sửa/bật/tắt client gọi registry forget |
 | `internal:settings` | 3600 giây | Setting::set đổi generation sau commit và xóa key `settings` cũ; chống producer cũ ghi lại giá trị tồn tại vô hạn |
 | `admin-live:state:{viewId}` | 3600 giây | Snapshot/refresh thay state; hết quyền/credential thì xóa view và state; view hết hạn bị dọn; mỗi lượt flush mới đọc lại dữ liệu |
+| `access-security:ip-blocks:v1:{DB-scope}:rules` | 60 giây mặc định | AccessIpBlock saved/deleted đổi generation và xóa snapshot sau commit ngoài cùng; rollback giữ cache cũ; thời hạn từng lệnh chặn vẫn được xét ở mọi lần đọc |
 | Các khóa lease, chống gửi lặp, maintenance | Tùy chức năng | Giữ quy tắc hiện có: ví dụ maintenance 15 giây, balance revision 3600 giây; không dùng làm cache dữ liệu public |
 
 ### Những điểm cần giữ khi viết thêm source
 
 - Eloquent model events không chạy cho `DB::table(...)->update/delete`, Eloquent bulk SQL và pivot sync/attach/detach. Các đường ghi loại này đã rà phải gọi `ApiCache::clearGroup(s)` ở nơi ghi. Observer mới không thay thế yêu cầu này cho code viết sau.
+- Riêng IP block: bulk SQL phải gọi `app(AccessIpBlockCache::class)->invalidate()` trong cùng luồng ghi (service chờ sau commit), hoặc chạy `php artisan security:ip-block-cache:clear` sau SQL thủ công. Không dùng `ApiCache::clearGroup` cho namespace này.
 - PublicCacheObserver dùng chung cho admin, tool và command; update chỉ số vàng/credential của Bot không làm hết hạn card public. Public API chỉ select cột cần hiển thị, không lưu credential của bot vào payload cache.
 - Bảng giá dùng eager load giá hiện hành + SQL SUM tồn kho. Không gọi query trong từng ServerInfoResource.
 - Cache JSON chi tiết ảnh chỉ chứa URL. Trình duyệt/CDN lấy file ảnh từ URL riêng; Laravel không truy vấn bảng media cho mỗi lần tải byte ảnh.

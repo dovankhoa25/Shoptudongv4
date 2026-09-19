@@ -171,6 +171,17 @@ Route::prefix('admin')
             ->name('nicks.toggle-visibility');
 
         // Users
+        Route::prefix('access-security')->name('access-security.')
+            ->middleware(Permission::middleware(Permission::AccessSecurityManage))->group(function () {
+                $controller = \App\Http\Controllers\Admin\AccessSecurityController::class;
+                Route::get('/', [$controller, 'index'])->name('index');
+                Route::post('/devices/{device}/approve', [$controller, 'approve'])->name('approve');
+                Route::post('/devices/{device}/revoke', [$controller, 'revoke'])->name('revoke');
+                Route::post('/blocks', [$controller, 'block'])->name('block');
+                Route::delete('/blocks/{block}', [$controller, 'unblock'])->name('unblock');
+            });
+        Route::get('/users/{user}/security', [\App\Http\Controllers\Admin\AccessSecurityController::class, 'history'])
+            ->middleware(Permission::middleware(Permission::UsersView))->name('users.security');
         Route::prefix('users')->name('users.')->group(function () {
             Route::get('/', [UserController::class, 'index'])
                 ->middleware(Permission::middleware(Permission::UsersView))
@@ -406,7 +417,7 @@ Route::prefix('admin')
                 ->name('index');
         });
 
-        Route::prefix('services')->name('services.')->group(function () {
+       Route::prefix('services')->name('services.')->middleware(['auth', 'throttle:10,1'])->group(function () {
             Route::get('/', [ServiceController::class, 'index'])
                 ->middleware(Permission::middleware(Permission::ServicesView, Permission::ServicesManage))
                 ->name('index');
@@ -891,11 +902,11 @@ Route::middleware(['guest', 'throttle:10,1'])->group(function (): void {
 
 require __DIR__.'/auth.php';
 
-Route::prefix('admin/live-views')->middleware(['auth','unlocked.user','throttle:120,1'])->group(function () {
-    Route::post('/', [\App\Http\Controllers\Admin\LiveViewController::class,'store']);
-    Route::post('{id}/sync', [\App\Http\Controllers\Admin\LiveViewController::class,'sync'])->whereUuid('id');
-    Route::patch('{id}', [\App\Http\Controllers\Admin\LiveViewController::class,'renew'])->whereUuid('id');
-    Route::delete('{id}', [\App\Http\Controllers\Admin\LiveViewController::class,'destroy'])->whereUuid('id');
+Route::prefix('admin/live-views')->middleware(['auth', 'unlocked.user', 'throttle:120,1'])->group(function () {
+    Route::post('/', [\App\Http\Controllers\Admin\LiveViewController::class, 'store']);
+    Route::post('{id}/sync', [\App\Http\Controllers\Admin\LiveViewController::class, 'sync'])->whereUuid('id');
+    Route::patch('{id}', [\App\Http\Controllers\Admin\LiveViewController::class, 'renew'])->whereUuid('id');
+    Route::delete('{id}', [\App\Http\Controllers\Admin\LiveViewController::class, 'destroy'])->whereUuid('id');
 });
 
-Route::get('/admin/live-balance',fn(\Illuminate\Http\Request $r)=>response()->json(\App\Services\UserBalanceSnapshot::read((int)$r->user()->id))->header('Cache-Control','no-store'))->middleware(['auth','unlocked.user']);
+Route::get('/admin/live-balance', fn (\Illuminate\Http\Request $r) => response()->json(\App\Services\UserBalanceSnapshot::read((int) $r->user()->id))->header('Cache-Control', 'no-store'))->middleware(['auth', 'unlocked.user']);

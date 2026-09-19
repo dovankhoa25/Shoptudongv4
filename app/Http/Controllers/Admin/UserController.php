@@ -35,6 +35,11 @@ class UserController extends Controller
         $users = User::query()
             ->with('roles:id,name')
             ->when($filters['search'] ?? null, function ($query, string $search) {
+                if (filter_var(trim($search), FILTER_VALIDATE_IP)) {
+                    $query->whereHas('loginAttempts', fn ($attempts) => $attempts->where('ip_address', trim($search)));
+
+                    return;
+                }
                 AdminTableSearch::applyPreset($query, $search, 'users');
             })
             ->when($filters['role'] ?? null, fn ($query, string $role) => $query->whereHas('roles', fn ($query) => $query->where('name', $role)))
@@ -53,6 +58,8 @@ class UserController extends Controller
             'users' => new UserCollection($users),
             'filters' => $filters,
             'can' => [
+                'security' => $request->user()->hasRole('super-admin')
+                    || $request->user()->can(AppPermission::AccessSecurityManage->value),
                 'create' => $request->user()->hasRole('super-admin')
                     || $request->user()->can(AppPermission::UsersCreate->value),
             ],

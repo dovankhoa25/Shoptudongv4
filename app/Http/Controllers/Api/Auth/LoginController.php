@@ -18,8 +18,7 @@ class LoginController extends Controller
     public function __construct(
         private readonly FirstPartyClientService $clients,
         private readonly FirstPartyTokenService $tokens,
-    ) {
-    }
+    ) {}
 
     public function store(Request $request): JsonResponse
     {
@@ -106,6 +105,7 @@ class LoginController extends Controller
             'user_agent' => $request->userAgent(),
             'is_success' => $success,
             'failure_reason' => $failureReason,
+            'meta' => ['channel' => 'api', 'ip_source' => $request->attributes->get('security_ip_source', 'peer')],
         ]);
     }
 }

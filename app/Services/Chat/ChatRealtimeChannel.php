@@ -116,7 +116,7 @@ class ChatRealtimeChannel
             ->whereIn('user_id', $eligibleIds)
             ->whereNull('revoked_at')
             ->where('expires_at', '>', now())
-            ->get(['user_id', 'credential_hash', 'session_locator'])
+            ->get(['user_id', 'credential_hash', 'session_locator', 'admin_access_device_id'])
             ->filter(fn (ChatRealtimeSession $session): bool => $this->webSessionIsAuthenticated($session))
             ->map(fn (ChatRealtimeSession $session): string => self::name(
                 (int) $session->user_id,
@@ -180,6 +180,11 @@ class ChatRealtimeChannel
 
     private function webChannel(Request $request, User $user): ?string
     {
+        $access = app(\App\Services\AdminAccessService::class);
+        $device = $access->applies($user) ? $access->approvedDevice($user, $request) : null;
+        if ($access->applies($user) && ! $device) {
+            return null;
+        }
         $credentialHash = $this->webCredentialHash($request);
 
         if ($credentialHash === null) {
@@ -194,6 +199,7 @@ class ChatRealtimeChannel
             'user_id' => $user->getKey(),
             'credential_hash' => $credentialHash,
             'session_locator' => Crypt::encryptString($sessionId),
+            'admin_access_device_id' => $device?->id,
             'last_seen_at' => $now,
             'expires_at' => $expiresAt,
             'created_at' => $now,
@@ -206,6 +212,7 @@ class ChatRealtimeChannel
             ->whereNull('revoked_at');
 
         $updated = (clone $activeLease)->update([
+            'admin_access_device_id' => $device?->id,
             'last_seen_at' => $now,
             'expires_at' => $expiresAt,
             'updated_at' => $now,
@@ -238,14 +245,29 @@ class ChatRealtimeChannel
     /** Reuse canonical web-session revocation for admin live projections. */
     public function webCredentialIsActive(int $userId, ?string $credentialHash): bool
     {
-        if (!$credentialHash) return false;
-        $lease = ChatRealtimeSession::query()->where('user_id',$userId)->where('credential_hash',$credentialHash)
-            ->whereNull('revoked_at')->where('expires_at','>',now())->first();
+        if (! $credentialHash) {
+            return false;
+        }
+        $lease = ChatRealtimeSession::query()->where('user_id', $userId)->where('credential_hash', $credentialHash)
+            ->whereNull('revoked_at')->where('expires_at', '>', now())->first();
+
         return $lease !== null && $this->webSessionIsAuthenticated($lease);
     }
 
     private function webSessionIsAuthenticated(ChatRealtimeSession $lease): bool
     {
+        $user = $lease->user;
+        if (! $user || $user->isLocked()) {
+            return false;
+        }
+        if (app(\App\Services\AdminAccessService::class)->applies($user)) {
+            $device = \App\Models\AdminAccessDevice::whereKey($lease->admin_access_device_id)
+                ->where('user_id', $lease->user_id)->where('status', 'approved')
+                ->where('expires_at', '>', now())->first();
+            if (! $device || \App\Models\AccessIpBlock::blocks($device->ip_address)) {
+                return false;
+            }
+        }
         try {
             $sessionId = Crypt::decryptString($lease->session_locator);
             $payload = $this->readCanonicalSession($sessionId);
