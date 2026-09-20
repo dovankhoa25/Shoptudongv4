@@ -14,6 +14,8 @@ Route::prefix('admin/nro-shop')->name('admin.nro-shop.')->middleware(['auth', 'u
     Route::patch('accounts/{id}/visibility', [NroShopController::class, 'visibility'])->middleware('permission:nro-accounts.manage')->name('accounts.visibility');
     Route::patch('accounts/{id}/settings', [NroShopController::class, 'settings'])->middleware('permission:nro-settings.manage')->name('accounts.settings');
     // Controller authorizes admin/super-admin OR the dedicated sale-policy permission.
+    Route::get('seller-policy',[NroShopController::class,'findSellerPolicy'])->name('seller-policy.find');
+    Route::patch('sellers/{id}/policy',[NroShopController::class,'updateSellerPolicy'])->whereNumber('id')->name('seller-policy.update');
     Route::match(['get','patch'],'accounts/{id}/seller-policy',[NroShopController::class,'sellerPolicy'])->name('seller-policy');
     Route::patch('sale-policy', [NroShopController::class, 'salePolicy'])->name('sale-policy');
     Route::get('nick-attribute-fields', [NroShopController::class, 'draftNickAttributes'])->middleware('permission:nicks.create,nicks.manage')->name('nick-attribute-fields');

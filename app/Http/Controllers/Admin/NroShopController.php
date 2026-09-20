@@ -346,28 +346,55 @@ class NroShopController extends Controller
         ApiCache::clearGroups(['public:nick', 'public:nro-shop:listings']);
         return response()->json(['ok' => true]);
     }
+    /** Exact lookup, available even before the seller has a game warehouse. */
+    public function findSellerPolicy(Request $r)
+    {
+        abort_unless($this->capabilities($r)['salePolicy'],403);
+        $v=$r->validate(['q'=>'required|string|max:255']);
+        $term=trim($v['q']);
+        NroShopService::require($term!=='','Nhập username hoặc ID người dùng.');
+        $query=\App\Models\User::query();
+        if (!$r->user()->canViewAllAdminData()) $query->whereKey($r->user()->id);
+        if (preg_match('/^#?(\d+)$/D',$term,$match)) $query->whereKey($match[1]);
+        else $query->where('username',str_starts_with($term,'@') ? substr($term,1) : $term);
+        $seller=$query->first();
+        abort_unless($seller,404,'Không tìm thấy người dùng theo username hoặc ID này.');
+        return $this->sellerPolicyResponse($r,$seller);
+    }
+
+    public function updateSellerPolicy(Request $r, int $id)
+    {
+        abort_unless($this->capabilities($r)['salePolicy'],403);
+        abort_unless($r->user()->canViewAllAdminData() || $r->user()->id===$id,404);
+        return $this->sellerPolicyResponse($r,\App\Models\User::findOrFail($id));
+    }
+
+    // Retained for old admin tabs during deployment. Both entry points write the same user policy.
     public function sellerPolicy(Request $r, int $id)
     {
         abort_unless($this->capabilities($r)['salePolicy'],403);
         $account=$this->account($r,$id);
-        // A scoped CTV must never grant themself broader selling rights.
-        abort_unless($r->user()->canViewAllAdminData() || $r->user()->can('nro-sale-policy.manage'),403);
+        return $this->sellerPolicyResponse($r,\App\Models\User::findOrFail($account->user_id));
+    }
+
+    private function sellerPolicyResponse(Request $r, \App\Models\User $seller)
+    {
         if ($r->isMethod('patch')) {
             $v=$r->validate(['sellingEnabled'=>'required|boolean','allowIds'=>'nullable|array|max:10000','denyIds'=>'present|array|max:10000',
                 'allowIds.*'=>'integer|min:0|max:100000|distinct','denyIds.*'=>'integer|min:0|max:100000|distinct']);
             $known=app(\App\Services\NroItemFilters::class)->knownIds();
             foreach([...($v['allowIds'] ?? []),...$v['denyIds']] as $itemId) NroShopService::require(in_array((int)$itemId,$known,true),'ID không có trong catalog: '.$itemId);
-            DB::transaction(function() use($account,$v) {
-                $ids=NroAccount::where('user_id',$account->user_id)->where('usage_type','warehouse')->orderBy('id')->lockForUpdate()->pluck('id');
-                DB::table('nro_seller_policies')->updateOrInsert(['user_id'=>$account->user_id],[
+            DB::transaction(function() use($seller,$v) {
+                $ids=NroAccount::where('user_id',$seller->id)->where('usage_type','warehouse')->orderBy('id')->lockForUpdate()->pluck('id');
+                DB::table('nro_seller_policies')->updateOrInsert(['user_id'=>$seller->id],[
                     'selling_enabled'=>$v['sellingEnabled'],'allow_ids'=>empty($v['allowIds'])?null:json_encode(array_map('intval',$v['allowIds'])),
                     'deny_ids'=>json_encode(array_map('intval',$v['denyIds'])),'updated_at'=>now(),'created_at'=>now(),
                 ]);
                 NroSellerPolicy::refreshAccounts($ids);
             },3);
         }
-        $policy=NroSellerPolicy::read((int)$account->user_id);
-        return response()->json(['userId'=>$account->user_id,'username'=>DB::table('users')->where('id',$account->user_id)->value('username'),
+        $policy=NroSellerPolicy::read((int)$seller->id);
+        return response()->json(['userId'=>$seller->id,'username'=>$seller->username,
             'sellingEnabled'=>$policy ? (bool)$policy->selling_enabled : true,'allowIds'=>json_decode($policy?->allow_ids ?? '[]',true),
             'denyIds'=>json_decode($policy?->deny_ids ?? '[]',true)])->header('Cache-Control','no-store');
     }

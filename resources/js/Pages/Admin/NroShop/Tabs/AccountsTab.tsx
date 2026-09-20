@@ -8,7 +8,6 @@ import type { NroSnapshot } from '@/Components/Nro/NroSnapshot';
 import { base, dateTime, isSold, NickSaleSummary } from '../shared';
 import AccountDetailModal from '../Modals/AccountDetailModal';
 import PublishModal from '../Modals/PublishModal';
-import SellerPolicyModal from '../Modals/SellerPolicyModal';
 import WarehouseListingsModal from '../Modals/WarehouseListingsModal';
 import { DeliverySettingsModal, EditAccountModal, PasswordModal } from '../Modals/AccountEditModals';
 import type { Account, AccountFilters, Capabilities, Category, Inventory, LoginServer, Server } from '../types';
@@ -73,7 +72,6 @@ export default function AccountsTab({
     const [publishOpen, setPublishOpen] = useState(false);
     const [detailLoading, setDetailLoading] = useState(false);
 
-    const [policyAccount, setPolicyAccount] = useState<Account | null>(null);
     const [warehouse, setWarehouse] = useState<Account | null>(null);
     const [editingAccount, setEditingAccount] = useState<Account | null>(null);
     const [editingPassword, setEditingPassword] = useState<Account | null>(null);
@@ -289,12 +287,11 @@ export default function AccountsTab({
                                             disabled={working} onClick={() => inspect(a, a.usage_type === 'nick' ? 'publish' : 'view')} />
                                     </Tooltip>
                                 )}
-                                {(caps.manageAccounts || caps.settings || caps.salePolicy) && (
+                                {(caps.manageAccounts || caps.settings) && (
                                     <Dropdown
                                         trigger={['click']}
                                         menu={{
                                             items: [
-                                                ...(caps.salePolicy && a.usage_type === 'warehouse' ? [{ key: 'seller-policy', label: `Quyền bán của ${a.ownerUsername || 'CTV'}`, onClick: () => setPolicyAccount(a) }] : []),
                                                 ...(caps.manageAccounts
                                                     ? [
                                                           ...(a.usage_type === 'warehouse' ? [{
@@ -366,7 +363,6 @@ export default function AccountsTab({
                 ]}
             />
 
-            {policyAccount && <SellerPolicyModal account={policyAccount} onClose={() => setPolicyAccount(null)} />}
             <AccountDetailModal
                 open={detailOpen}
                 account={account}

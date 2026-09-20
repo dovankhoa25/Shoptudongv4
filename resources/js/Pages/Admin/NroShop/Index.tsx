@@ -12,6 +12,7 @@ import JobsTab from './Tabs/JobsTab';
 import WorkerKeysTab from './Tabs/WorkerKeysTab';
 import AddAccountModal from './Modals/AddAccountModal';
 import SalePolicyModal from './Modals/SalePolicyModal';
+import SellerPolicyModal from './Modals/SellerPolicyModal';
 import type { PageProps, Stats } from './types';
 
 const EMPTY_STATS: Stats = {
@@ -46,6 +47,7 @@ export default function NroShop({
     const [adding, setAdding] = useState(false);
     const [importing, setImporting] = useState(false);
     const [policyOpen, setPolicyOpen] = useState(false);
+    const [sellerPolicyOpen, setSellerPolicyOpen] = useState(false);
     const [accountForm] = Form.useForm();
     const [policyForm] = Form.useForm();
 
@@ -150,6 +152,8 @@ export default function NroShop({
                 />
             )}
 
+            {sellerPolicyOpen && <SellerPolicyModal onClose={() => setSellerPolicyOpen(false)} />}
+
             <SalePolicyModal
                 open={policyOpen}
                 form={policyForm}
@@ -184,6 +188,7 @@ export default function NroShop({
                             Tool {stats.workerOnline ? 'đang online' : 'offline'}
                         </Tag>
                         <Button onClick={reloadAccounts}>Làm mới</Button>
+                        {caps.salePolicy && <Button onClick={() => setSellerPolicyOpen(true)}>Quyền bán</Button>}
                         {caps.salePolicy && (
                             <Dropdown
                                 menu={{
