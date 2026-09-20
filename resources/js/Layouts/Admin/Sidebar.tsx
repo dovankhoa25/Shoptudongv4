@@ -97,6 +97,19 @@ const menuItems: MenuItem[] = [
         ],
     },
     {
+        key: 'ip-management-group',
+        label: 'Quản lý IP',
+        icon: Shield,
+        description: 'IP dùng chung, thiết bị và lịch sử đăng nhập',
+        permission: 'access-security.manage',
+        children: [
+            { key: 'ip-overview', label: 'IP dùng chung', href: '/admin/ip-management/overview', icon: Users, permission: 'access-security.manage' },
+            { key: 'ip-devices', label: 'Duyệt thiết bị', href: '/admin/ip-management/devices', icon: Cpu, permission: 'access-security.manage' },
+            { key: 'ip-blocks', label: 'Chặn IP / dải IP', href: '/admin/ip-management/blocks', icon: Shield, permission: 'access-security.manage' },
+            { key: 'ip-logins', label: 'Lịch sử đăng nhập', href: '/admin/ip-management/logins', icon: Clock, permission: 'access-security.manage' },
+        ],
+    },
+    {
         key: 'finance-group',
         label: 'Quản lý dòng tiền',
         icon: CreditCard,

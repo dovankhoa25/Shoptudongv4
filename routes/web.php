@@ -170,6 +170,16 @@ Route::prefix('admin')
             ->middleware(Permission::middleware(Permission::NicksManage))
             ->name('nicks.toggle-visibility');
 
+        Route::prefix('ip-management')->name('ip-management.')
+            ->middleware(Permission::middleware(Permission::AccessSecurityManage))->group(function () {
+                $controller = \App\Http\Controllers\Admin\IpManagementController::class;
+                Route::redirect('/', '/admin/ip-management/overview')->name('index');
+                Route::get('/ip-detail', [$controller, 'detail'])->name('detail');
+                foreach (['overview', 'devices', 'blocks', 'logins'] as $section) {
+                    Route::get('/'.$section, [$controller, 'index'])->defaults('section', $section)->name($section);
+                }
+            });
+
         // Users
         Route::prefix('access-security')->name('access-security.')
             ->middleware(Permission::middleware(Permission::AccessSecurityManage))->group(function () {

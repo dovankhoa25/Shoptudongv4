@@ -83,6 +83,7 @@ Route::middleware('throttle:public-read')->group(function (): void {
      */
     Route::get('/servers', [ServerController::class, 'index']);
     Route::get('/bots', [BotController::class, 'index']);
+    Route::get('/bots/overview', \App\Http\Controllers\Api\BotOverviewController::class);
     Route::get('/gem/servers', [ServerController::class, 'getGem']);
     Route::get('/gem/bots', [ApiGemBotController::class, 'index']);
     Route::get('/server-prices', [HomeController::class, 'getServerPrices'])->name('api.server.prices');

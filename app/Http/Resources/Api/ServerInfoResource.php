@@ -29,6 +29,7 @@ class ServerInfoResource extends JsonResource
 
             // Giá ngọc
             'gem_multiplier' => $currentGemPrice?->multiplier ?? null, // Hệ số giá ngọc
+            'gem_min_amount' => $currentGemPrice ? (int) $currentGemPrice->min_amount : null,
 
             // Số lượng ngọc available
             'total_available_gems' => (int) ($this->total_available_gems ?? 0),

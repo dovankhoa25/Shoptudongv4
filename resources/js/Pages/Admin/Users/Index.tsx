@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { router, usePage } from '@inertiajs/react';
+import { Link, router, usePage } from '@inertiajs/react';
 import axios from 'axios';
 import { Edit3, Lock, ShieldCheck, Unlock, WalletCards } from 'lucide-react';
 import AdminLayout from '@/Layouts/AdminLayout';
@@ -14,7 +14,6 @@ import UserFormModal from './UserFormModal';
 import UserPermissionModal from './UserPermissionModal';
 import LockUserModal from './LockUserModal';
 import BalanceAdjustmentModal from './BalanceAdjustmentModal';
-import AccessSecurityModal from './AccessSecurityModal';
 
 interface UsersPageProps extends PageProps {
     users: PaginatedData<IUser>;
@@ -42,7 +41,6 @@ export default function UserPage() {
     const [selectedUser, setSelectedUser] = useState<IUser | null>(null);
     const [modal, setModal] = useState<'form' | 'detail' | 'permission' | 'lock' | 'balance' | null>(null);
     const [unlockingId, setUnlockingId] = useState<number | null>(null);
-    const [securityOpen, setSecurityOpen] = useState(false);
 
     const { filters, loading, handleSearch, handleResetFilters, handlePageChange, setColumnFilters } = useTableFilters({
         routeName: 'admin.users.index',
@@ -154,7 +152,7 @@ export default function UserPage() {
 
     return (
         <>
-            {can.security && <div className="mb-3 flex justify-end"><button type="button" onClick={() => setSecurityOpen(true)} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white">Duyệt thiết bị / Chặn IP</button></div>}
+            {can.security && <div className="mb-3 flex justify-end"><Link href="/admin/ip-management/overview" className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white">Quản lý IP</Link></div>}
             <DataTable<IUser>
                 storageKey="admin-users-table"
                 density="compact"
@@ -209,7 +207,6 @@ export default function UserPage() {
             />
 
             {modal === 'form' && <UserFormModal user={selectedUser} onClose={close} />}
-            {securityOpen && <AccessSecurityModal onClose={() => setSecurityOpen(false)} />}
             {modal === 'detail' && selectedUser && <UserDetailModal user={selectedUser} onClose={close} />}
             {modal === 'permission' && selectedUser && <UserPermissionModal user={selectedUser} onClose={close} onSaved={reloadUsers} />}
             {modal === 'balance' && selectedUser && (

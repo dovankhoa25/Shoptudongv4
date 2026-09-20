@@ -13,14 +13,16 @@ class HomeController extends Controller
     /**
      * Lấy thông tin giá của tất cả server cho popup trang chủ
      */
-    public function getServerPrices()
+    public function getServerPrices(?Request $request = null)
     {
+        $request ??= request();
+        $includeInactive = $request->boolean('include_inactive');
         return ApiCache::rememberJson(
             'public:server-prices',
-            ApiCache::key('server-prices', 'all'),
-            120,
-            function () {
-                $servers = Server::active()
+            ApiCache::key('server-prices', $includeInactive ? 'catalog-v1' : 'all'),
+            $includeInactive ? 30 : 120,
+            function () use ($includeInactive) {
+                $servers = Server::query()->when(!$includeInactive, fn ($query) => $query->active())
                     ->with(['currentGoldPrice', 'currentGemPrice'])
                     ->withSum('activeGemBots as total_available_gems', 'gem_qty')
                     ->get();
@@ -28,6 +30,8 @@ class HomeController extends Controller
                 return [
                     'success' => true,
                     'data' => ServerInfoResource::collection($servers),
+                    'all_servers' => $includeInactive,
+                    'generated_at' => now()->toIso8601String(),
                     'message' => 'Lấy thông tin giá thành công'
                 ];
             }
