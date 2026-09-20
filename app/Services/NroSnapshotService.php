@@ -142,6 +142,8 @@ class NroSnapshotService
                     if($enough) DB::table('item_orders')->where('id',$order->id)->update(['failure_code'=>null,'public_failure'=>null,'refund_requested'=>false,'delivery_message'=>'Kho đã bổ sung đủ đúng vật phẩm. Bạn có thể nhận tiếp.','updated_at'=>now()]);
                 }
             }
+            NroSellerPolicy::refreshAccounts([$account->id]);
+            \App\Support\ApiCache::clearGroup('public:nro-shop:listings');
             return $snapshot;
         });
     }

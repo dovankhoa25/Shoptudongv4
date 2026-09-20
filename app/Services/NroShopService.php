@@ -43,10 +43,11 @@ class NroShopService
         $busyByAccount = DB::table('nro_worker_jobs')->whereIn('account_id', $accountIds)->whereIn('status', ['processing', 'review'])
             ->get(['account_id', 'status', 'type'])->groupBy('account_id')->map(fn ($jobs) => $jobs->filter(fn ($j) => $j->status === 'review' || $j->type === 'snapshot')->pluck('status'));
         // Ascending id so the highest id overwrites earlier ones: the latest order per listing.
-        $lastOrderStatus = DB::table('item_orders')->whereIn('listing_id', $rows->keys())->orderBy('id')->pluck('status', 'listing_id');
+        $lastOrderStatus = DB::table('item_orders')->whereIn('id',DB::table('item_orders')->whereIn('listing_id',$rows->keys())->selectRaw('MAX(id)')->groupBy('listing_id'))->pluck('status','listing_id');
         $policy = NroListingStock::policy();
+        $sellerPolicies = NroSellerPolicy::rows($rows->pluck('user_id')->unique());
 
-        return $rows->map(function ($listing) use ($accounts, $snapshots, $servers, $itemsByListing, $allocatedTotals, $ownShares, $busyByAccount, $lastOrderStatus, $workerOnline, $policy) {
+        return $rows->map(function ($listing) use ($accounts, $snapshots, $servers, $itemsByListing, $allocatedTotals, $ownShares, $busyByAccount, $lastOrderStatus, $workerOnline, $policy, $sellerPolicies) {
             $account = $accounts->get($listing->account_id);
 
             return $this->listingPayload($listing, $account,
@@ -56,14 +57,15 @@ class NroShopService
                 $busyByAccount->get($listing->account_id) ?? collect(),
                 $lastOrderStatus[$listing->id] ?? null,
                 $account?->server_id ? ($servers[$account->server_id] ?? null) : null,
-                $workerOnline, $policy);
+                $workerOnline, $policy, $sellerPolicies[$listing->user_id] ?? null);
         })->all();
     }
 
     private function listingPayload(object $listing, ?NroAccount $account, ?NroAccountSnapshot $snapshot, Collection $items,
-        array $allocated, Collection $busy, ?string $lastOrderStatus, ?string $serverName, bool $workerOnline, array $policy): array
+        array $allocated, Collection $busy, ?string $lastOrderStatus, ?string $serverName, bool $workerOnline, array $policy, ?object $sellerPolicy): array
     {
         $available = $items->isEmpty() ? 0 : $items->min(fn ($i) => intdiv(max(0, $i->stock - $i->reserved - ($allocated[$i->id] ?? 0)), $i->quantity));
+        if (($listing->stock_mode ?? 'fixed') === 'fixed') $available = min($available, (int)($listing->packages_remaining ?? 1));
         $fresh = $account?->server_id && $account?->server_game_id && $snapshot && ($snapshot->completeness_json['bag'] ?? false) && ($snapshot->completeness_json['chest'] ?? false) && ($snapshot->completeness_json['equipped'] ?? false)
             && $account->last_synced_at !== null
             && $snapshot->captured_at->lte(now()->addMinutes(5)) && $account->status === 'active' && $account->usage_type === 'warehouse';
@@ -71,7 +73,7 @@ class NroShopService
         if ($account?->login_sale_blocked) $reasons[] = 'Kho đang cần sửa thông tin đăng nhập';
         if ($account?->shop_hidden) $reasons[] = 'Kho đang tạm ẩn khỏi shop; đơn đã mua vẫn được giao';
         if ($account?->status === 'demo') $reasons[] = 'Dữ liệu demo · không giao dịch thật';
-        if ($items->contains(fn ($i) => !NroListingStock::allows((int) json_decode($i->item_json, true)['templateId'], $policy))) $reasons[] = 'Gói chứa vật phẩm ngoài danh sách được phép bán';
+        if ($items->contains(fn ($i) => !NroSellerPolicy::allows(json_decode($i->item_json, true), $sellerPolicy, $policy))) $reasons[] = 'Gói chứa vật phẩm ngoài danh sách được phép bán';
         if ($listing->status !== 'active') $reasons[] = $listing->status === 'sold' ? 'Gói đã có người mua' : 'Gói đang tạm dừng';
         if ($busy->contains('review')) $reasons[] = 'Kho đang chờ đối soát';
         elseif ($busy->contains('processing')) $reasons[] = 'Kho đang xử lý công việc';
@@ -89,47 +91,61 @@ class NroShopService
             $reasons[] = $physical > 0 ? (array_sum($allocated) > 0 ? 'Đồ đã được phân cho gói khác hoặc đơn chưa nhận' : 'Đồ đã được giữ cho đơn chưa nhận') : 'Không đủ đồ cho một gói';
         }
 
-        return ['id' => $listing->id, 'title' => $listing->title, 'description' => $listing->description,
+        return ['id' => $listing->id, 'title' => $listing->title, 'description' => $listing->description, 'publicDescription' => $listing->public_description ?? null,
             'shopHidden' => (bool) $account?->shop_hidden, 'price' => (string) $listing->price, 'status' => $listing->status, 'lastOrderStatus' => $lastOrderStatus,
             'serverIndex' => $account?->server_index, 'serverId' => $account?->server_id, 'serverName' => $serverName,
-            'available' => !$reasons ? min(1, $available) : 0, 'stockAvailable' => $available, 'unavailableReasons' => $reasons, 'workerOnline' => $workerOnline,
+            'stockMode' => $listing->stock_mode ?? 'fixed', 'packagesRemaining' => (int)($listing->packages_remaining ?? 1), 'policyBlocked' => (bool)($listing->policy_blocked ?? false),
+            'quantityEnabled' => $items->every(fn($i)=>NroSellerPolicy::stackable(json_decode($i->item_json,true))),
+            'available' => !$reasons ? $available : 0, 'stockAvailable' => $available, 'unavailableReasons' => $reasons, 'workerOnline' => $workerOnline,
             'needsSync' => !$fresh, 'items' => $items->map(fn ($i) => ['inventoryItemId' => $i->id, 'quantity' => $i->quantity, 'item' => json_decode($i->item_json, true)])->all()];
     }
 
-    public function purchase(User $buyer, int $listingId, string $name, int $server, string $key): int
+    public function purchase(User $buyer, int $listingId, string $name, int $server, string $key, int $packageQuantity = 1, ?int $expectedPrice = null): int
     {
         $name = mb_strtolower(trim($name), 'UTF-8');
-        return DB::transaction(function () use ($buyer, $listingId, $name, $server, $key) {
+        return DB::transaction(function () use ($buyer, $listingId, $name, $server, $key, $packageQuantity, $expectedPrice) {
             $buyer = User::whereKey($buyer->id)->lockForUpdate()->firstOrFail();
             $existing = DB::table('item_orders')->where(['buyer_id' => $buyer->id, 'request_key' => $key])->first();
             if ($existing) {
-                self::require($existing->listing_id == $listingId && mb_strtolower(trim($existing->recipient_name), 'UTF-8') === $name && $existing->server_id == $server, 'Mã yêu cầu đã được dùng cho đơn khác.');
+                self::require($existing->listing_id == $listingId && mb_strtolower(trim($existing->recipient_name), 'UTF-8') === $name && $existing->server_id == $server && (int)($existing->package_quantity ?? 1) === $packageQuantity && ($expectedPrice === null || (int)($existing->unit_price ?? $existing->price) === $expectedPrice), 'Mã yêu cầu đã được dùng cho đơn khác.');
                 return $existing->id;
             }
             $listing = DB::table('item_listings')->where('id', $listingId)->first(); abort_unless($listing, 404);
             $account = NroAccount::whereKey($listing->account_id)->lockForUpdate()->firstOrFail();
             $listing = DB::table('item_listings')->where('id', $listingId)->lockForUpdate()->first();
-            self::require(!DB::table('item_orders')->where('listing_id', $listingId)->exists(), 'Gói đồ đã được mua.');
+            self::require($packageQuantity >= 1 && $packageQuantity <= 1000000, 'Số lượng mua không hợp lệ.');
+            self::require($expectedPrice === null || (int)$listing->price === $expectedPrice, 'Giá đã thay đổi. Mở lại gói để xem giá mới trước khi xác nhận.');
             self::require(!$account->login_sale_blocked, 'Kho đang cần sửa thông tin đăng nhập.');
             self::require(!$account->shop_hidden, 'Kho đang tạm ẩn khỏi shop.');
             self::require($listing->user_id != $buyer->id, 'Không thể mua gói đồ của chính bạn.');
             self::require($account->server_id == $server, 'Nhân vật nhận phải ở cùng server với gói đồ.');
-            self::require($this->listing($listing)['available'] > 0, 'Gói đồ hết hàng hoặc cần đồng bộ kho.');
+            $offer = $this->listing($listing);
+            self::require($offer['quantityEnabled'] || $packageQuantity === 1, 'Trang bị chỉ được mua một gói mỗi đơn.');
+            self::require($offer['available'] >= $packageQuantity, 'Số lượng còn bán không đủ hoặc kho cần đồng bộ. Mở lại tin để cập nhật.');
+            $total = (int)$listing->price * $packageQuantity;
+            self::require($total <= TransactionService::MAX_BALANCE, 'Tổng tiền vượt giới hạn giao dịch.');
             self::require(!DB::table('nro_worker_jobs')->where('account_id', $account->id)->where(function ($q) { $q->where('status', 'review')->orWhere(fn ($j) => $j->where('status', 'processing')->where('type', 'snapshot')); })->exists(), 'Acc đang lấy dữ liệu hoặc chờ đối soát. Vui lòng thử lại sau.');
-            self::require((int) $buyer->balance >= $listing->price, 'Số dư không đủ.');
+            self::require((int) $buyer->balance >= $total, 'Số dư không đủ.');
             $order = DB::table('item_orders')->insertGetId(['buyer_id' => $buyer->id, 'seller_id' => $listing->user_id, 'listing_id' => $listingId,
-                'account_id' => $account->id, 'recipient_name' => $name, 'server_index' => $account->server_index ?? 0, 'server_id' => $server, 'price' => $listing->price,
+                'account_id' => $account->id, 'recipient_name' => $name, 'server_index' => $account->server_index ?? 0, 'server_id' => $server, 'price' => $total, 'unit_price' => $listing->price, 'package_quantity' => $packageQuantity,
                 'title' => $listing->title, 'request_key' => $key, 'status' => 'awaiting_receipt', 'created_at' => now(), 'updated_at' => now()]);
+            $totalItems = 0;
             foreach (DB::table('item_listing_items')->where('listing_id', $listingId)->orderBy('inventory_item_id')->get() as $line) {
+                $line->quantity = (int)$line->quantity * $packageQuantity;
+                $totalItems += $line->quantity;
+                self::require($totalItems <= 1000000000, 'Tổng vật phẩm trong đơn vượt giới hạn.');
                 $item = DB::table('nro_inventory_items')->where('id', $line->inventory_item_id)->lockForUpdate()->first();
                 self::require($item && $item->quantity - $item->reserved >= $line->quantity, 'Không đủ đồ cho cả gói.');
                 DB::table('nro_inventory_items')->where('id', $item->id)->increment('reserved', $line->quantity);
                 DB::table('item_order_items')->insert(['order_id' => $order, 'inventory_item_id' => $item->id, 'quantity' => $line->quantity, 'item_json' => $item->item_json]);
                 DB::table('item_inventory_reservations')->insert(['order_id' => $order, 'inventory_item_id' => $item->id, 'quantity' => $line->quantity, 'status' => 'held', 'created_at' => now(), 'updated_at' => now()]);
             }
-            $before = (int) $buyer->balance; $buyer->decrement('balance', $listing->price);
-            TransactionService::log(userId: $buyer->id, type: 'buy_nro_items', amount: -$listing->price, description: "Mua gói đồ #$order", related: 'nro_item_order', relatedId: $order, oldBalance: $before, newBalance: $before - $listing->price, idempotencyKey: "nro-order:$order:debit");
-            DB::table('item_listings')->where('id', $listingId)->update(['status' => 'sold', 'updated_at' => now()]);
+            $before = (int) $buyer->balance; $buyer->decrement('balance', $total);
+            TransactionService::log(userId: $buyer->id, type: 'buy_nro_items', amount: -$total, description: "Mua gói đồ #$order", related: 'nro_item_order', relatedId: $order, oldBalance: $before, newBalance: $before - $total, idempotencyKey: "nro-order:$order:debit");
+            if ($listing->stock_mode === 'fixed') {
+                $left = (int)($listing->packages_remaining ?? 1) - $packageQuantity;
+                DB::table('item_listings')->where('id', $listingId)->update(['packages_remaining'=>$left, 'status'=>$left ? 'active' : 'sold', 'updated_at'=>now()]);
+            }
             ApiCache::clearGroups(['public:nro-shop:listings']);
             return $order;
         }, 3);
@@ -174,7 +190,7 @@ class NroShopService
             if($session) $session['position']=$live ? (isset($warehouseState['position']) ? array_replace($warehouseState['position'],['recipientName'=>$session['recipientName']]) : ($ownLive ? $session['position'] : null)) : null;
             $delivered=($itemsByOrder->get($o->id) ?? collect())->sum('delivered');
 
-            return NroOrderFlow::present(['id' => $o->id, 'revision'=>(int)$o->realtime_revision, 'title' => $o->title, 'price' => (string) $o->price, 'status' => $o->status,
+            return NroOrderFlow::present(['id' => $o->id, 'revision'=>(int)$o->realtime_revision, 'title' => $o->title, 'packageQuantity' => (int)($o->package_quantity ?? 1), 'unitPrice' => (string)($o->unit_price ?? $o->price), 'price' => (string) $o->price, 'status' => $o->status,
                 'recipientName' => $session['recipientName'] ?? $o->recipient_name, 'serverIndex' => $o->server_index, 'serverId' => $o->server_id,
                 'serverName' => $servers[$o->server_id] ?? null, 'message' => $o->status==='processing' && !$live ? 'Bot mất liên lạc; chờ khôi phục và xác nhận lại điểm nhận.' : ($o->public_failure ?: $o->delivery_message),
                 'botLeaseUntil'=>($lease=($activity->get($o->account_id) ?? collect())->max('lease_until')) ? \Carbon\Carbon::parse($lease)->toIso8601String() : null,'botOnline'=>$live,'failureCode'=>$o->failure_code,'publicFailure'=>$o->public_failure,'loginRetryAt'=>$o->login_retry_at ? \Carbon\Carbon::parse($o->login_retry_at)->toIso8601String() : null,'cancelRequested'=>(bool)$o->cancel_requested,'canCancel'=>!$delivered && !$o->cancel_requested && !in_array($o->status,['review','completed','refunded']) && NroOrderRefund::eligible($o,$recovering->has($o->id)),'refundRequested' => (bool)$o->refund_requested, 'refundAmount' => (int)$o->refund_amount, 'refundedAt' => $o->refunded_at, 'session' => $session,

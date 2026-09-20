@@ -26,10 +26,10 @@ class NroShopController extends Controller
         $cachePayload['q'] = trim((string) ($cachePayload['q'] ?? ''));
         if (($cachePayload['q'] ?? '') === '') unset($cachePayload['q']);
         ksort($cachePayload);
-        $cacheKey = ApiCache::key('nro-shop:listings', 'filters-v5-visibility', (string) \Illuminate\Support\Facades\Cache::get('nro-shop:visibility-version', '0'), json_encode($cachePayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        $cacheKey = ApiCache::key('nro-shop:listings', 'filters-v6-packages', (string) \Illuminate\Support\Facades\Cache::get('nro-shop:visibility-version', '0'), json_encode($cachePayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 
         $payload = ApiCache::remember('public:nro-shop:listings', $cacheKey, 60, function () use ($filters, $s, $itemFilters) {
-            $q = DB::table('item_listings')->where('status', 'active')->whereIn('account_id', DB::table('nro_accounts')->select('id')->whereNull('deleted_at')->where('shop_hidden', false)->where('login_sale_blocked', false))->whereNotExists(fn ($orders) => $orders->selectRaw('1')->from('item_orders')->whereColumn('item_orders.listing_id', 'item_listings.id'));
+            $q = DB::table('item_listings')->where('status', 'active')->whereIn('account_id', DB::table('nro_accounts')->select('id')->whereNull('deleted_at')->where('shop_hidden', false)->where('login_sale_blocked', false))->where('policy_blocked', false);
             if (! empty($filters['server'])) $q->whereIn('account_id', DB::table('nro_accounts')->select('id')->where('server_id', (int) $filters['server']));
             $search = trim((string) ($filters['q'] ?? ''));
             if ($search !== '' && empty($filters['group'])) {
@@ -77,7 +77,7 @@ class NroShopController extends Controller
             $page = $q->orderByDesc('id')->paginate(20);
             $payloads = $s->listings($page->items());
             return [
-                'data' => collect($page->items())->map(fn ($i) => Arr::except($payloads[$i->id], ['description']))->values(),
+                'data' => collect($page->items())->map(fn ($i) => $this->publicListing($payloads[$i->id]))->values(),
                 'from' => $page->firstItem(), 'to' => $page->lastItem(), 'filters' => $itemFilters->metadata(),
                 'lastPage' => $page->lastPage(), 'total' => $page->total(), 'currentPage' => $page->currentPage(),
                 'servers' => ApiCache::remember('public:nro-metadata','server-metadata',60,fn()=>DB::table('servers')->where('status',true)->get(['id','name','name_view']))
@@ -92,20 +92,26 @@ class NroShopController extends Controller
             ApiCache::key('nro-shop:listing', $id, (string) \Illuminate\Support\Facades\Cache::get('nro-shop:visibility-version', '0')),
             120,
             function () use ($id, $s) {
-                $l = DB::table('item_listings')->where('id', $id)->where('status', 'active')->whereIn('account_id', DB::table('nro_accounts')->select('id')->whereNull('deleted_at')->where('shop_hidden', false)->where('login_sale_blocked', false))->whereNotExists(fn ($orders) => $orders->selectRaw('1')->from('item_orders')->whereColumn('item_orders.listing_id', 'item_listings.id'))->first();
+                $l = DB::table('item_listings')->where('id', $id)->where('status', 'active')->whereIn('account_id', DB::table('nro_accounts')->select('id')->whereNull('deleted_at')->where('shop_hidden', false)->where('login_sale_blocked', false))->where('policy_blocked', false)->first();
                 abort_unless($l, 404);
 
-                return ['data' => Arr::except($s->listing($l), ['description'])];
+                return ['data' => $this->publicListing($s->listing($l))];
             }
         );
 
         return response()->json($payload);
     }
+    private function publicListing(array $data): array
+    {
+        $public = $data['publicDescription'] ?? null;
+        return [...Arr::except($data, ['description', 'publicDescription']), ...($public !== null && $public !== '' ? ['description'=>$public] : [])];
+    }
     public function purchase(Request $r, NroShopService $s)
     {
         $v = $r->validate(['listingId' => 'required|integer', 'recipientName' => ['nullable','string','max:50','regex:/^[\pL\pN_]+$/u'],
+            'packageQuantity' => 'sometimes|integer|min:1|max:1000000', 'expectedPrice' => 'sometimes|integer|min:1|max:9999999999',
             'serverId' => 'required|integer|exists:servers,id', 'requestKey' => 'required|uuid']);
-        return response()->json(['data' => $this->freshOrder($s->purchase($r->user(), $v['listingId'], $v['recipientName'] ?? '', $v['serverId'], $v['requestKey']))]);
+        return response()->json(['data' => $this->freshOrder($s->purchase($r->user(), $v['listingId'], $v['recipientName'] ?? '', $v['serverId'], $v['requestKey'], $v['packageQuantity'] ?? 1, $v['expectedPrice'] ?? null))]);
     }
     public function orders(Request $r, NroShopService $s)
     {

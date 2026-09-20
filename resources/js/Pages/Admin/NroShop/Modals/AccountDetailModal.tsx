@@ -268,9 +268,9 @@ export default function AccountDetailModal({
                                 render: (_, i: Inventory) => (
                                     <InputNumber
                                         min={1}
-                                        max={Math.max(1, i.selectable)}
+                                        max={i.stackable ? Math.max(1, i.selectable) : 1}
                                         precision={0}
-                                        disabled={!inventoryReady || !i.sellable || !selected[i.id]}
+                                        disabled={!inventoryReady || !i.sellable || !selected[i.id] || !i.stackable}
                                         value={selected[i.id] || 1}
                                         onChange={v => setSelected(s => ({ ...s, [i.id]: v || 1 }))}
                                     />

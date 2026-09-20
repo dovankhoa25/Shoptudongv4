@@ -350,20 +350,24 @@ class NroShopWorkflowTest extends TestCase
         $this->postJson('/api/nro-shop/orders', [...$body, 'recipientName' => 'different'])->assertUnprocessable();
         $this->postJson('/api/nro-shop/orders', [...$body, 'serverId' => 20, 'requestKey' => (string) Str::uuid()])->assertUnprocessable();
     }
-    public function test_listings_allocate_stock_before_purchase_and_pausing_releases_it(): void
+    public function test_listings_allocate_stock_and_only_withdrawing_releases_it(): void
     {
         $seller = $this->seller(); $a = $this->warehouse($seller);
-        app(NroSnapshotService::class)->ingest($a, $this->payload(500));
-        $item = DB::table('nro_inventory_items')->where('account_id', $a->id)->orderBy('id')->first();
+        $payload=$this->payload(500); foreach($payload['snapshot']['bag'] as &$line) $line['templateId']=223; unset($line);
+        app(NroSnapshotService::class)->ingest($a, $payload);
+        $item = DB::table('nro_inventory_items')->where('account_id', $a->id)->where('template_id',223)->orderBy('id')->first();
         $url = '/admin/nro-shop/accounts/'.$a->id.'/listings';
         $body = ['title' => 'Đá 300', 'price' => 200, 'items' => [['id' => $item->id, 'quantity' => 300]]];
         $first = $this->actingAs($seller, 'web')->postJson($url, $body)->assertOk()->json('id');
         $this->getJson('/admin/nro-shop/accounts/'.$a->id)->assertOk()->assertJsonPath('inventory.0.selectable', 200)->assertJsonPath('inventory.0.listed', 300);
         $this->postJson($url, [...$body, 'items' => [['id' => $item->id, 'quantity' => 201]]])->assertUnprocessable();
         $second = $this->postJson($url, [...$body, 'items' => [['id' => $item->id, 'quantity' => 200]]])->assertOk()->json('id');
-        app(NroSnapshotService::class)->ingest($a, $this->payload(500));
+        $payload=$this->payload(500); foreach($payload['snapshot']['bag'] as &$line) $line['templateId']=223; unset($line);
+        app(NroSnapshotService::class)->ingest($a, $payload);
         $this->getJson('/admin/nro-shop/accounts/'.$a->id)->assertOk()->assertJsonPath('inventory.0.selectable', 0);
         $this->patchJson('/admin/nro-shop/listings/'.$first, ['status' => 'paused'])->assertOk();
+        $this->getJson('/admin/nro-shop/accounts/'.$a->id)->assertOk()->assertJsonPath('inventory.0.selectable', 0);
+        $this->patchJson('/admin/nro-shop/listings/'.$first, ['status' => 'archived'])->assertOk();
         $this->getJson('/admin/nro-shop/accounts/'.$a->id)->assertOk()->assertJsonPath('inventory.0.selectable', 300);
         $third = $this->postJson($url, $body)->assertOk()->json('id');
         $this->patchJson('/admin/nro-shop/listings/'.$first, ['status' => 'active'])->assertUnprocessable();
@@ -386,7 +390,7 @@ class NroShopWorkflowTest extends TestCase
         $this->patchJson('/admin/nro-shop/sale-policy', ['enabled' => true, 'ids' => [123]])->assertOk();
         $item = DB::table('nro_inventory_items')->where('account_id', $a->id)->first();
         $body = ['title' => 'Blocked', 'price' => 100, 'items' => [['id' => $item->id, 'quantity' => 1]]];
-        $this->actingAs($seller, 'web')->getJson('/admin/nro-shop/accounts/'.$a->id)->assertOk()->assertJsonPath('inventory.0.sellable', false);
+        $this->actingAs($seller, 'web')->getJson('/admin/nro-shop/accounts/'.$a->id)->assertOk()->assertJsonCount(0, 'inventory');
         $this->postJson('/admin/nro-shop/accounts/'.$a->id.'/listings', $body)->assertUnprocessable();
         $this->patchJson('/admin/nro-shop/listings/'.$id, ['status' => 'paused'])->assertOk();
         $this->patchJson('/admin/nro-shop/listings/'.$id, ['status' => 'active'])->assertUnprocessable();
@@ -476,9 +480,9 @@ class NroShopWorkflowTest extends TestCase
         $this->assertEquals(0, DB::table('nro_inventory_items')->where('account_id', $a->id)->sum('reserved'));
         $this->assertDatabaseHas('item_orders', ['id' => $order, 'status' => 'refunded']);
         $this->assertDatabaseHas('nro_delivery_sessions', ['order_id' => $order, 'status' => 'failed', 'receiver_credentials' => null, 'receiver_lock' => null]);
-        $this->assertDatabaseHas('item_listings', ['id' => $listing, 'status' => 'sold']);
+        $this->assertDatabaseHas('item_listings', ['id' => $listing, 'status' => 'active', 'packages_remaining'=>1]);
         $this->assertSame('refunded', app(NroShopService::class)->listing(DB::table('item_listings')->find($listing))['lastOrderStatus']);
-        $this->getJson('/api/nro-shop/listings/'.$listing)->assertNotFound();
+        $this->getJson('/api/nro-shop/listings/'.$listing)->assertOk()->assertJsonPath('data.available',0);
         $this->actingAs($seller, 'web')->patchJson('/admin/nro-shop/listings/'.$listing, ['status' => 'active'])->assertUnprocessable();
     }
 
@@ -733,7 +737,7 @@ class NroShopWorkflowTest extends TestCase
         $listing = DB::table('item_listings')->find($id);
         $a->update(['last_synced_at' => null]);
         $data = app(NroShopService::class)->listing($listing);
-        $this->assertEquals(2, $data['stockAvailable']);
+        $this->assertEquals(1, $data['stockAvailable']);
         $this->assertEquals(0, $data['available']);
         $this->assertContains('Đang chờ tool cập nhật tồn kho sau thay đổi', $data['unavailableReasons']);
         DB::table('nro_inventory_items')->where('account_id', $a->id)->update(['reserved' => 2]);
@@ -1375,7 +1379,7 @@ class NroShopWorkflowTest extends TestCase
         $this->actingAs($foreign, 'web')->patchJson('/admin/nro-shop/listings/'.$listing, ['price' => 1])->assertNotFound();
         $buyer = User::factory()->create(['balance' => 1000]);
         $order = app(NroShopService::class)->purchase($buyer, $listing, 'customer', 10, (string) Str::uuid());
-        $this->actingAs($seller, 'web')->patchJson('/admin/nro-shop/listings/'.$listing, ['price' => 999])->assertUnprocessable();
+        $this->actingAs($seller, 'web')->patchJson('/admin/nro-shop/listings/'.$listing, ['price' => 999])->assertOk();
         $this->assertDatabaseHas('item_orders', ['id' => $order, 'price' => 350]);
     }
 
@@ -1830,7 +1834,8 @@ class NroShopWorkflowTest extends TestCase
         $this->assertEquals(1000,$buyer->fresh()->balance);$this->assertEquals(0,$seller->fresh()->balance);
         $this->assertEquals(0,DB::table('nro_inventory_items')->where('account_id',$a->id)->sum('reserved'));
         $this->assertEquals(1,DB::table('transactions')->where('idempotency_key',"nro-order:$order:admin-refund")->count());
-        $this->assertDatabaseHas('item_listings',['account_id'=>$a->id,'status'=>'sold']);
+        $this->assertDatabaseHas('item_listings',['account_id'=>$a->id,'status'=>'active','packages_remaining'=>1]);
+        $this->assertEquals(0,app(NroShopService::class)->listing(DB::table('item_listings')->where('account_id',$a->id)->first())['available']);
     }
     public function test_missing_partial_order_cannot_refund_and_unblocks_only_after_stock_refresh(): void
     {

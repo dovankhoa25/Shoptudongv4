@@ -50,7 +50,7 @@ export default function WarehouseListingsModal({
                     total: rows.total,
                     pageSize: rows.perPage,
                     showSizeChanger: false,
-                    showTotal: total => `${total} gói`,
+                    showTotal: total => `${total} tin bán`,
                     onChange: page => load(page),
                 }}
                 columns={[
@@ -88,17 +88,20 @@ export default function WarehouseListingsModal({
                         width: 130,
                         render: (_, l: Listing) => (
                             <Space wrap>
-                                {caps.manageListings && l.status !== 'sold' && <EditListingPrice listing={l} disabled={busy} onSaved={() => load(rows.page)} />}
-                                {shopUrl && l.status !== 'sold' && (
-                                    <Button title="Xem trên shop" aria-label="Xem trên shop" icon={<Eye size={16} />} href={`${shopUrl}/mua-do/${l.id}`} target="_blank" rel="noopener noreferrer" />
+                                {caps.manageListings && l.status !== 'archived' && <EditListingPrice listing={l} disabled={busy} onSaved={() => load(rows.page)} />}
+                                {shopUrl && l.status !== 'archived' && (
+                                    <Button title="Xem trên shop" aria-label="Xem trên shop" icon={<Eye size={16} />} href={`${shopUrl}/ban-do-tu-dong/${l.id}`} target="_blank" rel="noopener noreferrer" />
                                 )}
-                                {caps.manageListings && l.status !== 'sold' && (
+                                {caps.manageListings && l.status !== 'archived' && (
                                     <Dropdown trigger={['click']} menu={{ items: [{
                                         key: 'toggle', label: l.status === 'active' ? 'Tạm dừng gói' : 'Đăng lại gói', disabled: busy,
                                         onClick: () => run(async () => {
                                             await axios.patch(`${base}/listings/${l.id}`, { status: l.status === 'active' ? 'paused' : 'active' });
                                             await load(rows.page);
                                         }),
+                                    }, {
+                                        key: 'withdraw', label: 'Thu hồi tin, trả đồ chưa bán về kho', danger: true, disabled: busy,
+                                        onClick: () => Modal.confirm({ title: 'Thu hồi tin bán?', content: 'Phần chưa bán được trả về kho để tạo tin khác. Đơn đã mua vẫn được giao.', okText: 'Thu hồi', cancelText: 'Đóng', onOk: () => run(async () => { await axios.patch(`${base}/listings/${l.id}`, { status: 'archived' }); window.dispatchEvent(new Event('admin:refresh-if-offline')); }) }),
                                     }] }}><Button title="Thao tác khác" aria-label="Thao tác khác" icon={<MoreVertical size={16} />} disabled={busy} /></Dropdown>
                                 )}
                             </Space>

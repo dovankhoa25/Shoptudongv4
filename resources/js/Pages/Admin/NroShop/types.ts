@@ -31,6 +31,7 @@ export type Account = {
     id: number;
     account_name: string;
     ownerUsername?: string;
+    ownerId?: number;
     deliveryActivity?: { preparing?: boolean; message?: string | null };
     server_index: number;
     server_id: number;
@@ -61,6 +62,7 @@ export type Inventory = {
     listed: number;
     selectable: number;
     sellable: boolean;
+    stackable?: boolean;
     item: NroItem;
     locations: { location: string; slot: number; quantity: number }[];
 };
@@ -71,11 +73,16 @@ export type Listing = {
     shopHidden?: boolean;
     accountName?: string;
     ownerUsername?: string;
+    ownerId?: number;
     title: string;
     description?: string;
     price: string;
     available: number;
     stockAvailable?: number;
+    stockMode?: 'fixed' | 'auto';
+    packagesRemaining?: number;
+    policyBlocked?: boolean;
+    quantityEnabled?: boolean;
     unavailableReasons?: string[];
     status: string;
     lastOrderStatus?: string;
@@ -84,6 +91,8 @@ export type Listing = {
 
 export type Order = {
     flow?: NroOrderFlow;
+    packageQuantity?: number;
+    unitPrice?: string;
     refundRequested?: boolean;
     refundAmount?: number;
     refundedAt?: string;
@@ -93,6 +102,7 @@ export type Order = {
     accountId?: number;
     buyerUsername?: string;
     ownerUsername?: string;
+    ownerId?: number;
     accountName?: string;
     botName?: string;
     botActivity?: { waitingCount: number; servingOther: boolean; phase?: string | null; message?: string | null; preparing?: boolean; pauseStartedAt?: string | null };

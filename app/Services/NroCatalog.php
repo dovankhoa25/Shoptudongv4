@@ -7,8 +7,14 @@ class NroCatalog
     private array $options;
     public function __construct()
     {
-        $this->items = array_column(json_decode(file_get_contents(resource_path('nro/item-templates.json')), true), null, 'id');
-        $this->options = array_column(json_decode(file_get_contents(resource_path('nro/item-option-templates.json')), true), 'name', 'id');
+        $this->items = self::templates();
+        $file=resource_path('nro/item-option-templates.json');
+        $this->options = \App\Support\ApiCache::remember('internal:nro-catalog','options:'.filemtime($file),86400,fn()=>array_column(json_decode(file_get_contents($file),true),'name','id'));
+    }
+    public static function templates(): array
+    {
+        $file=resource_path('nro/item-templates.json');
+        return \App\Support\ApiCache::remember('internal:nro-catalog','items:'.filemtime($file),86400,fn()=>array_column(json_decode(file_get_contents($file),true),null,'id'));
     }
     public function item(array $item): array
     {

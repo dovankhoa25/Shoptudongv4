@@ -17,7 +17,8 @@ export const statusName: Record<string, string> = {
     active: 'Đang bán',
     paused: 'Tạm dừng',
     draft: 'Nháp',
-    sold: 'Đã bán',
+    sold: 'Đã bán hết',
+    archived: 'Đã thu hồi',
 };
 
 export const publishStatusName: Record<string, string> = {
@@ -67,7 +68,9 @@ export function ListingAvailability({ listing }: { listing: Listing }) {
 
     return (
         <div className="min-w-40 text-xs">
-            <strong className="text-sm">{listing.available} gói có thể mua</strong>
+            <strong className="text-sm">{listing.available.toLocaleString('vi-VN')} gói có thể mua</strong>
+            <div>{listing.stockMode === 'auto' ? 'Tự động theo tồn kho' : `Cố định · còn phân ${listing.packagesRemaining ?? 1} gói`}</div>
+            {listing.policyBlocked && <Tag color="red">Bị chặn quyền bán</Tag>}
             <div className="mt-1 text-slate-500 dark:text-slate-400">
                 Tồn chưa giữ cho đơn: {listing.stockAvailable ?? listing.available} gói
             </div>

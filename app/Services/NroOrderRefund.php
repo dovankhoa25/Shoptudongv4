@@ -89,6 +89,13 @@ class NroOrderRefund
                 'delivery_message'=>'Đã hoàn '.number_format($amount,0,',','.').'đ. Đơn đã kết thúc.']);
             DB::table('item_orders')->where('id',$id)->update(NroOrderFlow::terminalChanges('refunded',$amount));
             NroOrderFlow::closeExecution($id,'refunded');
+            $listing = DB::table('item_listings')->where('id',$o->listing_id)->lockForUpdate()->first();
+            if ($listing && $listing->stock_mode === 'fixed' && $listing->status !== 'archived') {
+                DB::table('item_listings')->where('id',$listing->id)->update([
+                    'packages_remaining'=>(int)($listing->packages_remaining ?? 0)+(int)($o->package_quantity ?? 1),
+                    'status'=>$listing->status === 'sold' ? 'active' : $listing->status, 'updated_at'=>now(),
+                ]);
+            }
             $account->update(['last_synced_at'=>null]);
         }, 3);
         ApiCache::clearGroup('public:nro-shop:listings');

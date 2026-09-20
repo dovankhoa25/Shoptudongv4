@@ -111,7 +111,7 @@ export default function NroShop({
         },
         {
             key: 'listings',
-            label: `Gói đồ (${stats.listings})`,
+            label: `Tin bán đồ (${stats.listings})`,
             show: caps.listings,
             children: <ListingsTab caps={caps} shopUrl={shopUrl} run={run} busy={busy} dataVersion={dataVersion} />,
         },

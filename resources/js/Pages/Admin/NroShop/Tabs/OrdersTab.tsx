@@ -80,6 +80,7 @@ export default function OrdersTab({ dataVersion, canRefund, canCheck, canReconci
                                 <div className="text-xs text-slate-500 dark:text-slate-400">
                                     Tạo lúc {dateTime(o.createdAt)}
                                 </div>
+                                <div className="mt-1 text-xs text-slate-500">{o.packageQuantity ?? 1} gói × {money(o.unitPrice ?? o.price)}</div>
                                 <ItemStrip items={o.items} />
                             </>
                         ),

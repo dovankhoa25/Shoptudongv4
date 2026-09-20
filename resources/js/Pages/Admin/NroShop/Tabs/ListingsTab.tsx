@@ -1,7 +1,7 @@
 import EditListingPrice from '../Modals/EditListingPrice';
 import axios from 'axios';
 import { Eye, MoreVertical } from 'lucide-react';
-import { Dropdown, Button, Input, Select, Space, Table, Tag } from 'antd';
+import { Dropdown, Button, Modal, Input, Select, Space, Table, Tag } from 'antd';
 import { base, ListingAvailability, ItemStrip, money, statusName } from '../shared';
 import { usePagedTab } from '../usePagedTab';
 import { LiveDataNotice } from '@/Realtime/LiveDataNotice';
@@ -32,7 +32,7 @@ export default function ListingsTab({
             <div className="mb-3 flex flex-wrap gap-2">
                 <Input.Search
                     aria-label="Tìm gói đồ"
-                    placeholder="Tên gói hoặc mã gói"
+                    placeholder="Tên, acc, CTV · #id · #tk:acc · #ctv:tên"
                     className="!w-64"
                     allowClear
                     value={(filters.q as string) || ''}
@@ -49,7 +49,9 @@ export default function ListingsTab({
                     options={[
                         { value: 'active', label: 'Đang bán' },
                         { value: 'paused', label: 'Tạm dừng' },
-                        { value: 'sold', label: 'Đã bán' },
+                        { value: 'sold', label: 'Đã bán hết số gói' },
+                        { value: 'archived', label: 'Đã thu hồi' },
+                        { value: 'blocked', label: 'Bị chặn quyền bán' },
                     ]}
                 />
                 <Button type="primary" onClick={() => apply()}>
@@ -58,6 +60,7 @@ export default function ListingsTab({
                 <Button onClick={() => apply({})}>Xóa lọc</Button>
                 <Button onClick={reload}>Làm mới</Button>
             </div>
+            <p className="mb-3 text-xs text-slate-500">Tin bán và số gói còn lại. Xem từng lần mua tại tab Đơn giao đồ. Tìm nâng cao: #tk:12, #ctv:username, #goi:254, #vp:223.</p>
             <Table
                 rowKey="id"
                 loading={loading}
@@ -68,7 +71,7 @@ export default function ListingsTab({
                     total: rows.total,
                     pageSize: rows.perPage,
                     showSizeChanger: false,
-                    showTotal: total => `${total} gói`,
+                    showTotal: total => `${total} tin bán`,
                     onChange: page => apply(filters, page),
                 }}
                 columns={[
@@ -101,9 +104,7 @@ export default function ListingsTab({
                         title: 'Trạng thái',
                         width: 120,
                         render: (_, l: Listing) =>
-                            l.shopHidden && l.status === 'active' ? <Tag color="orange">Tạm ẩn theo acc</Tag> : l.lastOrderStatus === 'refunded' ? (
-                                <Tag color="orange">Đã hoàn tiền</Tag>
-                            ) : (
+                            l.shopHidden && l.status === 'active' ? <Tag color="orange">Tạm ẩn theo acc</Tag> : l.policyBlocked ? <Tag color="red">Bị chặn quyền bán</Tag> : (
                                 <Tag color={l.status === 'active' ? 'green' : undefined}>
                                     {statusName[l.status] || l.status}
                                 </Tag>
@@ -114,17 +115,20 @@ export default function ListingsTab({
                         width: 130,
                         render: (_, l: Listing) => (
                             <Space wrap>
-                                {caps.manageListings && l.status !== 'sold' && <EditListingPrice listing={l} disabled={busy} onSaved={reload} />}
-                                {shopUrl && l.status !== 'sold' && (
-                                    <Button title="Xem trên shop" aria-label="Xem trên shop" icon={<Eye size={16} />} href={`${shopUrl}/mua-do/${l.id}`} target="_blank" rel="noopener noreferrer" />
+                                {caps.manageListings && l.status !== 'archived' && <EditListingPrice listing={l} disabled={busy} onSaved={reload} />}
+                                {shopUrl && l.status !== 'archived' && (
+                                    <Button title="Xem trên shop" aria-label="Xem trên shop" icon={<Eye size={16} />} href={`${shopUrl}/ban-do-tu-dong/${l.id}`} target="_blank" rel="noopener noreferrer" />
                                 )}
-                                {caps.manageListings && l.status !== 'sold' && (
+                                {caps.manageListings && l.status !== 'archived' && (
                                     <Dropdown trigger={['click']} menu={{ items: [{
                                         key: 'toggle', label: l.status === 'active' ? 'Tạm dừng gói' : 'Đăng lại gói', disabled: busy,
                                         onClick: () => run(async () => {
                                             await axios.patch(`${base}/listings/${l.id}`, { status: l.status === 'active' ? 'paused' : 'active' });
                                             await reload();
                                         }),
+                                    }, {
+                                        key: 'withdraw', label: 'Thu hồi tin, trả đồ chưa bán về kho', danger: true, disabled: busy,
+                                        onClick: () => Modal.confirm({ title: 'Thu hồi tin bán?', content: 'Phần chưa bán được trả về kho để tạo tin khác. Đơn đã mua vẫn được giao.', okText: 'Thu hồi', cancelText: 'Đóng', onOk: () => run(async () => { await axios.patch(`${base}/listings/${l.id}`, { status: 'archived' }); window.dispatchEvent(new Event('admin:refresh-if-offline')); }) }),
                                     }] }}><Button title="Thao tác khác" aria-label="Thao tác khác" icon={<MoreVertical size={16} />} disabled={busy} /></Dropdown>
                                 )}
                             </Space>

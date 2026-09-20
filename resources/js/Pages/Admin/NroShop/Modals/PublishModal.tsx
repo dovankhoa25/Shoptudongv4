@@ -39,6 +39,11 @@ export default function PublishModal({
 }) {
     const [attributesReady, setAttributesReady] = useState(false);
     const isNick = account?.usage_type === 'nick';
+    const selectedRows = inventory.filter(row => selected[row.id]);
+    const stackable = selectedRows.length > 0 && selectedRows.every(row => row.stackable);
+    const maxPackages = selectedRows.length ? Math.min(...selectedRows.map(row => Math.floor(row.selectable / selected[row.id]))) : 1;
+    const stockMode = Form.useWatch('stockMode', form) || 'fixed';
+    const packageCount = Form.useWatch('packageCount', form) || 1;
     const defaultTitle = [...new Set(Object.keys(selected).map(id => inventory.find(row => row.id === Number(id))).filter((row): row is Inventory => !!row).map(row => row.item.name?.trim() || `Vật phẩm #${row.item.templateId}`))].join(', ').slice(0, 180);
 
     // The modal body is destroyed while hidden but this state is not, so a previous account's
@@ -82,6 +87,7 @@ export default function PublishModal({
                         const endpoint = isNick ? 'nick' : 'listings';
                         const { data } = await axios.post(`${base}/accounts/${account?.id}/${endpoint}`, {
                             ...v,
+                            ...(!isNick ? { stockMode: stackable ? stockMode : 'fixed', packageCount: stackable && stockMode === 'fixed' ? packageCount : 1 } : {}),
                             items: Object.entries(selected).map(([id, quantity]) => ({ id: Number(id), quantity })),
                         });
                         message.success(account?.nick ? `Đã cập nhật tin #${data.id}` : `Đã đăng mã #${data.id}`);
@@ -130,11 +136,23 @@ export default function PublishModal({
                 )}
                 <Form.Item
                     name="price"
-                    label={isNick ? 'Giá nick (đ)' : 'Giá toàn bộ gói (đ)'}
+                    label={isNick ? 'Giá nick (đ)' : 'Giá mỗi gói (đ)'}
                     rules={[{ required: true }]}
                 >
                     <InputNumber min={1} max={9999999999} className="w-full" />
                 </Form.Item>
+                {!isNick && <div className="mb-4 rounded-lg border border-slate-300 p-3 dark:border-slate-700">
+                    {stackable ? <>
+                        <Form.Item name="stockMode" label="Số gói mở bán" initialValue="fixed">
+                            <Select options={[{ value: 'fixed', label: 'Cố định số gói' }, { value: 'auto', label: 'Tự động theo tồn kho' }]} />
+                        </Form.Item>
+                        {stockMode === 'fixed' && <Form.Item name="packageCount" label="Số gói đăng bán" initialValue={1} rules={[{ required: true }]}>
+                            <InputNumber min={1} max={Math.max(1, maxPackages)} precision={0} className="!w-full" />
+                        </Form.Item>}
+                        <p className="text-xs text-slate-500">{stockMode === 'auto' ? `Hiện có thể bán ${maxPackages.toLocaleString('vi-VN')} gói. Tồn tự cập nhật sau mỗi lần lấy đủ dữ liệu kho.` : `Tối đa ${maxPackages.toLocaleString('vi-VN')} gói. Nhập thêm đồ không tự tăng số gói.`}</p>
+                    </> : <p className="text-sm">Gói có trang bị: đăng một gói, mỗi trang bị một món.</p>}
+                    <p className="mt-2 text-xs text-slate-500">Giá ở trên là giá mỗi gói; khách chọn số gói khi mua. Đồ giữ cho đơn khác đã được trừ.</p>
+                </div>}
                 {open && isNick && account && (
                     <NroNickAttributes
                         accountId={account.id}
@@ -143,7 +161,7 @@ export default function PublishModal({
                         onReady={setAttributesReady}
                     />
                 )}
-                <Form.Item name="description" label="Mô tả">
+                <Form.Item name="description" label={isNick ? "Mô tả" : "Mô tả công khai trên shop"}>
                     <Input.TextArea rows={3} />
                 </Form.Item>
                 <Space>

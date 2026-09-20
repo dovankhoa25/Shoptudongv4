@@ -9,6 +9,8 @@ use App\Models\NroAccount;
 use App\Models\NroAccountSnapshot;
 use App\Services\NroShopService;
 use App\Services\NroListingStock;
+use App\Services\NroSellerPolicy;
+use App\Services\NroAdminSearch;
 use App\Models\Setting;
 use App\Services\NroNickAttributeService;
 use App\Support\ApiCache;
@@ -88,7 +90,7 @@ class NroShopController extends Controller
         $filters = $r->validate(['q' => 'nullable|string|max:100', 'usage' => 'nullable|in:nick,warehouse', 'server' => 'nullable|integer',
             'state' => 'nullable|in:waiting,published,attention,sold,hidden', 'page' => 'nullable|integer|min:1']);
         if (!empty($filters['server'])) $filters['server'] = (int) $filters['server'];
-        if (!empty($filters['q'])) $q->where(fn ($s) => $s->where('account_name', 'like', '%'.$filters['q'].'%')->orWhere('character_name', 'like', '%'.$filters['q'].'%'));
+        NroAdminSearch::apply($q, $filters['q'] ?? '', 'accounts');
         if (!empty($filters['usage'])) $q->where('usage_type', $filters['usage']);
         if (!empty($filters['server'])) $q->where('server_id', $filters['server']);
         if (($filters['state'] ?? '') === 'hidden') $q->where('shop_hidden', true);
@@ -120,7 +122,7 @@ class NroShopController extends Controller
             'loginServers' => $caps['manageAccounts'] || $caps['settings'] ? DB::table('server_game_login')->get(['id','name']) : [],
             'accounts' => $caps['accounts'] ? $accounts->map(fn ($a) => [
                 'flow'=>\App\Services\NroAccountFlow::present($a,$warehouseJobs->get($a->id) ?? collect()),
-                'deliveryActivity' => \App\Services\NroWarehouseActivity::publicPayload($a, $warehouseJobs->get($a->id) ?? collect()), 'ownerUsername' => $owners->get($a->user_id), 'id' => $a->id, 'account_name' => $a->account_name, 'server_index' => $a->server_index, 'usage_type' => $a->usage_type,
+                'deliveryActivity' => \App\Services\NroWarehouseActivity::publicPayload($a, $warehouseJobs->get($a->id) ?? collect()), 'ownerUsername' => $owners->get($a->user_id), 'ownerId' => $a->user_id, 'id' => $a->id, 'account_name' => $a->account_name, 'server_index' => $a->server_index, 'usage_type' => $a->usage_type,
                 'character_name' => $a->character_name, 'last_synced_at' => $a->last_synced_at, 'latest_snapshot_id' => $a->latest_snapshot_id,
                 'server_id' => $a->server_id, 'server_game_id' => $a->server_game_id, 'delivery_map' => $a->delivery_map, 'delivery_zone' => $a->delivery_zone, 'wait_minutes' => $a->wait_minutes,
                 'delivery_zone_mode' => $a->delivery_zone_mode,
@@ -173,19 +175,13 @@ class NroShopController extends Controller
     public function listingsIndex(Request $r, NroShopService $shop)
     {
         abort_unless($this->capabilities($r)['listings'], 403);
-        $v = $r->validate(['q' => 'nullable|string|max:100', 'status' => 'nullable|in:active,paused,sold,draft',
+        $v = $r->validate(['q' => 'nullable|string|max:100', 'status' => 'nullable|in:active,paused,sold,draft,archived,blocked',
             'accountId' => 'nullable|integer', 'page' => 'nullable|integer|min:1']);
         $q = DB::table('item_listings')->whereIn('account_id', $this->ownedAccountIds($r));
-        if (($v['status'] ?? '')==='pending') $q->whereNotIn('status', ['completed','refunded']);
+        if (($v['status'] ?? '')==='blocked') $q->where('policy_blocked', true);
         elseif (!empty($v['status'])) $q->where('status', $v['status']);
         if (!empty($v['accountId'])) $q->where('account_id', (int) $v['accountId']);
-        if (!empty(trim($v['q'] ?? ''))) {
-            $term = trim($v['q']);
-            $q->where(function ($s) use ($term) {
-                $s->where('title', 'like', '%'.$term.'%');
-                if (ctype_digit($term) && strlen($term) <= 18) $s->orWhere('id', (int) $term);
-            });
-        }
+        NroAdminSearch::apply($q, $v['q'] ?? '', 'listings');
         $page = $q->orderByDesc('id')->paginate(20);
         $rows = $page->getCollection();
         $payloads = $shop->listings($rows);
@@ -202,18 +198,10 @@ class NroShopController extends Controller
         $v = $r->validate(['q' => 'nullable|string|max:100', 'accountId' => 'nullable|integer', 'page' => 'nullable|integer|min:1',
             'status' => 'nullable|in:pending,queued,awaiting_receipt,processing,review,completed,refunded,failed,expired']);
         $q = DB::table('item_orders')->whereIn('account_id', $this->ownedAccountIds($r));
-        if (!empty($v['status'])) $q->where('status', $v['status']);
+        if (($v['status'] ?? '') === 'pending') $q->whereNotIn('status',['completed','refunded']);
+        elseif (!empty($v['status'])) $q->where('status',$v['status']);
         if (!empty($v['accountId'])) $q->where('account_id', (int) $v['accountId']);
-        if (!empty(trim($v['q'] ?? ''))) {
-            $term = trim($v['q']);
-            $q->where(function ($s) use ($term) {
-                $s->where('title', 'like', '%'.$term.'%')->orWhere('recipient_name', 'like', '%'.$term.'%')
-                    ->orWhereIn('buyer_id', DB::table('users')->select('id')->where('username', 'like', '%'.$term.'%'))
-                    ->orWhereIn('seller_id', DB::table('users')->select('id')->where('username', 'like', '%'.$term.'%'))
-                    ->orWhereIn('account_id', DB::table('nro_accounts')->select('id')->where('account_name', 'like', '%'.$term.'%')->orWhere('character_name', 'like', '%'.$term.'%'));
-                if (ctype_digit($term) && strlen($term) <= 18) $s->orWhere('id', (int) $term);
-            });
-        }
+        NroAdminSearch::apply($q, $v['q'] ?? '', 'orders');
         $page = $q->orderByDesc('id')->paginate(20);
         $payloads = $shop->orders($page->getCollection()->pluck('id'));
 
@@ -330,11 +318,12 @@ class NroShopController extends Controller
             || ($a->usage_type === 'nick' ? ($r->user()->can('nicks.create') || $r->user()->can('nicks.manage')) : $r->user()->can('item-listings.manage')), 403);
         $snapshot = NroAccountSnapshot::find($a->latest_snapshot_id);
         $allocated = NroListingStock::allocated($id); $policy = NroListingStock::policy();
+        $sellerPolicy = NroSellerPolicy::read((int)$a->user_id);
         return response()->json(['publishConfig' => $a->publish_config, 'snapshotFailures' => (int)$a->snapshot_failures, 'publishStatus' => $a->publish_status, 'publishError' => $a->publish_error, 'status' => $a->status, 'latestSnapshotId' => $a->latest_snapshot_id, 'nick' => $this->nickSummary($this->linkedNick($a->id)),
             'snapshot' => $snapshot ? ['data' => $snapshot->data_json, 'completeness' => $snapshot->completeness_json, 'summary' => $snapshot->summary_json] : null,
-            'inventory' => DB::table('nro_inventory_items')->where('account_id', $id)->where('quantity', '>', 0)->orderBy('id')->get()->map(fn ($i) => [
+            'inventory' => DB::table('nro_inventory_items')->where('account_id', $id)->where('quantity', '>', 0)->orderBy('id')->get()->filter(fn($i)=>NroSellerPolicy::allows(json_decode($i->item_json,true),$sellerPolicy,$policy))->values()->map(fn ($i) => [
                 'id' => $i->id, 'quantity' => $i->quantity, 'reserved' => $i->reserved, 'listed' => (int) ($allocated[$i->id] ?? 0),
-                'selectable' => NroListingStock::selectable($i, $allocated), 'sellable' => NroListingStock::allows((int) $i->template_id, $policy),
+                'selectable' => NroListingStock::selectable($i, $allocated), 'stackable' => NroSellerPolicy::stackable(json_decode($i->item_json,true)), 'sellable' => true,
                 'item' => json_decode($i->item_json, true), 'locations' => json_decode($i->locations_json, true)] )]);
     }
     public function salePolicy(Request $r)
@@ -348,10 +337,41 @@ class NroShopController extends Controller
             foreach ($v['groupOverrides'] as $row) NroShopService::require(in_array((int)$row['id'],$known,true),'ID phân nhóm không có trong catalog: '.$row['id']);
             Setting::set('nro_item_group_overrides',json_encode(array_map(fn($row)=>['id'=>(int)$row['id'],'group'=>$row['group']],$v['groupOverrides'])));
         }
-        Setting::set('nro_sale_item_policy', json_encode(['enabled' => $v['enabled'], 'ids' => array_map('intval', $v['ids'])]));
+        DB::transaction(function() use($v) {
+            $ids=NroAccount::where('usage_type','warehouse')->orderBy('id')->lockForUpdate()->pluck('id');
+            $policy=['enabled'=>$v['enabled'],'ids'=>array_map('intval',$v['ids'])];
+            Setting::set('nro_sale_item_policy',json_encode($policy));
+            NroSellerPolicy::refreshAccounts($ids,$policy);
+        },3);
         ApiCache::clearGroups(['public:nick', 'public:nro-shop:listings']);
         return response()->json(['ok' => true]);
     }
+    public function sellerPolicy(Request $r, int $id)
+    {
+        abort_unless($this->capabilities($r)['salePolicy'],403);
+        $account=$this->account($r,$id);
+        // A scoped CTV must never grant themself broader selling rights.
+        abort_unless($r->user()->canViewAllAdminData() || $r->user()->can('nro-sale-policy.manage'),403);
+        if ($r->isMethod('patch')) {
+            $v=$r->validate(['sellingEnabled'=>'required|boolean','allowIds'=>'nullable|array|max:10000','denyIds'=>'present|array|max:10000',
+                'allowIds.*'=>'integer|min:0|max:100000|distinct','denyIds.*'=>'integer|min:0|max:100000|distinct']);
+            $known=app(\App\Services\NroItemFilters::class)->knownIds();
+            foreach([...($v['allowIds'] ?? []),...$v['denyIds']] as $itemId) NroShopService::require(in_array((int)$itemId,$known,true),'ID không có trong catalog: '.$itemId);
+            DB::transaction(function() use($account,$v) {
+                $ids=NroAccount::where('user_id',$account->user_id)->where('usage_type','warehouse')->orderBy('id')->lockForUpdate()->pluck('id');
+                DB::table('nro_seller_policies')->updateOrInsert(['user_id'=>$account->user_id],[
+                    'selling_enabled'=>$v['sellingEnabled'],'allow_ids'=>empty($v['allowIds'])?null:json_encode(array_map('intval',$v['allowIds'])),
+                    'deny_ids'=>json_encode(array_map('intval',$v['denyIds'])),'updated_at'=>now(),'created_at'=>now(),
+                ]);
+                NroSellerPolicy::refreshAccounts($ids);
+            },3);
+        }
+        $policy=NroSellerPolicy::read((int)$account->user_id);
+        return response()->json(['userId'=>$account->user_id,'username'=>DB::table('users')->where('id',$account->user_id)->value('username'),
+            'sellingEnabled'=>$policy ? (bool)$policy->selling_enabled : true,'allowIds'=>json_decode($policy?->allow_ids ?? '[]',true),
+            'denyIds'=>json_decode($policy?->deny_ids ?? '[]',true)])->header('Cache-Control','no-store');
+    }
+
     public function password(Request $r, int $id)
     {
         $a = $this->account($r, $id); $v = $r->validate(['password' => 'required|string|max:64','confirmedStopped'=>'sometimes|boolean']);
@@ -472,6 +492,7 @@ class NroShopController extends Controller
     {
         $a = $this->account($r, $id);
         $v = $r->validate(['title' => 'nullable|string|max:180', 'description' => 'nullable|string|max:10000', 'price' => 'required|integer|min:1|max:9999999999',
+            'stockMode' => 'sometimes|in:fixed,auto', 'packageCount' => 'sometimes|integer|min:1|max:1000000',
             'items' => 'required|array|min:1|max:20', 'items.*.id' => 'required|integer|distinct', 'items.*.quantity' => 'required|integer|min:1|max:1000000000']);
         $listing = DB::transaction(function () use ($a, $v) {
             $a = NroAccount::whereKey($a->id)->lockForUpdate()->firstOrFail();
@@ -481,12 +502,17 @@ class NroShopController extends Controller
             NroShopService::require($snapshot && ($snapshot->completeness_json['bag'] ?? false) && ($snapshot->completeness_json['chest'] ?? false) && ($snapshot->completeness_json['equipped'] ?? false) && $a->last_synced_at, 'Chưa lấy đủ hành trang, rương và trang bị. Yêu cầu tool lấy lại dữ liệu trước khi tạo gói đồ.');
             $title = trim((string) ($v['title'] ?? ''));
             $itemNames = [];
-            $listing = DB::table('item_listings')->insertGetId(['user_id' => $a->user_id, 'account_id' => $a->id, 'title' => $title, 'description' => $v['description'] ?? '', 'price' => $v['price'], 'status' => 'active', 'created_at' => now(), 'updated_at' => now()]);
+            $mode=$v['stockMode'] ?? 'fixed'; $count=$mode==='auto' ? 1 : (int)($v['packageCount'] ?? 1);
+            $sellerPolicy=NroSellerPolicy::read((int)$a->user_id); $globalPolicy=NroListingStock::policy();
+            NroListingStock::assertNoAutomaticOverlap((int)$a->id,array_column($v['items'],'id'));
+            $listing = DB::table('item_listings')->insertGetId(['user_id' => $a->user_id, 'account_id' => $a->id, 'title' => $title, 'description' => $v['description'] ?? '', 'public_description' => $v['description'] ?? '', 'price' => $v['price'], 'stock_mode'=>$mode, 'packages_remaining'=>$count, 'status' => 'active', 'created_at' => now(), 'updated_at' => now()]);
             $allocated = NroListingStock::allocated($a->id, $listing);
             foreach ($v['items'] as $line) {
                 $item = DB::table('nro_inventory_items')->where('id', $line['id'])->where('account_id', $a->id)->lockForUpdate()->first();
-                NroShopService::require($item && NroListingStock::selectable($item, $allocated) >= $line['quantity'], 'Món không thuộc acc hoặc không đủ số lượng sau khi trừ đồ trong gói đang đăng và đơn chưa nhận.');
-                NroShopService::require(NroListingStock::allows((int) $item->template_id), 'ID vật phẩm không nằm trong danh sách được phép bán.');
+                NroShopService::require($item && NroListingStock::selectable($item, $allocated) >= $line['quantity'] * $count, 'Món không thuộc acc hoặc không đủ số lượng sau khi trừ đồ trong gói đang đăng và đơn chưa nhận.');
+                NroShopService::require(NroSellerPolicy::allows(json_decode($item->item_json,true),$sellerPolicy,$globalPolicy), 'Vật phẩm không được phép bán.');
+                NroShopService::require(NroSellerPolicy::stackable(json_decode($item->item_json,true)) || ($mode==='fixed' && $count===1 && (int)$line['quantity']===1), 'Trang bị chỉ đăng một món mỗi loại trong một gói cố định.');
+                NroShopService::require($line['quantity'] * $count <= 1000000000, 'Số lượng vật phẩm vượt giới hạn.');
                 $itemData = json_decode($item->item_json, true) ?: [];
                 $itemNames[] = trim((string) ($itemData['name'] ?? '')) ?: 'Vật phẩm #'.$item->template_id;
                 DB::table('item_listing_items')->insert(['listing_id' => $listing, 'inventory_item_id' => $item->id, 'quantity' => $line['quantity']]);
@@ -501,25 +527,35 @@ class NroShopController extends Controller
     }
     public function toggle(Request $r, int $id)
     {
-        $v = $r->validate(['status' => 'sometimes|required|in:active,paused', 'price' => 'sometimes|required|integer|min:1|max:9999999999']);
-        NroShopService::require(count($v) > 0, 'Chọn giá hoặc trạng thái cần sửa.');
-        $l = DB::table('item_listings')->where('id', $id)->first(); abort_unless($l, 404); $this->account($r, $l->account_id);
-        DB::transaction(function () use ($l, $id, $v) {
+        $v=$r->validate(['status'=>'sometimes|required|in:active,paused,archived','price'=>'sometimes|required|integer|min:1|max:9999999999',
+            'packageCount'=>'sometimes|integer|min:0|max:1000000']);
+        NroShopService::require(count($v)>0,'Chọn thay đổi cần lưu.');
+        $l=DB::table('item_listings')->find($id); abort_unless($l,404); $this->account($r,$l->account_id);
+        DB::transaction(function() use($id,$l,$v) {
             NroAccount::whereKey($l->account_id)->lockForUpdate()->firstOrFail();
-            DB::table('item_listings')->where('id', $id)->lockForUpdate()->first();
-            NroShopService::require(!DB::table('item_orders')->where('listing_id', $id)->exists(), 'Gói đã có người mua. Hãy tạo gói mới nếu muốn bán tiếp.');
-            if (($v['status'] ?? null) === 'active') {
-                $allocated = NroListingStock::allocated($l->account_id, $id);
-                foreach (DB::table('item_listing_items')->where('listing_id', $id)->get() as $line) {
-                    $item = DB::table('nro_inventory_items')->where('id', $line->inventory_item_id)->lockForUpdate()->first();
-                    NroShopService::require($item && NroListingStock::selectable($item, $allocated) >= $line->quantity, 'Không đủ tồn để đăng lại gói. Đồ đã được phân cho gói khác hoặc đơn chưa nhận.');
-                    NroShopService::require(NroListingStock::allows((int) $item->template_id), 'Gói chứa ID vật phẩm không được phép bán.');
+            $l=DB::table('item_listings')->where('id',$id)->lockForUpdate()->first();
+            NroShopService::require($l->status!=='archived','Tin đã thu hồi. Tạo tin mới để bán lại.');
+            $count=(int)($v['packageCount'] ?? $l->packages_remaining ?? 1);
+            if(isset($v['packageCount'])) NroShopService::require($l->stock_mode==='fixed','Tin tự động tính số gói từ tồn kho.');
+            if (($v['status'] ?? '')==='active') NroShopService::require($l->stock_mode==='auto' || $count>0,'Nhập số gói còn bán trước khi đăng lại.');
+            if(($v['status'] ?? '')==='active' || (isset($v['packageCount']) && $count>0)) {
+                $lines=DB::table('item_listing_items')->where('listing_id',$id)->get();
+                NroListingStock::assertNoAutomaticOverlap((int)$l->account_id,$lines->pluck('inventory_item_id')->all(),$id);
+                $allocated=NroListingStock::allocated((int)$l->account_id,$id); $policy=NroSellerPolicy::read((int)$l->user_id); $globalPolicy=NroListingStock::policy();
+                foreach($lines as $line) {
+                    $item=DB::table('nro_inventory_items')->where('id',$line->inventory_item_id)->lockForUpdate()->first();
+                    NroShopService::require($item && NroSellerPolicy::allows(json_decode($item->item_json,true),$policy,$globalPolicy),'Gói chứa vật phẩm không được phép bán.');
+                    NroShopService::require(NroSellerPolicy::stackable(json_decode($item->item_json,true)) || ($count===1 && $l->stock_mode==='fixed'),'Trang bị không hỗ trợ nhiều gói.');
+                    NroShopService::require(NroListingStock::selectable($item,$allocated)>=(int)$line->quantity*($l->stock_mode==='auto'?1:$count),'Không đủ tồn sau khi trừ đồ giữ cho tin khác và đơn chưa nhận.');
                 }
             }
-            DB::table('item_listings')->where('id', $id)->update([...$v, 'updated_at' => now()]);
-        }, 3);
-        ApiCache::clearGroups(['public:nick', 'public:nro-shop:listings']);
-        return response()->json(['ok' => true]);
+            $changes=collect($v)->except('packageCount')->all();
+            if(isset($v['packageCount'])) $changes['packages_remaining']=$count;
+            if($l->stock_mode==='fixed' && $count===0 && ($v['status'] ?? $l->status)==='active') $changes['status']='sold';
+            DB::table('item_listings')->where('id',$id)->update([...$changes,'updated_at'=>now()]);
+        },3);
+        ApiCache::clearGroup('public:nro-shop:listings');
+        return response()->json(['ok'=>true]);
     }
     public function settings(Request $r, int $id)
     {

@@ -26,7 +26,7 @@ class NroItemFilters
     public static function overrides(): array { return json_decode(Setting::get('nro_item_group_overrides', '[]'), true) ?: []; }
     private function catalog(): array
     {
-        return $this->catalog ??= array_column(json_decode(file_get_contents(resource_path('nro/item-templates.json')), true, 512, JSON_THROW_ON_ERROR), null, 'id');
+        return $this->catalog ??= NroCatalog::templates();
     }
     public function knownIds(): array { return array_keys($this->catalog()); }
     public function group(array $template): string
