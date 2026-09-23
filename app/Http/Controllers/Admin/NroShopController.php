@@ -332,18 +332,24 @@ class NroShopController extends Controller
         $v = $r->validate(['enabled' => 'required|boolean', 'ids' => 'present|array|max:10000', 'ids.*' => 'required|integer|min:0|max:100000|distinct',
             'groupOverrides'=>'sometimes|array|max:3000', 'groupOverrides.*.id'=>'required|integer|min:0|max:100000|distinct',
             'groupOverrides.*.group'=>'required|in:'.implode(',',array_keys(\App\Services\NroItemFilters::GROUPS))]);
-        if (array_key_exists('groupOverrides',$v)) {
-            $known = app(\App\Services\NroItemFilters::class)->knownIds();
-            foreach ($v['groupOverrides'] as $row) NroShopService::require(in_array((int)$row['id'],$known,true),'ID phân nhóm không có trong catalog: '.$row['id']);
-            Setting::set('nro_item_group_overrides',json_encode(array_map(fn($row)=>['id'=>(int)$row['id'],'group'=>$row['group']],$v['groupOverrides'])));
-        }
-        DB::transaction(function() use($v) {
-            $ids=NroAccount::where('usage_type','warehouse')->orderBy('id')->lockForUpdate()->pluck('id');
-            $policy=['enabled'=>$v['enabled'],'ids'=>array_map('intval',$v['ids'])];
-            Setting::set('nro_sale_item_policy',json_encode($policy));
-            NroSellerPolicy::refreshAccounts($ids,$policy);
-        },3);
-        ApiCache::clearGroups(['public:nick', 'public:nro-shop:listings']);
+        $save = function () use ($v) {
+            DB::transaction(function () use ($v) {
+                if (array_key_exists('groupOverrides', $v)) {
+                    NroShopService::require(DB::table('settings')->where('key','nro_item_groups')->value('value') === null, 'Hãy chỉnh phân nhóm tại Cấu hình → Nhóm & bộ lọc vật phẩm.');
+                    $known = app(\App\Services\NroItemFilters::class)->knownIds();
+                    foreach ($v['groupOverrides'] as $row) NroShopService::require(in_array((int)$row['id'],$known,true),'ID phân nhóm không có trong catalog: '.$row['id']);
+                    Setting::set('nro_item_group_overrides',json_encode(array_map(fn($row)=>['id'=>(int)$row['id'],'group'=>$row['group']],$v['groupOverrides'])));
+                    ApiCache::clearGroup('public:nro-metadata');
+                }
+                $ids=NroAccount::where('usage_type','warehouse')->orderBy('id')->lockForUpdate()->pluck('id');
+                $policy=['enabled'=>$v['enabled'],'ids'=>array_map('intval',$v['ids'])];
+                Setting::set('nro_sale_item_policy',json_encode($policy));
+                NroSellerPolicy::refreshAccounts($ids,$policy);
+                ApiCache::clearGroups(['public:nick', 'public:nro-shop:listings']);
+            },3);
+        };
+        if (array_key_exists('groupOverrides', $v)) \Illuminate\Support\Facades\Cache::lock('nro:item-group-settings:write',15)->block(5,$save);
+        else $save();
         return response()->json(['ok' => true]);
     }
     /** Exact lookup, available even before the seller has a game warehouse. */

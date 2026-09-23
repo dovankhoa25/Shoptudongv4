@@ -13,6 +13,7 @@ import WorkerKeysTab from './Tabs/WorkerKeysTab';
 import AddAccountModal from './Modals/AddAccountModal';
 import SalePolicyModal from './Modals/SalePolicyModal';
 import SellerPolicyModal from './Modals/SellerPolicyModal';
+import ItemGroupsModal from './Modals/ItemGroupsModal';
 import type { PageProps, Stats } from './types';
 
 const EMPTY_STATS: Stats = {
@@ -47,6 +48,7 @@ export default function NroShop({
     const [adding, setAdding] = useState(false);
     const [importing, setImporting] = useState(false);
     const [policyOpen, setPolicyOpen] = useState(false);
+    const [groupsOpen, setGroupsOpen] = useState(false);
     const [sellerPolicyOpen, setSellerPolicyOpen] = useState(false);
     const [accountForm] = Form.useForm();
     const [policyForm] = Form.useForm();
@@ -71,9 +73,7 @@ export default function NroShop({
     };
 
     const openPolicy = () => {
-        const groupIds: Record<string, string> = Object.fromEntries(['equipment','dragon_balls','upgrade_stones','crystals','support','other'].map(group=>[group,'']));
-        for (const row of salePolicy.groupOverrides || []) groupIds[row.group] = [groupIds[row.group], String(row.id)].filter(Boolean).join(', ');
-        policyForm.setFieldsValue({ enabled: salePolicy.enabled, ids: salePolicy.ids.join(', '), groupIds });
+        policyForm.setFieldsValue({ enabled: salePolicy.enabled, ids: salePolicy.ids.join(', ') });
         setPolicyOpen(true);
     };
 
@@ -154,6 +154,8 @@ export default function NroShop({
 
             {sellerPolicyOpen && <SellerPolicyModal onClose={() => setSellerPolicyOpen(false)} />}
 
+            {groupsOpen && <ItemGroupsModal onClose={() => setGroupsOpen(false)} />}
+
             <SalePolicyModal
                 open={policyOpen}
                 form={policyForm}
@@ -192,7 +194,7 @@ export default function NroShop({
                         {caps.salePolicy && (
                             <Dropdown
                                 menu={{
-                                    items: [{ key: 'policy', label: 'ID đồ được phép bán', onClick: openPolicy }],
+                                    items: [{ key: 'groups', label: 'Nhóm & bộ lọc vật phẩm', onClick: () => setGroupsOpen(true) }, { key: 'policy', label: 'ID đồ được phép bán', onClick: openPolicy }],
                                 }}
                             >
                                 <Button>Cấu hình ▾</Button>

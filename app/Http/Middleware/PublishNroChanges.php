@@ -51,7 +51,8 @@ class PublishNroChanges
             if($accounts) $orders=[...$orders,...DB::table('item_orders')->whereIn('account_id',$accounts)->whereNotIn('status',['completed','refunded'])->pluck('id')->all()];
             $orders=array_values(array_unique(array_filter($orders)));
             $catalog=$action==='claim' ? ((bool)$maintenance || ($body['data']['type'] ?? '')==='snapshot') : !in_array($action,['release','resultIssue','ready','tradePhase','beginRound','warehouseState','receive','heartbeat','heartbeatBatch','stockCheck']);
-            DB::afterCommit(function () use($catalog,$orders,$action) {
+            $groupConfiguration = $request->is('admin/nro-shop/item-groups');
+            DB::afterCommit(function () use($catalog,$orders,$action,$groupConfiguration) {
                 if($catalog) ApiCache::clearGroup('public:nro-shop:listings');
                 $buyers=$orders ? DB::table('item_orders')->whereIn('id',$orders)->distinct()->pluck('buyer_id')->map(fn($id)=>(int)$id)->all() : [];
                 $pushed=false;
@@ -63,6 +64,7 @@ class PublishNroChanges
                 // Updated clients ignore this signal when direct patches were delivered.
                 $adminResources=in_array($action,['heartbeat','heartbeatBatch','ready','tradePhase','beginRound','warehouseState'])
                     ? ['nro:orders','nro:jobs','nro:account-detail','nro:status'] : ['nro'];
+                if ($groupConfiguration) $adminResources=[]; // Filter edits do not change account/order rows.
                 broadcast(new NroShopUpdated((string)Str::uuid(),$catalog,$buyers,$pushed,$adminResources));
             });
         } catch(\Throwable $e) { Log::warning('NRO realtime publish failed',['error'=>$e->getMessage()]); }

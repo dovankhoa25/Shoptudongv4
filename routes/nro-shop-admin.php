@@ -17,6 +17,8 @@ Route::prefix('admin/nro-shop')->name('admin.nro-shop.')->middleware(['auth', 'u
     Route::get('seller-policy',[NroShopController::class,'findSellerPolicy'])->name('seller-policy.find');
     Route::patch('sellers/{id}/policy',[NroShopController::class,'updateSellerPolicy'])->whereNumber('id')->name('seller-policy.update');
     Route::match(['get','patch'],'accounts/{id}/seller-policy',[NroShopController::class,'sellerPolicy'])->name('seller-policy');
+    Route::get('item-groups', [\App\Http\Controllers\Admin\NroItemGroupController::class, 'show'])->name('item-groups.show');
+    Route::patch('item-groups', [\App\Http\Controllers\Admin\NroItemGroupController::class, 'update'])->name('item-groups.update');
     Route::patch('sale-policy', [NroShopController::class, 'salePolicy'])->name('sale-policy');
     Route::get('nick-attribute-fields', [NroShopController::class, 'draftNickAttributes'])->middleware('permission:nicks.create,nicks.manage')->name('nick-attribute-fields');
     Route::post('accounts/import', [NroShopController::class, 'importAccounts'])->middleware('permission:nro-accounts.manage')->name('accounts.import');

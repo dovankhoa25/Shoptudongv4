@@ -1459,8 +1459,8 @@ class NroShopWorkflowTest extends TestCase
         $this->getJson($url.'&equipmentType=2&stat=hp')->assertOk()->assertJsonPath('total',0);
         $this->getJson($url.'&q=0&equipmentType=2')->assertOk()->assertJsonPath('total',0);
         $this->getJson('/api/nro-shop/listings?group=dragon_balls')->assertOk()->assertJsonPath('total',0);
-        $this->getJson('/api/nro-shop/listings?group=invalid')->assertUnprocessable();
-        $this->getJson('/api/nro-shop/listings?group=crystals&minStars=5')->assertUnprocessable();
+        $this->getJson('/api/nro-shop/listings?group=invalid')->assertOk()->assertJsonPath('clearedFilters',['group']);
+        $this->getJson('/api/nro-shop/listings?group=crystals&minStars=5')->assertOk()->assertJsonPath('clearedFilters',['minStars']);
         $this->getJson('/api/nro-shop/listings?group=equipment&minStars=10')->assertUnprocessable();
         $migration=require database_path('migrations/2026_09_10_000004_add_nro_inventory_filters.php');
         $migration->down(); $migration->up();

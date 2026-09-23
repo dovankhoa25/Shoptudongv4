@@ -15,18 +15,29 @@ class NroShopController extends Controller
             'minPrice' => 'nullable|numeric|min:0|max:1000000000000',
             'maxPrice' => ['nullable','numeric','min:0','max:1000000000000', ...($r->filled('minPrice') ? ['gte:minPrice'] : [])],
             'sort' => 'nullable|in:newest,price_asc,price_desc',
-            'group'=>'nullable|in:'.implode(',',array_keys(\App\Services\NroItemFilters::GROUPS)),
+            'group'=>['nullable','string','max:64','regex:/^[a-z][a-z0-9_]*$/'],
             'equipmentType'=>'nullable|in:0,1,2,3,4',
             'gender'=>'nullable|integer|in:0,1,2', 'minStars'=>'nullable|integer|min:1|max:9', 'stat'=>'nullable|in:'.implode(',',array_keys(\App\Services\NroItemFilters::STATS)), 'itemId'=>'nullable|integer|min:0|max:100000']);
-        foreach (['equipmentType','gender','minStars','stat'] as $key) if (isset($filters[$key])) {
-            if (($filters['group'] ?? '') !== 'equipment') throw \Illuminate\Validation\ValidationException::withMessages([$key=>'Chọn nhóm Trang bị để dùng bộ lọc này.']);
+        $clearedFilters = [];
+        $clear = function(array $keys) use (&$filters, &$clearedFilters) {
+            foreach ($keys as $key) if (isset($filters[$key])) { unset($filters[$key]); $clearedFilters[] = $key; }
+        };
+        if (!empty($filters['group']) && !in_array($filters['group'], $itemFilters->visibleKeys(), true)) {
+            // Old links survive hidden/deleted groups; never hide all stock behind a dead filter.
+            $clear(['group', 'equipmentType', 'gender', 'minStars', 'stat', 'itemId', 'page']);
+        } else {
+            $mode = $itemFilters->filterMode($filters['group'] ?? null);
+            if ($mode !== 'equipment') $clear(['equipmentType','gender','minStars','stat']);
+            if ($mode !== 'items') $clear(['itemId']);
+            elseif (isset($filters['itemId']) && !$itemFilters->templateIds(['group'=>$filters['group'], 'itemId'=>$filters['itemId']])) $clear(['itemId']);
+            if ($clearedFilters) $clear(['page']);
         }
-        if (isset($filters['itemId']) && empty($filters['group'])) throw \Illuminate\Validation\ValidationException::withMessages(['itemId'=>'Chọn nhóm vật phẩm trước.']);
+        if ($clearedFilters) $r->merge(['page'=>1]);
         $cachePayload = $filters;
         $cachePayload['q'] = trim((string) ($cachePayload['q'] ?? ''));
         if (($cachePayload['q'] ?? '') === '') unset($cachePayload['q']);
         ksort($cachePayload);
-        $cacheKey = ApiCache::key('nro-shop:listings', 'filters-v6-packages', (string) \Illuminate\Support\Facades\Cache::get('nro-shop:visibility-version', '0'), json_encode($cachePayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        $cacheKey = ApiCache::key('nro-shop:listings', 'filters-v7-groups', $itemFilters->version(), (string) \Illuminate\Support\Facades\Cache::get('nro-shop:visibility-version', '0'), json_encode($cachePayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 
         $payload = ApiCache::remember('public:nro-shop:listings', $cacheKey, 60, function () use ($filters, $s, $itemFilters) {
             $q = DB::table('item_listings')->where('status', 'active')->whereIn('account_id', DB::table('nro_accounts')->select('id')->whereNull('deleted_at')->where('shop_hidden', false)->where('login_sale_blocked', false))->where('policy_blocked', false);
@@ -83,7 +94,7 @@ class NroShopController extends Controller
                 'servers' => ApiCache::remember('public:nro-metadata','server-metadata',60,fn()=>DB::table('servers')->where('status',true)->get(['id','name','name_view']))
             ];
         });
-        return response()->json($payload);
+        return response()->json([...$payload, 'clearedFilters'=>$clearedFilters]);
     }
     public function show(int $id, NroShopService $s)
     {

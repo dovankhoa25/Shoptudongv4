@@ -19,9 +19,25 @@ class NroItemFilters
     public const OTHER_STAT_IDS = [3,4,5,10,14,15,16,17,18,19,27,28,42,43,44,45,46,47,62,78,79,80,81,88,94,197,204,206];
     private ?array $catalog = null;
     private array $overrides;
-    public function __construct()
+    private array $definitions;
+    public function __construct(?array $definitions = null, ?array $overrides = null)
     {
-        $this->overrides = array_column(self::overrides(), 'group', 'id');
+        $this->definitions = $definitions ?? NroItemGroupSettings::definitions();
+        $keys = array_column($this->definitions, 'key');
+        $this->overrides = array_column(array_filter($overrides ?? self::overrides(), fn($r) => in_array($r['group'], $keys, true)), 'group', 'id');
+    }
+    public function filterMode(?string $key): string
+    {
+        foreach ($this->definitions as $g) if ($g['key'] === $key) return $g['filterMode'];
+        return 'basic';
+    }
+    public function visibleKeys(): array
+    {
+        return array_column(array_filter($this->definitions, fn($g) => $g['visible']), 'key');
+    }
+    public function version(): string
+    {
+        return hash('sha256', json_encode([$this->definitions, $this->overrides]).filemtime(resource_path('nro/item-templates.json')));
     }
     public static function overrides(): array { return json_decode(Setting::get('nro_item_group_overrides', '[]'), true) ?: []; }
     private function catalog(): array
@@ -40,23 +56,27 @@ class NroItemFilters
     }
     public function metadata(): array
     {
-        $version=hash('sha256',json_encode($this->overrides).filemtime(resource_path('nro/item-templates.json')));
+        $version=$this->version();
         return \App\Support\ApiCache::remember('public:nro-metadata','filters:'.$version,900,fn()=>$this->buildMetadata());
     }
     private function buildMetadata(): array
     {
         $options = fn ($values) => array_map(fn ($id, $label) => ['value'=>(string)$id, 'label'=>$label], array_keys($values), array_values($values));
         $itemsByGroup = [];
-        foreach (self::ITEM_GROUP_IDS as $group=>$defaults) {
-            $ids = array_values(array_unique([...$defaults, ...$this->templateIds(['group'=>$group])]));
+        $groups = [];
+        foreach ($this->definitions as $definition) {
+            if (!$definition['visible']) continue;
+            $group = $definition['key'];
+            $groups[] = ['value'=>$group, 'label'=>$definition['name'], 'filterMode'=>$definition['filterMode']];
+            if ($definition['filterMode'] !== 'items') continue;
             $itemsByGroup[$group] = [];
-            foreach ($ids as $id) {
-                $item=$this->catalog()[$id] ?? null;
-                if ($item && $this->group($item)===$group) $itemsByGroup[$group][]=['value'=>(string)$id,'label'=>$item['name']];
+            foreach ($this->catalog() as $id=>$item) {
+                if ($this->group($item) === $group) $itemsByGroup[$group][]=['value'=>(string)$id, 'label'=>$item['name']];
             }
         }
-        return ['groups'=>$options(self::GROUPS), 'equipmentTypes'=>$options(self::EQUIPMENT), 'stats'=>$options(self::STATS), 'itemsByGroup'=>$itemsByGroup];
+        return ['groups'=>$groups, 'equipmentTypes'=>$options(self::EQUIPMENT), 'stats'=>$options(self::STATS), 'itemsByGroup'=>$itemsByGroup];
     }
+
     public function templateIds(array $filters): array
     {
         return array_keys(array_filter($this->catalog(), function ($item) use ($filters) {

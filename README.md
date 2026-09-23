@@ -6,3 +6,6 @@
 
 0.1.7
 - quyền bán , bổ sung bán gói
+
+0.1.8
+- update filter shopnro
