@@ -31,9 +31,9 @@ class NroItemFilters
         foreach ($this->definitions as $g) if ($g['key'] === $key) return $g['filterMode'];
         return 'basic';
     }
-    public function visibleKeys(): array
+    public function visibleKeys(bool $includeHidden = false): array
     {
-        return array_column(array_filter($this->definitions, fn($g) => $g['visible']), 'key');
+        return array_column(array_filter($this->definitions, fn($g) => $includeHidden || $g['visible']), 'key');
     }
     public function version(): string
     {
@@ -54,20 +54,20 @@ class NroItemFilters
         if (in_array($type, [6,7,8,13,22,23,24,25,27,29,31,35,37], true)) return 'support';
         return 'other';
     }
-    public function metadata(): array
+    public function metadata(bool $includeHidden = false): array
     {
         $version=$this->version();
-        return \App\Support\ApiCache::remember('public:nro-metadata','filters:'.$version,900,fn()=>$this->buildMetadata());
+        return \App\Support\ApiCache::remember('public:nro-metadata','filters:'.$version.($includeHidden ? ':admin' : ''),900,fn()=>$this->buildMetadata($includeHidden));
     }
-    private function buildMetadata(): array
+    private function buildMetadata(bool $includeHidden): array
     {
         $options = fn ($values) => array_map(fn ($id, $label) => ['value'=>(string)$id, 'label'=>$label], array_keys($values), array_values($values));
         $itemsByGroup = [];
         $groups = [];
         foreach ($this->definitions as $definition) {
-            if (!$definition['visible']) continue;
+            if (!$includeHidden && !$definition['visible']) continue;
             $group = $definition['key'];
-            $groups[] = ['value'=>$group, 'label'=>$definition['name'], 'filterMode'=>$definition['filterMode']];
+            $groups[] = ['value'=>$group, 'label'=>$definition['name'].($includeHidden && !$definition['visible'] ? ' (ẩn ở shop)' : ''), 'filterMode'=>$definition['filterMode']];
             if ($definition['filterMode'] !== 'items') continue;
             $itemsByGroup[$group] = [];
             foreach ($this->catalog() as $id=>$item) {

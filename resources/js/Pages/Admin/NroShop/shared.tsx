@@ -8,6 +8,7 @@ export const base = '/admin/nro-shop';
 export const statusName: Record<string, string> = {
     awaiting_receipt: 'Chưa nhận đồ',
     expired: 'Hết phiên chờ',
+    cancelled: 'Đã hủy',
     queued: 'Chờ tool',
     processing: 'Đang xử lý',
     completed: 'Hoàn tất',

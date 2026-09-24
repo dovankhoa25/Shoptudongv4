@@ -72,16 +72,19 @@ class NroOrderFlow
             $phase='needs_input';$label='Cần sửa thông tin nhận hoặc acc kho';
             $sender=$account?->publish_status==='login_blocked' || ($order->failure_role ?? null)==='sender';
             $label=$sender ? 'Acc kho cần xử lý' : 'Kiểm tra acc nhận';
-            $message=$sender ? 'Acc kho cần shop xử lý thông tin đăng nhập.' : 'Kiểm tra lại thông tin acc nhận trước khi nhận tiếp.';
+            $message=$order->public_failure ?: ($sender ? 'Acc kho cần shop xử lý thông tin đăng nhập.' : 'Kiểm tra lại thông tin acc nhận trước khi nhận tiếp.');
             if($pendingRecovery) $message.=' Thông tin lượt giao trước vẫn được giữ để khôi phục.';
         } elseif (!$configured) {
             $phase='needs_input';$label='Kho cần được cấu hình';$message='Shop cần kiểm tra trạng thái và cấu hình server của acc kho. Phần chưa nhận vẫn được giữ.';
+        } elseif (in_array($order->failure_code,NroLoginMessage::WAIT_CODES,true)) {
+            $phase='retrying';$label=($order->failure_role ?? null)==='receiver' ? 'Acc nhận đang kết nối lại' : 'Acc kho đang kết nối lại';$message=$order->public_failure ?: NroLoginMessage::waiting($order->failure_role ?? null);
+            if ($order->failure_code==='server_maintenance') $label='Server báo bảo trì';
+            if ($order->failure_code==='server_unresponsive') $label='Chờ server / bảo trì';
         } elseif (($pendingRecovery && (($session['status'] ?? '')!=='trading' || !$data['botOnline'])) || $order->status==='review') {
             $phase=$pendingRecovery ? 'recovering' : 'needs_attention';
             $label=$pendingRecovery ? 'Đang khôi phục lượt giao' : 'Cần kiểm tra lượt giao cũ';
             $message=$pendingRecovery ? 'Tool sẽ kiểm tra lượt giao đã lưu rồi tiếp tục phần còn lại. Không cần mua lại.' : 'Lượt giao cũ chưa có đủ dữ liệu để xác nhận. Shop cần kiểm tra nhật ký trước khi cho nhận tiếp hoặc hoàn tiền.';
-        } elseif ($order->failure_code==='login_wait') {
-            $phase='retrying';$label='Đang thử đăng nhập lại';$message='Bot đang thử kết nối lại theo thời gian chờ. Yêu cầu nhận vẫn được giữ.';
+
         } elseif ($cooldown) {
             $phase='cooldown';$label='Tạm nghỉ giao dịch';$message='Lượt trước bị hủy hoặc quá thời gian. Bạn có thể nhận lại khi hết thời gian nghỉ.';
         } elseif ($data['botActivity']['preparing'] ?? false) {
@@ -112,7 +115,7 @@ class NroOrderFlow
         $data['canCancel']=$canRequestRefund;
         $data['flow']=['state'=>$business,'label'=>['pending'=>'Chưa nhận đủ','completed'=>'Đã nhận đủ','refunded'=>'Đã hoàn tiền'][$business],
             'terminal'=>$terminal,'phase'=>$phase,'phaseLabel'=>$label,'message'=>$message,'delivered'=>$done,'total'=>$total,
-            'remaining'=>max(0,$total-$done),'canReceive'=>$canReceive,'canRequestRefund'=>$canRequestRefund,
+            'remaining'=>max(0,$total-$done),'receiveActionLabel'=>$order->failure_code==='login_failed' && ($order->failure_role ?? null)==='receiver' ? 'Sửa thông tin nhận' : ($done ? 'Nhận phần còn lại' : 'Nhận đồ'),'canReceive'=>$canReceive,'canRequestRefund'=>$canRequestRefund,
             'canAdminRefund'=>$canAdminRefund,'canCheckStock'=>!$terminal && !$accountAudit,
             'retryAt'=>$cooldown ? $retryAt : ($data['loginRetryAt'] ?? null), 'pendingRecovery'=>$pendingRecovery && !$terminal];
         return $data;

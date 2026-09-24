@@ -14,7 +14,7 @@ class NroWarehouseActivity
         'ready' => 'Bot đã sẵn sàng nhận giao dịch',
     ];
     // Caller holds the account lock; inventory/trade changes use the same lock.
-    public function update(NroAccount $account, string $instance, string $phase, ?array $position = null): void
+    public function update(NroAccount $account, string $instance, string $phase, ?array $position = null, ?int $jobId = null): void
     {
         $old = $account->delivery_activity ?? [];
         $pausedAt = $old['pauseStartedAt'] ?? null;
@@ -39,7 +39,22 @@ class NroWarehouseActivity
         } else $pausedAt ??= now()->toIso8601String();
         $account->update(['delivery_activity' => ['phase' => $phase, 'message' => self::MESSAGES[$phase],
             'position' => $phase==='ready' ? $position : ($old['position'] ?? null),
-            'pauseStartedAt' => $pausedAt, 'workerInstance' => $instance, 'updatedAt' => now()->toIso8601String()]]);
+            'pauseStartedAt' => $pausedAt, 'jobId'=>$phase==='ready' ? null : $jobId, 'workerInstance' => $instance, 'updatedAt' => now()->toIso8601String()]]);
+    }
+    public static function releasePreparation(object $job): void {
+        $account=NroAccount::whereKey($job->account_id)->lockForUpdate()->first();
+        $activity=$account?->delivery_activity ?? [];
+        if (!$account || empty($activity['pauseStartedAt'])) return;
+        $owner=$activity['jobId'] ?? null;
+        if ($owner !== null && (int)$owner !== (int)$job->id) return;
+        if ($owner === null && DB::table('nro_worker_jobs')->where('account_id',$job->account_id)
+            ->where('id','!=',$job->id)->where('status','processing')->where('lease_until','>',now())->exists()) return;
+        // Resume clocks without advertising a bot that has not returned to the rendezvous.
+        app(self::class)->update($account,$activity['workerInstance'] ?? '', 'ready');
+        $account->update(['delivery_activity'=>null]);
+        $orders=DB::table('item_orders')->where('account_id',$account->id)->select('id');
+        DB::table('nro_delivery_sessions')->whereIn('order_id',$orders)->whereIn('status',['ready','preparing','queued'])
+            ->update(['position_json'=>null,'updated_at'=>now()]);
     }
     public static function publicPayload(NroAccount $account, $jobs): array
     {

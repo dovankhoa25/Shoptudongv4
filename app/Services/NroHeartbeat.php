@@ -18,10 +18,12 @@ class NroHeartbeat
             $updates=[];
             if ($order && !$order->cancel_requested) {
                 if ($input['loginWaiting'] ?? false) {
-                    $retry=empty($input['loginRetryAt']) ? null : \Carbon\Carbon::parse($input['loginRetryAt'])->toDateTimeString();
-                    if ($order->failure_code!=='login_wait' || $order->login_retry_at!==$retry) $updates+=['failure_code'=>'login_wait','public_failure'=>'Bot đang thử kết nối lại. Hệ thống sẽ tiếp tục khi hết thời gian chờ.','login_retry_at'=>$retry];
+                    $retry=empty($input['loginRetryAt']) ? null : NroLoginMessage::retryAt($input['loginRetryAt'])->toDateTimeString();
+                    $kind=$input['loginFailureKind'] ?? null; $code=NroLoginMessage::code($kind);
+                    if ($order->failure_code!==$code || $order->login_retry_at!==$retry || ($order->failure_role ?? null)!==($input['loginAccountRole'] ?? null)) $updates+=['failure_code'=>$code,'failure_role'=>$input['loginAccountRole'] ?? null,'public_failure'=>NroLoginMessage::waiting($input['loginAccountRole'] ?? null,$kind),'login_retry_at'=>$retry];
+                    if (NroLoginMessage::maintenance($kind)) NroLoginMessage::pauseForMaintenance($job);
                 }
-                if (!($input['loginWaiting'] ?? false) && $order->failure_code === 'login_wait') $updates += ['failure_code'=>null,'public_failure'=>null,'login_retry_at'=>null];
+                if (array_key_exists('loginWaiting',$input) && !$input['loginWaiting'] && in_array($order->failure_code,NroLoginMessage::WAIT_CODES,true)) $updates += ['failure_code'=>null,'public_failure'=>null,'login_retry_at'=>null];
                 if (!empty($input['message']) && $order->delivery_message!==$input['message']) $updates['delivery_message']=$input['message'];
                 if ($updates) DB::table('item_orders')->where('id',$order->id)->update($updates+['updated_at'=>now()]);
             }

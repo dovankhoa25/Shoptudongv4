@@ -1,67 +1,50 @@
+import { useEffect, useRef } from 'react';
+import ListingFilters, { type ListingMetadata, type FilterMetadata } from './ListingFilters';
 import EditListingPrice from '../Modals/EditListingPrice';
 import axios from 'axios';
 import { Eye, MoreVertical } from 'lucide-react';
-import { Dropdown, Button, Modal, Input, Select, Space, Table, Tag } from 'antd';
+import { Dropdown, Button, Modal, Space, Table, Tag } from 'antd';
 import { base, ListingAvailability, ItemStrip, money, statusName } from '../shared';
 import { usePagedTab } from '../usePagedTab';
 import { LiveDataNotice } from '@/Realtime/LiveDataNotice';
-import type { Capabilities, Listing } from '../types';
+import type { Capabilities, Listing, Server } from '../types';
 
 export default function ListingsTab({
     caps,
+    servers,
     shopUrl,
     run,
     busy,
     dataVersion,
 }: {
     caps: Capabilities;
+    servers: Server[];
     shopUrl: string | null;
     run: (action: () => Promise<unknown>, success?: string) => Promise<void>;
     busy: boolean;
     dataVersion: number;
 }) {
-    const { rows, loading, filters, setFilters, apply, reload, error, warning } = usePagedTab<Listing>(
+    const { rows, meta, loading, filters, setFilters, apply, reload, error, warning } = usePagedTab<Listing, ListingMetadata>(
         '/listings',
         'Không tải được danh sách gói đồ',
         dataVersion,
     );
 
+    const metadata = useRef<FilterMetadata>();
+    if (meta?.filters) metadata.current = meta.filters;
+    useEffect(() => {
+        if (meta?.clearedFilters?.length) setFilters(current => {
+            const next = { ...current }; for (const key of meta?.clearedFilters!) delete next[key]; return next;
+        });
+    }, [meta?.clearedFilters, setFilters]);
+
     return (
         <>
             <LiveDataNotice error={error} warning={warning} reload={reload} />
-            <div className="mb-3 flex flex-wrap gap-2">
-                <Input.Search
-                    aria-label="Tìm gói đồ"
-                    placeholder="Tên, acc, CTV · #id · #tk:acc · #ctv:tên"
-                    className="!w-64"
-                    allowClear
-                    value={(filters.q as string) || ''}
-                    onChange={e => setFilters({ ...filters, q: e.target.value })}
-                    onSearch={() => apply()}
-                />
-                <Select
-                    aria-label="Lọc trạng thái gói"
-                    className="min-w-40"
-                    placeholder="Tất cả trạng thái"
-                    allowClear
-                    value={(filters.status as string) || undefined}
-                    onChange={status => apply({ ...filters, status })}
-                    options={[
-                        { value: 'active', label: 'Đang bán' },
-                        { value: 'paused', label: 'Tạm dừng' },
-                        { value: 'sold', label: 'Đã bán hết số gói' },
-                        { value: 'archived', label: 'Đã thu hồi' },
-                        { value: 'blocked', label: 'Bị chặn quyền bán' },
-                    ]}
-                />
-                <Button type="primary" onClick={() => apply()}>
-                    Lọc
-                </Button>
-                <Button onClick={() => apply({})}>Xóa lọc</Button>
-                <Button onClick={reload}>Làm mới</Button>
-            </div>
+            <ListingFilters filters={filters} metadata={metadata.current} servers={servers} setFilters={setFilters} apply={apply} reload={reload} />
             <p className="mb-3 text-xs text-slate-500">Tin bán và số gói còn lại. Xem từng lần mua tại tab Đơn giao đồ. Tìm nâng cao: #tk:12, #ctv:username, #goi:254, #vp:223.</p>
             <Table
+                size="small"
                 rowKey="id"
                 loading={loading}
                 dataSource={rows.data}

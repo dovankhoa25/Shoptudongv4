@@ -62,7 +62,7 @@ export default function JobsTab({
                     allowClear
                     value={(filters.status as string) || undefined}
                     onChange={status => apply({ ...filters, status })}
-                    options={['queued', 'processing', 'review', 'completed', 'failed', 'expired'].map(value => ({
+                    options={['queued', 'processing', 'review', 'completed', 'failed', 'expired', 'cancelled'].map(value => ({
                         value,
                         label: statusName[value] || value,
                     }))}

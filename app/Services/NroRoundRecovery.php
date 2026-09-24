@@ -2,6 +2,14 @@
 namespace App\Services;
 use Illuminate\Support\Facades\DB;
 class NroRoundRecovery {
+    public static function blocksClaim(object $job): bool {
+        // One recovery owner, even if several interrupted orders are queued. A live
+        // round always wins; ordinary waiters may share its worker without trading.
+        $owner=DB::table('nro_worker_jobs')->where('account_id',$job->account_id)
+            ->whereNotNull('recovery_json')->whereIn('status',['queued','processing'])
+            ->orderByRaw("CASE WHEN status = 'processing' THEN 0 ELSE 1 END")->orderBy('id')->value('id');
+        return $owner !== null && (int)$owner !== (int)$job->id;
+    }
     public static function pending(int $order): bool {
         return DB::table('nro_worker_jobs')->where('order_id',$order)->whereNotNull('recovery_json')->exists();
     }

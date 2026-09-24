@@ -13,6 +13,10 @@ class AdminPermissionCoverageTest extends TestCase
         // These endpoints authorize an owned session or dispatch through the target screen's
         // permissions. NRO exceptions have explicit role checks tested in AccessSecurityTest.
         $explicitBoundaries = [
+            'GET admin/nro-shop/sellers' => 'App\\Http\\Controllers\\Admin\\NroShopController@sellersIndex',
+            'GET admin/nro-shop/seller-policy' => 'App\\Http\\Controllers\\Admin\\NroShopController@findSellerPolicy',
+            'PATCH admin/nro-shop/sellers/{id}/policy' => 'App\\Http\\Controllers\\Admin\\NroShopController@updateSellerPolicy',
+            'GET admin/nro-shop/accounts/{id}/seller-policy' => 'App\\Http\\Controllers\\Admin\\NroShopController@sellerPolicy',
             'GET admin/nro-shop/item-groups' => 'App\\Http\\Controllers\\Admin\\NroItemGroupController@show',
             'PATCH admin/nro-shop/item-groups' => 'App\\Http\\Controllers\\Admin\\NroItemGroupController@update',
             'GET admin/live-balance' => 'Closure',

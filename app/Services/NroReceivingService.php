@@ -96,6 +96,7 @@ class NroReceivingService
 
     public function finish(object $job, string $status): void
     {
+        NroWarehouseActivity::releasePreparation($job);
         if (!$job->delivery_session_id) return;
         DB::table('nro_delivery_sessions')->where('id', $job->delivery_session_id)->update([
             'status' => $status,

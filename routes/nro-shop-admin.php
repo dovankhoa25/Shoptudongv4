@@ -14,6 +14,7 @@ Route::prefix('admin/nro-shop')->name('admin.nro-shop.')->middleware(['auth', 'u
     Route::patch('accounts/{id}/visibility', [NroShopController::class, 'visibility'])->middleware('permission:nro-accounts.manage')->name('accounts.visibility');
     Route::patch('accounts/{id}/settings', [NroShopController::class, 'settings'])->middleware('permission:nro-settings.manage')->name('accounts.settings');
     // Controller authorizes admin/super-admin OR the dedicated sale-policy permission.
+    Route::get('sellers', [NroShopController::class, 'sellersIndex'])->name('sellers.index');
     Route::get('seller-policy',[NroShopController::class,'findSellerPolicy'])->name('seller-policy.find');
     Route::patch('sellers/{id}/policy',[NroShopController::class,'updateSellerPolicy'])->whereNumber('id')->name('seller-policy.update');
     Route::match(['get','patch'],'accounts/{id}/seller-policy',[NroShopController::class,'sellerPolicy'])->name('seller-policy');
@@ -24,6 +25,7 @@ Route::prefix('admin/nro-shop')->name('admin.nro-shop.')->middleware(['auth', 'u
     Route::post('accounts/import', [NroShopController::class, 'importAccounts'])->middleware('permission:nro-accounts.manage')->name('accounts.import');
     Route::post('accounts', [NroShopController::class, 'store'])->middleware('permission:nro-accounts.manage')->name('accounts.store');
     Route::get('accounts/{id}', [NroShopController::class, 'detail'])->middleware('permission:nro-accounts.view,nro-accounts.manage,nicks.create,nicks.manage,item-listings.manage')->name('accounts.show');
+    Route::delete('accounts/{id}', [NroShopController::class, 'destroyAccount'])->whereNumber('id')->middleware('permission:nro-accounts.manage')->name('accounts.destroy');
     Route::patch('accounts/{id}', [NroShopController::class, 'updateAccount'])->middleware('permission:nro-accounts.manage')->name('accounts.update');
     Route::patch('accounts/{id}/password', [NroShopController::class, 'password'])->middleware('permission:nro-accounts.manage')->name('accounts.password');
     Route::post('accounts/{id}/scan', [NroShopController::class, 'scan'])->middleware('permission:nro-accounts.manage')->name('scan');

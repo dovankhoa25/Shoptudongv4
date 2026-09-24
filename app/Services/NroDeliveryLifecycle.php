@@ -10,6 +10,7 @@ class NroDeliveryLifecycle
     public function recover(object $job): bool
     {
         if (!$job->order_id || !$job->delivery_session_id) return false;
+        NroWarehouseActivity::releasePreparation($job);
         if (!empty($job->recovery_json)) {
             $order=DB::table('item_orders')->where('id',$job->order_id)->lockForUpdate()->first();
             if(!$order || in_array($order->status,['completed','refunded'])) return false;
@@ -18,6 +19,7 @@ class NroDeliveryLifecycle
             DB::table('nro_worker_jobs')->insert(['account_id'=>$job->account_id,'order_id'=>$job->order_id,'delivery_session_id'=>$job->delivery_session_id,
                 'type'=>'delivery','status'=>'queued','recovery_json'=>$job->recovery_json,'created_at'=>now(),'updated_at'=>now()]);
             DB::table('nro_delivery_sessions')->where('id',$job->delivery_session_id)->update(['status'=>'queued','trade_in_flight'=>false,'trade_phase'=>null,'phase_deadline'=>null,'position_json'=>null,'updated_at'=>now()]);
+            if (in_array($order->failure_code,['server_maintenance','server_unresponsive'],true)) NroLoginMessage::pauseForMaintenance($job);
             DB::table('item_orders')->where('id',$job->order_id)->update(['status'=>'queued','updated_at'=>now()]);
             return true;
         }
@@ -27,7 +29,7 @@ class NroDeliveryLifecycle
         if (in_array($o->status,['completed','refunded'])) return false;
         if (!DB::table('item_order_items')->where('order_id',$o->id)->whereColumn('delivered','<','quantity')->exists()) return false;
         $expired=$s->expires_at && $s->expires_at <= now()->toDateTimeString();
-        $resume=!$expired && !$o->cancel_requested && !$o->refund_requested && (!$o->failure_code || $o->failure_code==='login_wait');
+        $resume=!$expired && !$o->cancel_requested && !$o->refund_requested && (!$o->failure_code || in_array($o->failure_code,NroLoginMessage::WAIT_CODES,true));
         DB::table('nro_worker_jobs')->where('id',$job->id)->update(['status'=>'failed','result_json'=>json_encode(['reason'=>'connection_lost','retrySafe'=>true,'resumed'=>$resume]),'updated_at'=>now()]);
         if (!DB::table('nro_worker_jobs')->where('account_id',$job->account_id)->where('id','!=',$job->id)->where('status','processing')->where('lease_until','>',now())->exists())
             NroAccount::whereKey($job->account_id)->update(['delivery_activity'=>null]);

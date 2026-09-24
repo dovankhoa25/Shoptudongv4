@@ -42,9 +42,9 @@ class NroAccountRegistration
         DB::table('server_game_login')->where('id', $serverGameId)->lockForUpdate()->firstOrFail();
         $duplicates = NroAccount::withTrashed()->where('account_name', $username)->where(function ($q) use ($serverGameId) {
             $q->where('server_game_id', $serverGameId)->orWhere(fn ($legacy) => $legacy->whereNull('server_game_id')->where('server', 'login'.$serverGameId));
-        })->where('status', '!=', 'sold');
+        })->where('status', '!=', 'sold')->where(fn($q)=>$q->whereNull('deleted_at')->orWhere('status','!=','archived'));
         if ($exceptId !== null) $duplicates->where('id', '!=', $exceptId);
-        NroShopService::require(!$duplicates->lockForUpdate()->first(), 'Acc trên server này vẫn đang được quản lý hoặc chưa bán. Chỉ thêm lại sau khi acc đã bán.');
+        NroShopService::require(!$duplicates->lockForUpdate()->first(), 'Acc trên server này vẫn đang được quản lý hoặc chưa bán. Chỉ thêm lại sau khi acc đã bán hoặc được xóa khỏi kho.');
     }
 
     public function create(User $user, array $input): NroAccount

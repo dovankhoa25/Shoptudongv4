@@ -2,8 +2,8 @@ import { useLiveView } from '@/Realtime/useLiveView';
 import { useEffect, useState } from 'react';
 import { router } from '@inertiajs/react';
 import axios from 'axios';
-import { Eye, Pencil, Plus, MoreVertical, EyeOff } from 'lucide-react';
-import { Button, Dropdown, Form, Input, Select, Space, Table, Tag, Tooltip, message } from 'antd';
+import { Eye, Pencil, Plus, MoreVertical, EyeOff, Trash2 } from 'lucide-react';
+import { Button, Dropdown, Modal, Form, Input, Select, Space, Table, Tag, Tooltip, message } from 'antd';
 import type { NroSnapshot } from '@/Components/Nro/NroSnapshot';
 import { base, dateTime, isSold, NickSaleSummary } from '../shared';
 import AccountDetailModal from '../Modals/AccountDetailModal';
@@ -329,6 +329,25 @@ export default function AccountsTab({
                                                                       serverGameId: a.server_game_id,
                                                                   });
                                                               },
+                                                          },
+                                                          {
+                                                              key: 'remove', icon: <Trash2 size={14} />, danger: true,
+                                                              label: 'Xóa tài khoản khỏi kho', disabled: working,
+                                                              onClick: () => Modal.confirm({
+                                                                  title: `Xóa acc #${a.id} khỏi kho?`,
+                                                                  content: <div className="space-y-2"><strong className="break-all">{a.account_name}</strong><p>Tin chưa bán sẽ được thu hồi, yêu cầu quét đang chờ sẽ bị hủy. Lịch sử giao dịch được giữ lại.</p><p>Không thể xóa khi còn đơn chưa giao hoặc tool đang xử lý.</p></div>,
+                                                                  okText: 'Xóa khỏi kho', cancelText: 'Giữ lại', okButtonProps: { danger: true },
+                                                                  onOk: async () => {
+                                                                      try {
+                                                                          await axios.delete(`${base}/accounts/${a.id}`);
+                                                                          message.success('Đã xóa tài khoản khỏi kho');
+                                                                          window.dispatchEvent(new Event('admin:refresh-if-offline'));
+                                                                      } catch (e) {
+                                                                          message.error(axios.isAxiosError(e) ? e.response?.data?.message || 'Không xóa được tài khoản' : 'Không xóa được tài khoản');
+                                                                          throw e;
+                                                                      }
+                                                                  },
+                                                              }),
                                                           },
                                                           {
                                                               key: 'password',

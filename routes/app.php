@@ -79,6 +79,7 @@ Route::prefix('nro-worker')->middleware([NroWorkerKey::class, 'throttle:600,1', 
     Route::post('jobs/{id}/warehouse-state', [NroWorkerController::class, 'warehouseState'])->whereNumber('id');
     Route::post('jobs/{id}/heartbeat', [NroWorkerController::class, 'heartbeat'])->whereNumber('id');
     Route::post('jobs/{id}/complete', [NroWorkerController::class, 'complete'])->whereNumber('id');
+    Route::get('jobs/{id}/receipt-state', [NroWorkerController::class, 'receiptState'])->whereNumber('id');
     Route::post('jobs/{id}/result-issue', [NroWorkerController::class, 'resultIssue'])->whereNumber('id');
     Route::post('jobs/{id}/progress', [NroWorkerController::class, 'progress'])->whereNumber('id');
     Route::post('jobs/{id}/stock', [NroWorkerController::class, 'stock'])->whereNumber('id');

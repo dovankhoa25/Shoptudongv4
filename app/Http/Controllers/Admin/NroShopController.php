@@ -56,9 +56,10 @@ class NroShopController extends Controller
     }
 
     /** Subquery of the account ids this user is allowed to touch. */
-    private function ownedAccountIds(Request $r)
+    private function ownedAccountIds(Request $r, bool $includeDeleted = false)
     {
         $q = NroAccount::whereNotNull('usage_type');
+        if ($includeDeleted) $q->withTrashed();
         if (!$r->user()->canViewAllAdminData()) $q->where('user_id', $r->user()->id);
 
         return $q->select('id');
@@ -150,8 +151,8 @@ class NroShopController extends Controller
             'openOrders' => DB::table('item_orders')->whereIn('account_id', clone $ownedIds)->whereNotIn('status', ['completed', 'refunded'])->count(),
             // Real totals for the tab labels; the old page showed the size of a truncated list instead.
             'listings' => DB::table('item_listings')->whereIn('account_id', clone $ownedIds)->count(),
-            'orders' => DB::table('item_orders')->whereIn('account_id', clone $ownedIds)->count(),
-            'jobs' => DB::table('nro_worker_jobs')->whereIn('account_id', clone $ownedIds)->count(),
+            'orders' => DB::table('item_orders')->whereIn('account_id', $this->ownedAccountIds($r, true))->count(),
+            'jobs' => DB::table('nro_worker_jobs')->whereIn('account_id', $this->ownedAccountIds($r, true))->count(),
             'workerOnline' => DB::table('nro_worker_keys')->where('accepts_delivery', true)->whereNull('revoked_at')
                 ->where('last_used_at', '>', now()->subSeconds(90))->exists()];
     }
@@ -172,12 +173,14 @@ class NroShopController extends Controller
             ->header('Cache-Control', 'no-store');
     }
 
-    public function listingsIndex(Request $r, NroShopService $shop)
+    public function listingsIndex(Request $r, NroShopService $shop, \App\Services\NroItemFilters $itemFilters)
     {
         abort_unless($this->capabilities($r)['listings'], 403);
         $v = $r->validate(['q' => 'nullable|string|max:100', 'status' => 'nullable|in:active,paused,sold,draft,archived,blocked',
             'accountId' => 'nullable|integer', 'page' => 'nullable|integer|min:1']);
+        [$itemFilterValues, $clearedFilters] = app(\App\Services\NroListingFilters::class)->normalize($r, $itemFilters, true);
         $q = DB::table('item_listings')->whereIn('account_id', $this->ownedAccountIds($r));
+        app(\App\Services\NroListingFilters::class)->apply($q, $itemFilterValues, $itemFilters, false);
         if (($v['status'] ?? '')==='blocked') $q->where('policy_blocked', true);
         elseif (!empty($v['status'])) $q->where('status', $v['status']);
         if (!empty($v['accountId'])) $q->where('account_id', (int) $v['accountId']);
@@ -188,8 +191,10 @@ class NroShopController extends Controller
         $owners = DB::table('users')->whereIn('id', $rows->pluck('user_id')->filter()->unique())->pluck('username', 'id');
         $accountNames = DB::table('nro_accounts')->whereIn('id', $rows->pluck('account_id')->filter()->unique())->pluck('account_name', 'id');
 
-        return $this->paged($page, $rows->map(fn ($l) => [...$payloads[$l->id], 'accountId' => $l->account_id,
-            'accountName' => $accountNames[$l->account_id] ?? null, 'ownerUsername' => $owners[$l->user_id] ?? null])->values());
+        return response()->json(['data' => $rows->map(fn ($l) => [...$payloads[$l->id], 'accountId' => $l->account_id,
+            'accountName' => $accountNames[$l->account_id] ?? null, 'ownerUsername' => $owners[$l->user_id] ?? null])->values(),
+            'total'=>$page->total(), 'page'=>$page->currentPage(), 'perPage'=>$page->perPage(),
+            'filters'=>$itemFilters->metadata(true), 'clearedFilters'=>$clearedFilters])->header('Cache-Control', 'no-store');
     }
 
     public function ordersIndex(Request $r, NroShopService $shop)
@@ -197,7 +202,7 @@ class NroShopController extends Controller
         abort_unless($this->capabilities($r)['orders'], 403);
         $v = $r->validate(['q' => 'nullable|string|max:100', 'accountId' => 'nullable|integer', 'page' => 'nullable|integer|min:1',
             'status' => 'nullable|in:pending,queued,awaiting_receipt,processing,review,completed,refunded,failed,expired']);
-        $q = DB::table('item_orders')->whereIn('account_id', $this->ownedAccountIds($r));
+        $q = DB::table('item_orders')->whereIn('account_id', $this->ownedAccountIds($r, true));
         if (($v['status'] ?? '') === 'pending') $q->whereNotIn('status',['completed','refunded']);
         elseif (!empty($v['status'])) $q->where('status',$v['status']);
         if (!empty($v['accountId'])) $q->where('account_id', (int) $v['accountId']);
@@ -218,9 +223,9 @@ class NroShopController extends Controller
     {
         $caps = $this->capabilities($r);
         abort_unless($caps['manageAccounts'] || $caps['reconcile'], 403);
-        $v = $r->validate(['status' => 'nullable|in:queued,processing,review,completed,failed,expired',
+        $v = $r->validate(['status' => 'nullable|in:queued,processing,review,completed,failed,expired,cancelled',
             'type' => 'nullable|in:snapshot,delivery', 'accountId' => 'nullable|integer', 'page' => 'nullable|integer|min:1']);
-        $q = DB::table('nro_worker_jobs')->whereIn('account_id', $this->ownedAccountIds($r));
+        $q = DB::table('nro_worker_jobs')->whereIn('account_id', $this->ownedAccountIds($r, true));
         if (!empty($v['status'])) $q->where('status', $v['status']);
         if (!empty($v['type'])) $q->where('type', $v['type']);
         if (!empty($v['accountId'])) $q->where('account_id', (int) $v['accountId']);
@@ -265,6 +270,14 @@ class NroShopController extends Controller
         $account = $registration->create($r->user(), $r->all());
         ApiCache::clearGroups(['public:nick', 'public:nro-shop:listings']);
         return response()->json(['id' => $account->id]);
+    }
+
+    public function destroyAccount(Request $r, int $id, \App\Services\NroAccountRemoval $removal)
+    {
+        abort_unless($this->capabilities($r)['manageAccounts'], 403);
+        $this->account($r, $id);
+        $removal->remove($id, $r->user());
+        return response()->json(['ok'=>true]);
     }
 
     public function updateAccount(Request $r, int $id)
@@ -352,6 +365,32 @@ class NroShopController extends Controller
         else $save();
         return response()->json(['ok' => true]);
     }
+    /** Loaded only when the policy picker opens; never ship every user on the main page. */
+    public function sellersIndex(Request $r)
+    {
+        abort_unless($this->capabilities($r)['salePolicy'], 403);
+        $v=$r->validate(['q'=>'nullable|string|max:100', 'page'=>'nullable|integer|min:1']);
+        $query=\App\Models\User::query()->select('users.id','users.username')
+            ->where(fn($q)=>$q->permission('item-listings.manage')->orWhereHas('roles',fn($roles)=>$roles->whereIn('name',['admin','super-admin'])))
+            ->whereExists(fn($q)=>$q->selectRaw('1')->from('nro_accounts as a')->whereColumn('a.user_id','users.id')->where('a.usage_type','warehouse')->whereNull('a.deleted_at'));
+        if (!$r->user()->canViewAllAdminData()) $query->whereKey($r->user()->id);
+        $term=trim($v['q'] ?? '');
+        if ($term!=='') {
+            if (preg_match('/^#?(\d+)$/D',$term,$match)) $query->whereKey($match[1]);
+            else $query->where('username','like','%'.addcslashes(ltrim($term,'@'), '%_\\').'%');
+        }
+        $query->selectSub(DB::table('nro_accounts as a')->selectRaw('COUNT(*)')->whereColumn('a.user_id','users.id')->where('a.usage_type','warehouse')->whereNull('a.deleted_at'), 'warehouse_count');
+        $query->selectSub(DB::table('item_listings as l')->selectRaw('COUNT(*)')->whereColumn('l.user_id','users.id')->where('l.status','active')
+            ->whereIn('l.account_id',NroAccount::select('id')), 'listing_count');
+        $page=$query->with('roles:id,name')->orderByDesc('listing_count')->orderBy('users.id')->paginate(12);
+        $policies=NroSellerPolicy::rows($page->getCollection()->pluck('id'));
+        return $this->paged($page,$page->getCollection()->map(fn($user)=>[
+            'userId'=>$user->id, 'username'=>$user->username, 'roles'=>$user->roles->pluck('name'),
+            'warehouses'=>(int)$user->warehouse_count, 'listings'=>(int)$user->listing_count,
+            'sellingEnabled'=>!isset($policies[$user->id]) || (bool)$policies[$user->id]->selling_enabled,
+        ])->values());
+    }
+
     /** Exact lookup, available even before the seller has a game warehouse. */
     public function findSellerPolicy(Request $r)
     {

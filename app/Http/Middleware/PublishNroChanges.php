@@ -64,7 +64,7 @@ class PublishNroChanges
                 // Updated clients ignore this signal when direct patches were delivered.
                 $adminResources=in_array($action,['heartbeat','heartbeatBatch','ready','tradePhase','beginRound','warehouseState'])
                     ? ['nro:orders','nro:jobs','nro:account-detail','nro:status'] : ['nro'];
-                if ($groupConfiguration) $adminResources=[]; // Filter edits do not change account/order rows.
+                if ($groupConfiguration) $adminResources=['nro:listings']; // Filter edits do not change account/order rows.
                 broadcast(new NroShopUpdated((string)Str::uuid(),$catalog,$buyers,$pushed,$adminResources));
             });
         } catch(\Throwable $e) { Log::warning('NRO realtime publish failed',['error'=>$e->getMessage()]); }

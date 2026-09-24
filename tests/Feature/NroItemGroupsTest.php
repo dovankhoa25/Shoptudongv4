@@ -92,7 +92,7 @@ class NroItemGroupsTest extends TestCase
             ->assertJsonPath('filters.itemsByGroup.event_rewards.0.value','14');
         $this->assertNull(Setting::get('nro_sale_item_policy'));
         $this->getJson('/api/nro-shop/listings/'.DB::table('item_listings')->value('id'))->assertOk()->assertJsonMissingPath('clearedFilters');
-        Event::assertDispatched(NroShopUpdated::class, fn($event) => $event->catalog && $event->adminResources === []);
+        Event::assertDispatched(NroShopUpdated::class, fn($event) => $event->catalog && $event->adminResources === ['nro:listings']);
     }
     public function test_hidden_group_preserves_assignments_and_delete_restores_defaults_and_old_urls(): void
     {
