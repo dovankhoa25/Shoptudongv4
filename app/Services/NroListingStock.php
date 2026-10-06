@@ -6,6 +6,27 @@ use Illuminate\Support\Facades\DB;
 
 class NroListingStock
 {
+    public static function inStockListingIds(): array
+    {
+        return \App\Support\ApiCache::remember('public:nro-shop:listings','in-stock-ids-v1',60,function () {
+            $listings=DB::table('item_listings')->where('status','active')->get(['id','account_id','stock_mode','packages_remaining']);
+            if ($listings->isEmpty()) return [];
+            [$totals,$own]=self::allocationMaps($listings->pluck('account_id')->unique());
+            $lines=DB::table('item_listing_items as li')->join('nro_inventory_items as i','i.id','=','li.inventory_item_id')
+                ->whereIn('li.listing_id',$listings->pluck('id'))
+                ->get(['li.listing_id','li.inventory_item_id','li.quantity','i.quantity as stock','i.reserved'])->groupBy('listing_id');
+            $ids=[];
+            foreach ($listings as $listing) {
+                $items=$lines->get($listing->id,collect());
+                $allocated=self::allocationExcept($totals[$listing->account_id] ?? [],$own[$listing->id] ?? []);
+                $count=$items->isEmpty() ? 0 : $items->min(fn($i)=>intdiv(max(0,(int)$i->stock-(int)$i->reserved-($allocated[$i->inventory_item_id] ?? 0)),max(1,(int)$i->quantity)));
+                if ($listing->stock_mode==='fixed') $count=min($count,(int)($listing->packages_remaining ?? 1));
+                if ($count>0) $ids[]=(int)$listing->id;
+            }
+            return $ids;
+        });
+    }
+
     public static function policy(): array
     {
         $json = DB::transactionLevel() > 0 ? DB::table('settings')->where('key','nro_sale_item_policy')->value('value') : Setting::get('nro_sale_item_policy','{}');

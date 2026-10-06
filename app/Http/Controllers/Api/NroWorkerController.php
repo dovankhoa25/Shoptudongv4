@@ -18,7 +18,7 @@ class NroWorkerController extends Controller
     }
     public function claim(Request $r, NroShopService $shop)
     {
-        $r->validate(['protocolVersion' => 'required|integer|in:2,3,4', 'workerInstance' => 'required_if:protocolVersion,4|nullable|uuid', 'activeAccountIds' => 'sometimes|array', 'activeAccountIds.*' => 'integer|min:1', 'blockedAccountIds'=>'sometimes|array|max:10000', 'blockedAccountIds.*'=>'integer|min:1', 'allowNewAccount' => 'sometimes|boolean', 'types' => 'required|array|min:1|max:2', 'types.*' => 'required|in:snapshot,delivery']);
+        $r->validate(['protocolVersion' => 'required|integer|in:2,3,4,5', 'workerInstance' => 'required_if:protocolVersion,4,5|nullable|uuid', 'activeAccountIds' => 'sometimes|array', 'activeAccountIds.*' => 'integer|min:1', 'blockedAccountIds'=>'sometimes|array|max:10000', 'blockedAccountIds.*'=>'integer|min:1', 'allowNewAccount' => 'sometimes|boolean', 'types' => 'required|array|min:1|max:2', 'types.*' => 'required|in:snapshot,delivery']);
         DB::table('nro_worker_keys')->where('id', $r->attributes->get('nro_worker_key_id'))->update(['accepts_delivery' => in_array('delivery', $r->input('types'))]);
         $r->attributes->set('nro_changed_accounts', app(\App\Services\NroClaimMaintenance::class)->run(in_array('snapshot',$r->input('types'))));
         return DB::transaction(function () use ($r, $shop) {
@@ -81,7 +81,9 @@ class NroWorkerController extends Controller
                 // Bound receiver logins too, not only the number of warehouses.
                 if (!$job->recovery_json && $session?->mode==='auto' && DB::table('nro_worker_jobs as j')
                     ->join('nro_delivery_sessions as s','s.id','=','j.delivery_session_id')
-                    ->where('j.account_id',$account->id)->where('j.status','processing')->where('s.mode','auto')->exists()) continue;
+                    ->where('j.account_id',$account->id)->where('j.status','processing')->where('s.mode','auto')
+                    ->when($r->integer('protocolVersion')>=5 && $session->receiver_lock,fn($q)=>$q->where(fn($x)=>$x->whereNull('s.receiver_lock')->orWhere('s.receiver_lock','!=',$session->receiver_lock)))
+                    ->exists()) continue;
                 // Legacy delivery jobs must be reconciled, never executed under the new protocol.
                 if ($job->type === 'delivery' && !$session) {
                     DB::table('nro_worker_jobs')->where('id', $job->id)->update(['status' => 'review', 'result_json' => json_encode(['message' => 'Job giao đồ cũ thiếu phiên nhận; cần đối soát.']), 'updated_at' => now()]);
@@ -90,17 +92,18 @@ class NroWorkerController extends Controller
                 }
                 if ($job->type === 'delivery' && $account->delivery_zone_mode === 'auto' && $r->integer('protocolVersion') < 3) continue;
                 $token = (string) Str::uuid();
-                DB::table('nro_worker_jobs')->where('id', $job->id)->update(['status' => 'processing', 'worker_instance' => $r->input('workerInstance'), 'worker_key_id' => $r->attributes->get('nro_worker_key_id'), 'lease_token' => $token, 'lease_until' => now()->addMinutes(3), 'updated_at' => now()]);
+                DB::table('nro_worker_jobs')->where('id', $job->id)->update(['status' => 'processing', 'worker_instance' => $r->input('workerInstance'), 'worker_key_id' => $r->attributes->get('nro_worker_key_id'), 'lease_token' => $token, 'delivery_protocol'=>$r->integer('protocolVersion'), 'lease_until' => now()->addMinutes(3), 'updated_at' => now()]);
                 if ($job->order_id) DB::table('item_orders')->where('id', $job->order_id)->update(['status' => 'processing', 'delivery_message' => 'Bot đang chuẩn bị đồ.']);
                 if ($session) DB::table('nro_delivery_sessions')->where('id', $session->id)->update(['status' => 'preparing', 'updated_at' => now()]);
-                return response()->json(['data' => ['id' => $job->id, 'type' => $job->type, 'leaseToken' => $token,
+                return response()->json(['data' => ['id' => $job->id, 'type' => $job->type, 'leaseToken' => $token, 'protocolVersion'=>$r->integer('protocolVersion'),
                     'recovery' => $job->recovery_json ? json_decode($job->recovery_json,true) : null,
+                    'recoveryBatchKey'=>$job->recovery_json ? DB::table('nro_delivery_rounds')->where('order_id',$job->order_id)->where('status','started')->latest('id')->value('batch_key') : null,
                     'account' => ['id' => $account->id, 'username' => $account->account_name, 'password' => $account->game_password, 'serverIndex' => $account->server_index ?? 0,
                         'host' => $endpoint->ip, 'port' => (int) $endpoint->port, 'serverId' => $account->server_id,
-                        'deliveryMap' => $account->delivery_map, 'deliveryZone' => $account->delivery_zone, 'deliveryZoneMode' => $account->delivery_zone_mode],
+                        'deliveryMap' => $account->delivery_map, 'deliveryZone' => $account->delivery_zone, 'deliveryZoneMode' => $account->delivery_zone_mode, 'lastBatchKey'=>DB::table('nro_delivery_rounds as r')->join('nro_worker_jobs as j','j.id','=','r.job_id')->where('j.account_id',$account->id)->orderByDesc('r.id')->value('r.batch_key')],
                     'receiving' => $session ? ['id' => $session->id, 'mode' => $session->mode, 'recipientName' => $session->recipient_name === null ? null : mb_strtolower(trim($session->recipient_name), 'UTF-8'),
                         'receiver' => $session->receiver_credentials ? json_decode(\Illuminate\Support\Facades\Crypt::decryptString($session->receiver_credentials), true) : null] : null,
-                    'order' => $job->order_id ? $shop->order($job->order_id) : null]])->header('Cache-Control', 'no-store');
+                    'order' => $job->order_id ? [...$shop->order($job->order_id), 'buyerId'=>(int)DB::table('item_orders')->where('id',$job->order_id)->value('buyer_id')] : null]])->header('Cache-Control', 'no-store');
             }
             return response()->json(['data' => null]);
         }, 3);
@@ -174,6 +177,15 @@ class NroWorkerController extends Controller
 
     public function complete(Request $r, int $id, NroSnapshotService $snapshots, NroShopService $shop)
     {
+        if($r->filled('receipts')) {
+            $r->validate(['receipts'=>'array|max:100']);$owner=$this->job($r,$id,true);
+            foreach($r->input('receipts') as $receipt) {
+                $child=Request::create('/','POST',$receipt);$child->attributes->add($r->attributes->all());
+                app(NroBatchController::class)->receipt($child,(int)$owner->account_id);
+                $r->attributes->set('nro_changed_order_ids',[...$r->attributes->get('nro_changed_order_ids',[]),...$child->attributes->get('nro_changed_order_ids',[])]);
+                if($child->attributes->get('nro_stock_changed')) $r->attributes->set('nro_stock_changed',true);
+            }
+        }
         $r->validate(['leaseToken' => 'required|uuid', 'outcome' => 'required|in:success,review,interrupted,reconnect_check,failed,expired,missing_items,login_failed,trade_paused,trade_recovered',
             'message' => 'nullable|string|max:250', 'payload' => 'nullable|array',
             'loginFailureKind' => 'nullable|string|max:50', 'retryable' => 'nullable|boolean', 'loginRetryAt' => 'nullable|date',
@@ -189,7 +201,7 @@ class NroWorkerController extends Controller
                 if ($terminal->type==='delivery' && $r->input('outcome')==='success'
                     && DB::table('nro_delivery_rounds')->where('job_id',$terminal->id)->where('status','confirmed')->exists()
                     && !DB::table('item_order_items')->where('order_id',$terminal->order_id)->whereColumn('delivered','<','quantity')->exists()) {
-                    $shop->settle($terminal->order_id,true);
+                    $shop->settle($terminal->order_id,true,($terminal->delivery_protocol ?? 4)>=5);
                     return response()->json(['ok'=>true,'alreadyFinalized'=>true]);
                 }
                 $this->lateResult($r, $terminal, 'complete');
@@ -229,6 +241,11 @@ class NroWorkerController extends Controller
                 return response()->json(['ok'=>true,'recovered'=>true]);
             }
             if ($r->input('outcome') === 'missing_items') {
+                if(($job->delivery_protocol ?? 4)>=5 && !NroBatchController::currentStock((int)$accountId,$r->input('afterBatchKey'))) {
+                    // Another confirmed round overtook this capture. Requeue; never ingest stale stock or offer a refund.
+                    abort_unless(app(\App\Services\NroDeliveryLifecycle::class)->recover($job),409);
+                    return response()->json(['ok'=>true,'retrySafe'=>true]);
+                }
                 // A journal replay after a long outage must not refund from stale stock or block the worker forever.
                 if ($job->lease_until < now()->toDateTimeString() && app(\App\Services\NroReceivingService::class)->retryInterrupted($job)) {
                     return response()->json(['ok' => true, 'retrySafe' => true]);
@@ -265,7 +282,7 @@ class NroWorkerController extends Controller
                     'Cần dữ liệu đầy đủ để xác nhận giao dịch hủy chưa chuyển đồ.');
                 $otherRunning = DB::table('nro_worker_jobs')->where('account_id', $accountId)->where('id', '!=', $id)->where('status', 'processing')->exists();
                 if (is_array($payload) && $job->status === 'processing' && $job->lease_until >= now()->toDateTimeString() && !$otherRunning) $snapshots->ingest($account, $payload);
-                else $account->update(['last_synced_at' => null]);
+                elseif (($job->delivery_protocol ?? 4)<5) $account->update(['last_synced_at' => null]);
                 \App\Services\NroDeliveryRound::finish($job,'cancelled',['evidence'=>$r->input('tradeEvidence'),'message'=>$r->input('message')]);
                 $job->recovery_json=null;
                 if ($r->input('outcome') === 'trade_recovered' || $maintenance) {
@@ -333,8 +350,8 @@ class NroWorkerController extends Controller
                 if ($success) {
                     abort_if(DB::table('item_order_items')->where('order_id', $job->order_id)->whereColumn('delivered', '<', 'quantity')->exists(), 409);
                     // Worker only reports success after every selected item is confirmed removed in trade.
-                    $shop->settle($job->order_id, true);
-                    $account->update(['last_synced_at' => ($snapshot && $job->lease_until >= now()->toDateTimeString() && $snapshot->completeness_json['bag'] && $snapshot->completeness_json['chest']) ? $snapshot->captured_at : null]);
+                    $shop->settle($job->order_id, true,($job->delivery_protocol ?? 4)>=5);
+                    if (($job->delivery_protocol ?? 4)<5) $account->update(['last_synced_at' => ($snapshot && $job->lease_until >= now()->toDateTimeString() && $snapshot->completeness_json['bag'] && $snapshot->completeness_json['chest']) ? $snapshot->captured_at : null]);
                 } elseif ($expired) {
                     DB::table('item_orders')->where('id', $job->order_id)->update(['status' => 'awaiting_receipt', 'delivery_message' => 'Hết giờ nhận. Đồ vẫn được giữ; bạn có thể bấm nhận lại.', 'updated_at' => now()]);
                 } else {
@@ -415,7 +432,7 @@ class NroWorkerController extends Controller
                     $stock=DB::table('nro_inventory_items')->where('id',$item->inventory_item_id)->lockForUpdate()->first();
                     DB::table('nro_inventory_items')->where('id',$item->inventory_item_id)->update(['quantity'=>max(0,(int)$stock->quantity-$delta)]);
                     // Stock is unavailable for sale until a fresh snapshot after the session.
-                    NroAccount::whereKey($accountId)->update(['last_synced_at' => null]);
+                    if (($job->delivery_protocol ?? 4)<5) NroAccount::whereKey($accountId)->update(['last_synced_at' => null]);
                 }
                 DB::table('item_order_items')->where('id', $item->id)->update(['delivered' => $line['delivered']]);
             }
@@ -460,10 +477,19 @@ class NroWorkerController extends Controller
 
     public function ready(Request $r, int $id)
     {
+        if($r->filled('receipts')) {
+            $r->validate(['receipts'=>'array|max:100']);$owner=$this->job($r,$id);
+            foreach($r->input('receipts') as $receipt) {
+                $child=Request::create('/','POST',$receipt);$child->attributes->add($r->attributes->all());
+                app(NroBatchController::class)->receipt($child,(int)$owner->account_id);
+                $r->attributes->set('nro_changed_order_ids',[...$r->attributes->get('nro_changed_order_ids',[]),...$child->attributes->get('nro_changed_order_ids',[])]);
+                if($child->attributes->get('nro_stock_changed')) $r->attributes->set('nro_stock_changed',true);
+            }
+        }
         $v = $r->validate(['leaseToken' => 'required|uuid', 'characterId' => 'required|integer', 'name' => 'required|string|max:50',
             'mapId' => 'required|integer|min:0|max:10000', 'mapName' => 'nullable|string|max:100', 'zone' => 'required|integer|min:0|max:255',
             'x' => 'nullable|integer|min:-10000|max:10000', 'y' => 'nullable|integer|min:-10000|max:10000',
-            'recipientName' => 'required|string|max:50']);
+            'recipientName' => 'required|string|max:50', 'recipientCharacterId'=>'nullable|integer']);
         $v['recipientName'] = mb_strtolower(trim($v['recipientName']), 'UTF-8');
         return DB::transaction(function () use ($r, $id, $v) {
             $accountId = DB::table('nro_worker_jobs')->where('id', $id)->value('account_id');
@@ -473,7 +499,7 @@ class NroWorkerController extends Controller
             $s = DB::table('nro_delivery_sessions')->where('id', $job->delivery_session_id)->lockForUpdate()->first();
             abort_unless($s && in_array($s->status, ['preparing','ready']), 409);
             if ($s->mode === 'manual') abort_unless($v['recipientName'] === mb_strtolower(trim($s->recipient_name), 'UTF-8'), 422);
-            if (DB::table('nro_delivery_sessions as s')->join('item_orders as o', 'o.id', '=', 's.order_id')
+            if (($job->delivery_protocol ?? 4)<5 && DB::table('nro_delivery_sessions as s')->join('item_orders as o', 'o.id', '=', 's.order_id')
                 ->where('o.account_id', $accountId)->where('s.id', '!=', $s->id)->whereRaw('LOWER(s.recipient_name) = ?', [$v['recipientName']])
                 ->whereIn('s.status', ['ready', 'trading'])->exists()) {
                 abort_unless($job->worker_instance && $s->mode === 'manual', 409, 'Nhân vật đang nhận một đơn khác.');
@@ -483,7 +509,7 @@ class NroWorkerController extends Controller
             $expires = $s->expires_at ? \Carbon\Carbon::parse($s->expires_at) : now()->addMinutes($s->wait_minutes);
             unset($v['leaseToken']);
             DB::table('nro_delivery_sessions')->where('id', $s->id)->update(['status' => 'ready', 'ready_at' => $s->ready_at ?? now(), 'expires_at' => $expires,
-                'position_json' => json_encode($v), 'recipient_name' => $v['recipientName'], 'updated_at' => now()]);
+                'position_json' => json_encode($v), 'recipient_name' => $v['recipientName'], 'recipient_character_id'=>$v['recipientCharacterId'] ?? null, 'updated_at' => now()]);
             $pause = NroAccount::find($accountId)->delivery_activity['pauseStartedAt'] ?? null;
             $clock = $pause ? \Carbon\Carbon::parse($pause)->max(\Carbon\Carbon::parse($s->ready_at ?? now())) : now();
             return response()->json(['expiresAt' => $expires->toIso8601String(), 'remainingSeconds' => max(0, $clock->diffInSeconds($expires, false))]);
@@ -535,7 +561,7 @@ class NroWorkerController extends Controller
 
     public function warehouseState(Request $r, int $id, \App\Services\NroWarehouseActivity $activity)
     {
-        $v = $r->validate(['leaseToken' => 'required|uuid', 'phase' => 'required|in:home,collecting,travelling,ready',
+        $v = $r->validate(['leaseToken' => 'required|uuid', 'phase' => 'required|in:home,collecting,travelling,dead,ready',
             'position' => 'nullable|array', 'position.characterId' => 'required_with:position|integer', 'position.name' => 'required_with:position|string|max:50',
             'position.mapId' => 'required_with:position|integer|min:0|max:10000', 'position.mapName' => 'nullable|string|max:100',
             'position.zone' => 'required_with:position|integer|min:0|max:255', 'position.x' => 'required_with:position|integer', 'position.y' => 'required_with:position|integer']);

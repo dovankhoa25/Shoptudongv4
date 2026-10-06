@@ -82,6 +82,7 @@ export default function ListingsTab({
                         render: (_, l: Listing) => l.accountName || `#${l.accountId}`,
                     },
                     { title: 'Giá gói', dataIndex: 'price', width: 120, render: money },
+                    { title: 'Giá nhập / gói', dataIndex: 'costPrice', width: 120, render: v => v == null ? <span className="text-xs text-slate-500">Chưa nhập</span> : money(v) },
                     { title: 'Tồn kho / khả dụng', width: 200, render: (_, l: Listing) => <ListingAvailability listing={l} /> },
                     {
                         title: 'Trạng thái',

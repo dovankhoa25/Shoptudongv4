@@ -43,7 +43,12 @@ class NroReceivingService
                 $username = trim($v['username']);
                 NroShopService::require(!NroAccount::withTrashed()->where('server_game_id', $a->server_game_id)->whereRaw('LOWER(account_name) = ?', [mb_strtolower($username)])->exists(), 'Acc nhận không được là acc do hệ thống quản lý.');
                 $lock = hash('sha256', $a->server_game_id . ':' . mb_strtolower($username));
-                NroShopService::require(!DB::table('nro_delivery_sessions')->where('receiver_lock', $lock)->exists(), 'Acc nhận đang được dùng trong phiên khác.');
+                DB::table('nro_receiver_locks')->insertOrIgnore(['key'=>$lock]);
+                DB::table('nro_receiver_locks')->where('key',$lock)->lockForUpdate()->first();
+                NroShopService::require(!DB::table('nro_delivery_sessions as s')->join('item_orders as o','o.id','=','s.order_id')
+                    ->where('s.receiver_lock',$lock)->whereIn('s.status',NroOrderFlow::ACTIVE_SESSIONS)
+                    ->where(fn($q)=>$q->where('o.account_id','!=',$a->id)->orWhere('o.buyer_id','!=',$user->id))->exists(),
+                    'Acc nhận đang được dùng với kho hoặc người mua khác. Hoàn tất phiên đó trước.');
                 $credentials = Crypt::encryptString(json_encode(['username' => $username, 'password' => $v['password']]));
             }
             $session = DB::table('nro_delivery_sessions')->insertGetId([

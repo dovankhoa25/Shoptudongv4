@@ -127,7 +127,7 @@ class NroShopService
             self::require(!DB::table('nro_worker_jobs')->where('account_id', $account->id)->where(function ($q) { $q->where('status', 'review')->orWhere(fn ($j) => $j->where('status', 'processing')->where('type', 'snapshot')); })->exists(), 'Acc đang lấy dữ liệu hoặc chờ đối soát. Vui lòng thử lại sau.');
             self::require((int) $buyer->balance >= $total, 'Số dư không đủ.');
             $order = DB::table('item_orders')->insertGetId(['buyer_id' => $buyer->id, 'seller_id' => $listing->user_id, 'listing_id' => $listingId,
-                'account_id' => $account->id, 'recipient_name' => $name, 'server_index' => $account->server_index ?? 0, 'server_id' => $server, 'price' => $total, 'unit_price' => $listing->price, 'package_quantity' => $packageQuantity,
+                'account_id' => $account->id, 'recipient_name' => $name, 'server_index' => $account->server_index ?? 0, 'server_id' => $server, 'price' => $total, 'unit_price' => $listing->price, 'unit_cost_price'=>$listing->cost_price ?? null, 'package_quantity' => $packageQuantity,
                 'title' => $listing->title, 'request_key' => $key, 'status' => 'awaiting_receipt', 'created_at' => now(), 'updated_at' => now()]);
             $totalItems = 0;
             foreach (DB::table('item_listing_items')->where('listing_id', $listingId)->orderBy('inventory_item_id')->get() as $line) {
@@ -215,7 +215,7 @@ class NroShopService
             'position' => json_decode($s->position_json ?? 'null', true)] : null;
     }
 
-    public function settle(int $orderId, bool $delivered): void
+    public function settle(int $orderId, bool $delivered, bool $inventoryConfirmed = false): void
     {
         $order = DB::table('item_orders')->where('id', $orderId)->lockForUpdate()->first();
         if (in_array($order->status, ['completed', 'refunded'])) return;
@@ -236,7 +236,7 @@ class NroShopService
         DB::table('item_orders')->where('id',$orderId)->update(NroOrderFlow::terminalChanges('completed'));
         if ($delivered) DB::table('item_order_items')->where('order_id', $orderId)->update(['delivered' => DB::raw('quantity')]);
         // Force a fresh inventory before the next sale after manual settlement.
-        NroAccount::whereKey($order->account_id)->update(['last_synced_at' => null]);
+        if (!$inventoryConfirmed) NroAccount::whereKey($order->account_id)->update(['last_synced_at' => null]);
         ApiCache::clearGroups(['public:nro-shop:listings']);
     }
 }

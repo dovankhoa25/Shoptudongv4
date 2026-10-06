@@ -18,6 +18,7 @@ class PublishNroChanges
         $response=$next($request);
         if($request->isMethodSafe() || !$response->isSuccessful()) return $response;
         $action=$request->route()?->getActionMethod();
+        if($action==='receipt' && !$request->attributes->get('nro_changed_order_ids')) return $response;
         $heartbeat=in_array($action,['heartbeat','heartbeatBatch']);
         if($heartbeat && !$request->attributes->get('nro_delivery_message_changed')) return $response;
         $body=$response instanceof \Illuminate\Http\JsonResponse ? $response->getData(true) : [];
@@ -50,7 +51,8 @@ class PublishNroChanges
             // Only a warehouse phase/lease update fans out to other waiting buyers.
             if($accounts) $orders=[...$orders,...DB::table('item_orders')->whereIn('account_id',$accounts)->whereNotIn('status',['completed','refunded'])->pluck('id')->all()];
             $orders=array_values(array_unique(array_filter($orders)));
-            $catalog=$action==='claim' ? ((bool)$maintenance || ($body['data']['type'] ?? '')==='snapshot') : !in_array($action,['release','resultIssue','ready','tradePhase','beginRound','warehouseState','receive','heartbeat','heartbeatBatch','stockCheck']);
+            $catalog=$action==='claim' ? ((bool)$maintenance || ($body['data']['type'] ?? '')==='snapshot') : !in_array($action,['begin','release','resultIssue','ready','tradePhase','beginRound','warehouseState','receive','heartbeat','heartbeatBatch','stockCheck']);
+            $catalog=$catalog || (bool)$request->attributes->get('nro_stock_changed');
             $groupConfiguration = $request->is('admin/nro-shop/item-groups');
             DB::afterCommit(function () use($catalog,$orders,$action,$groupConfiguration) {
                 if($catalog) ApiCache::clearGroup('public:nro-shop:listings');
@@ -62,7 +64,7 @@ class PublishNroChanges
                 }
                 // Old clients retain their invalidation contract during rolling deployment.
                 // Updated clients ignore this signal when direct patches were delivered.
-                $adminResources=in_array($action,['heartbeat','heartbeatBatch','ready','tradePhase','beginRound','warehouseState'])
+                $adminResources=in_array($action,['heartbeat','heartbeatBatch','ready','tradePhase','beginRound','begin','warehouseState'])
                     ? ['nro:orders','nro:jobs','nro:account-detail','nro:status'] : ['nro'];
                 if ($groupConfiguration) $adminResources=['nro:listings']; // Filter edits do not change account/order rows.
                 broadcast(new NroShopUpdated((string)Str::uuid(),$catalog,$buyers,$pushed,$adminResources));

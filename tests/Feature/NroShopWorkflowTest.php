@@ -200,7 +200,7 @@ class NroShopWorkflowTest extends TestCase
         $inventory = DB::table('nro_inventory_items')->where('account_id', $a->id)->orderBy('id')->get();
         foreach ($inventory as $i) {
             $item = json_decode($i->item_json, true); $item['name'] = 'Đá lục bảo';
-            DB::table('nro_inventory_items')->where('id', $i->id)->update(['item_json' => json_encode($item)]);
+            DB::table('nro_inventory_items')->where('id', $i->id)->update(['item_json' => json_encode($item), 'quantity'=>23]);
         }
         $ids = [];
         foreach (range(1, 23) as $n) {

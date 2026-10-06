@@ -10,12 +10,13 @@ export default function EditListingPrice({ listing, disabled, onSaved }: {
 }) {
     const [open, setOpen] = useState(false);
     const [price, setPrice] = useState<number | null>(null);
+    const [costPrice, setCostPrice] = useState<number | null>(null);
     const [count, setCount] = useState(1);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
     return <>
         <Button title="Sửa giá / số gói" aria-label="Sửa giá / số gói" icon={<Pencil size={16} />} disabled={disabled || listing.status === 'archived'} onClick={() => {
-            setCount(listing.packagesRemaining ?? 1); setPrice(Number(listing.price)); setError(''); setOpen(true);
+            setCostPrice(listing.costPrice == null ? null : Number(listing.costPrice)); setCount(listing.packagesRemaining ?? 1); setPrice(Number(listing.price)); setError(''); setOpen(true);
         }} />
         <Modal title={`Giá và số gói · #${listing.id}`} open={open} confirmLoading={saving}
             okText="Lưu thay đổi" cancelText="Đóng" okButtonProps={{ disabled: !price || price < 1 }}
@@ -23,7 +24,7 @@ export default function EditListingPrice({ listing, disabled, onSaved }: {
                 if (!price || saving) return;
                 setSaving(true); setError('');
                 try {
-                    await axios.patch(`${base}/listings/${listing.id}`, { price, ...(listing.stockMode !== 'auto' && count !== (listing.packagesRemaining ?? 1) ? { packageCount: count } : {}) });
+                    await axios.patch(`${base}/listings/${listing.id}`, { price, costPrice, ...(listing.stockMode !== 'auto' && count !== (listing.packagesRemaining ?? 1) ? { packageCount: count } : {}) });
                     setOpen(false); message.success('Đã cập nhật tin bán'); await onSaved();
                 } catch (e) {
                     setError(axios.isAxiosError(e) ? e.response?.data?.message || 'Không lưu được giá.' : 'Không lưu được giá.');
@@ -34,6 +35,8 @@ export default function EditListingPrice({ listing, disabled, onSaved }: {
             <InputNumber id={`price-${listing.id}`} className="!w-full" min={1} max={9999999999}
                 precision={0} value={price} onChange={setPrice} disabled={saving} />
             <p className="mt-2 text-xs text-slate-500">Giá mới chỉ áp dụng cho đơn mua sau. Đơn đã thanh toán giữ nguyên giá.</p>
+            <label className="mt-3 mb-1 block text-sm" htmlFor={`cost-${listing.id}`}>Giá nhập mỗi gói (đ) · Nội bộ</label>
+            <InputNumber id={`cost-${listing.id}`} className="!w-full" min={0} max={9999999999} precision={0} value={costPrice} onChange={setCostPrice} disabled={saving} placeholder="Chưa nhập" />
             {listing.stockMode !== 'auto' && <div className="mt-3"><label htmlFor={`count-${listing.id}`} className="mb-1 block text-sm">Số gói còn mở bán (không gồm đơn đã mua)</label><InputNumber id={`count-${listing.id}`} min={0} max={listing.quantityEnabled ? 1000000 : 1} precision={0} value={count} disabled={saving} onChange={v => setCount(v ?? 0)} className="!w-full" /></div>}
             {listing.stockMode === 'auto' && <p className="mt-3 text-xs">Tin tự động: số gói được tính lại sau khi cập nhật dữ liệu kho.</p>}
             {error && <Alert className="mt-3" type="error" showIcon message={error} />}

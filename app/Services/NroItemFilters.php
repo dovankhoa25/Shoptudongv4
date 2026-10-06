@@ -14,7 +14,7 @@ class NroItemFilters
         'dragon_balls'=>[14,15,16,17,18,19,20],
     ];
     public const STATS = ['damage'=>'Sức đánh', 'life_steal'=>'Hút máu', 'ki_steal'=>'Hút KI',
-        'gold'=>'Vàng từ quái', 'hp'=>'HP', 'ki'=>'KI', 'other'=>'Khác'];
+        'gold'=>'Vàng từ quái', 'hp'=>'HP', 'ki'=>'KI', 'potential_power'=>'Tiềm năng, sức mạnh', 'other'=>'Khác'];
     // Other combat/utility stats, excluding slot counts, item level, expiry and trade metadata.
     public const OTHER_STAT_IDS = [3,4,5,10,14,15,16,17,18,19,27,28,42,43,44,45,46,47,62,78,79,80,81,88,94,197,204,206];
     private ?array $catalog = null;
@@ -37,7 +37,7 @@ class NroItemFilters
     }
     public function version(): string
     {
-        return hash('sha256', json_encode([$this->definitions, $this->overrides]).filemtime(resource_path('nro/item-templates.json')));
+        return hash('sha256', json_encode([$this->definitions, $this->overrides, self::STATS]).filemtime(resource_path('nro/item-templates.json')));
     }
     public static function overrides(): array { return json_decode(Setting::get('nro_item_group_overrides', '[]'), true) ?: []; }
     private function catalog(): array
@@ -100,7 +100,9 @@ class NroItemFilters
         $options=$item['options'] ?? [];
         $has=fn($ids)=>collect($options)->contains(fn($o)=>in_array((int)($o['optionId'] ?? -1),$ids,true) && ($o['param'] ?? 0)>0);
         return ['filter_life_steal'=>$has([8,95,104]), 'filter_ki_steal'=>$has([8,96]),
-            'filter_gold'=>$has([100]), 'filter_other'=>$has(self::OTHER_STAT_IDS)];
+            'filter_gold'=>$has([100]), 'filter_other'=>$has(self::OTHER_STAT_IDS),
+            // Option 83 is a fixed 20% bonus; its presence matters even when param is zero.
+            'filter_potential_power'=>$has([101,230]) || collect($options)->contains(fn($o)=>(int)($o['optionId'] ?? -1)===83)];
     }
 
 }

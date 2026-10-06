@@ -68,6 +68,7 @@ export type Inventory = {
 };
 
 export type Listing = {
+    costPrice?: string | null;
     id: number;
     accountId: number;
     shopHidden?: boolean;

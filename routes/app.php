@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\NroBatchController;
 use App\Http\Controllers\AppAuto\AppBotController;
 use App\Http\Controllers\AppAuto\AppGemBotController;
 use App\Http\Controllers\AppAuto\AppGemTransactionController;
@@ -86,5 +87,8 @@ Route::prefix('nro-worker')->middleware([NroWorkerKey::class, 'throttle:600,1', 
     Route::post('jobs/{id}/recovery-checked', [NroWorkerController::class, 'recoveryChecked'])->whereNumber('id');
     Route::post('jobs/{id}/ready', [NroWorkerController::class, 'ready'])->whereNumber('id');
     Route::post('jobs/{id}/trade-phase', [NroWorkerController::class, 'tradePhase'])->whereNumber('id');
+    Route::post('accounts/{id}/batch-begin', [NroBatchController::class, 'begin'])->whereNumber('id');
+    Route::post('accounts/{id}/batch-receipt', [NroBatchController::class, 'receipt'])->whereNumber('id');
+    Route::post('accounts/{id}/batch-stock', [NroBatchController::class, 'stock'])->whereNumber('id');
     Route::post('jobs/{id}/begin-round', [NroWorkerController::class, 'beginRound'])->whereNumber('id');
 });

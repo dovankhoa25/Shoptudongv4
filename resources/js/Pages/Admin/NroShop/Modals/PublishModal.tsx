@@ -141,6 +141,9 @@ export default function PublishModal({
                 >
                     <InputNumber min={1} max={9999999999} className="w-full" />
                 </Form.Item>
+                {!isNick && <Form.Item name="costPrice" label="Giá nhập mỗi gói (đ)" extra="Tùy chọn. Chỉ chủ tin và admin có quyền xem; để trống nếu chưa biết giá nhập.">
+                    <InputNumber min={0} max={9999999999} precision={0} className="!w-full" placeholder="Chưa nhập" />
+                </Form.Item>}
                 {!isNick && <div className="mb-4 rounded-lg border border-slate-300 p-3 dark:border-slate-700">
                     {stackable ? <>
                         <Form.Item name="stockMode" label="Số gói mở bán" initialValue="fixed">

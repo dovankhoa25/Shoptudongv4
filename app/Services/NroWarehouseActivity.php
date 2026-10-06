@@ -9,6 +9,8 @@ class NroWarehouseActivity
 {
     public const MESSAGES = [
         'home' => 'Bot đang về nhà lấy đồ',
+        'trading' => 'Bot đang giao đồ cho khách; các khách khác tiếp tục chờ lượt',
+        'dead' => 'Bot bị chết, đang hồi sinh và quay lại điểm nhận',
         'collecting' => 'Bot đang lấy đồ từ rương',
         'travelling' => 'Bot đang đến điểm giao',
         'ready' => 'Bot đã sẵn sàng nhận giao dịch',
@@ -45,6 +47,9 @@ class NroWarehouseActivity
         $account=NroAccount::whereKey($job->account_id)->lockForUpdate()->first();
         $activity=$account?->delivery_activity ?? [];
         if (!$account || empty($activity['pauseStartedAt'])) return;
+        // The batch receipt owns this pause. Settling its first order must not erase
+        // the rendezvous of the other customers still waiting at the same warehouse.
+        if(($activity['phase'] ?? null)==='trading') return;
         $owner=$activity['jobId'] ?? null;
         if ($owner !== null && (int)$owner !== (int)$job->id) return;
         if ($owner === null && DB::table('nro_worker_jobs')->where('account_id',$job->account_id)
@@ -63,6 +68,6 @@ class NroWarehouseActivity
         $live = $jobs->contains(fn ($job) => $job->worker_instance === ($activity['workerInstance'] ?? null) && $job->lease_until && Carbon::parse($job->lease_until)->isFuture());
         return ['position'=>$live ? ($activity['position'] ?? null) : null, 'phase' => $live ? $phase : null, 'message' => $live ? ($activity['message'] ?? null) : null,
             'pauseStartedAt' => $live ? ($activity['pauseStartedAt'] ?? null) : null,
-            'preparing' => $live && in_array($phase, ['home','collecting','travelling'])];
+            'preparing' => $live && in_array($phase, ['home','collecting','travelling','dead'])];
     }
 }

@@ -191,7 +191,7 @@ class NroShopController extends Controller
         $owners = DB::table('users')->whereIn('id', $rows->pluck('user_id')->filter()->unique())->pluck('username', 'id');
         $accountNames = DB::table('nro_accounts')->whereIn('id', $rows->pluck('account_id')->filter()->unique())->pluck('account_name', 'id');
 
-        return response()->json(['data' => $rows->map(fn ($l) => [...$payloads[$l->id], 'accountId' => $l->account_id,
+        return response()->json(['data' => $rows->map(fn ($l) => [...$payloads[$l->id], 'costPrice'=>$l->cost_price === null ? null : (string)$l->cost_price, 'accountId' => $l->account_id,
             'accountName' => $accountNames[$l->account_id] ?? null, 'ownerUsername' => $owners[$l->user_id] ?? null])->values(),
             'total'=>$page->total(), 'page'=>$page->currentPage(), 'perPage'=>$page->perPage(),
             'filters'=>$itemFilters->metadata(true), 'clearedFilters'=>$clearedFilters])->header('Cache-Control', 'no-store');
@@ -556,14 +556,14 @@ class NroShopController extends Controller
         $listings = DB::table('item_listings')->where('account_id', $a->id)->orderByDesc('id')->paginate(20);
         $payloads = $shop->listings($listings->getCollection());
         $ownerUsername = \App\Models\User::whereKey($a->user_id)->value('username');
-        return response()->json(['data' => $listings->getCollection()->map(fn ($l) => [...$payloads[$l->id], 'accountId' => $a->id, 'accountName' => $a->account_name, 'ownerUsername' => $ownerUsername])->values(),
+        return response()->json(['data' => $listings->getCollection()->map(fn ($l) => [...$payloads[$l->id], 'costPrice'=>$l->cost_price === null ? null : (string)$l->cost_price, 'accountId' => $a->id, 'accountName' => $a->account_name, 'ownerUsername' => $ownerUsername])->values(),
             'total' => $listings->total(), 'page' => $listings->currentPage(), 'perPage' => $listings->perPage()]);
     }
 
     public function publishItems(Request $r, int $id)
     {
         $a = $this->account($r, $id);
-        $v = $r->validate(['title' => 'nullable|string|max:180', 'description' => 'nullable|string|max:10000', 'price' => 'required|integer|min:1|max:9999999999',
+        $v = $r->validate(['title' => 'nullable|string|max:180', 'description' => 'nullable|string|max:10000', 'price' => 'required|integer|min:1|max:9999999999', 'costPrice'=>'nullable|integer|min:0|max:9999999999',
             'stockMode' => 'sometimes|in:fixed,auto', 'packageCount' => 'sometimes|integer|min:1|max:1000000',
             'items' => 'required|array|min:1|max:20', 'items.*.id' => 'required|integer|distinct', 'items.*.quantity' => 'required|integer|min:1|max:1000000000']);
         $listing = DB::transaction(function () use ($a, $v) {
@@ -577,7 +577,7 @@ class NroShopController extends Controller
             $mode=$v['stockMode'] ?? 'fixed'; $count=$mode==='auto' ? 1 : (int)($v['packageCount'] ?? 1);
             $sellerPolicy=NroSellerPolicy::read((int)$a->user_id); $globalPolicy=NroListingStock::policy();
             NroListingStock::assertNoAutomaticOverlap((int)$a->id,array_column($v['items'],'id'));
-            $listing = DB::table('item_listings')->insertGetId(['user_id' => $a->user_id, 'account_id' => $a->id, 'title' => $title, 'description' => $v['description'] ?? '', 'public_description' => $v['description'] ?? '', 'price' => $v['price'], 'stock_mode'=>$mode, 'packages_remaining'=>$count, 'status' => 'active', 'created_at' => now(), 'updated_at' => now()]);
+            $listing = DB::table('item_listings')->insertGetId(['user_id' => $a->user_id, 'account_id' => $a->id, 'title' => $title, 'description' => $v['description'] ?? '', 'public_description' => $v['description'] ?? '', 'price' => $v['price'], 'cost_price'=>$v['costPrice'] ?? null, 'stock_mode'=>$mode, 'packages_remaining'=>$count, 'status' => 'active', 'created_at' => now(), 'updated_at' => now()]);
             $allocated = NroListingStock::allocated($a->id, $listing);
             foreach ($v['items'] as $line) {
                 $item = DB::table('nro_inventory_items')->where('id', $line['id'])->where('account_id', $a->id)->lockForUpdate()->first();
@@ -600,7 +600,7 @@ class NroShopController extends Controller
     public function toggle(Request $r, int $id)
     {
         $v=$r->validate(['status'=>'sometimes|required|in:active,paused,archived','price'=>'sometimes|required|integer|min:1|max:9999999999',
-            'packageCount'=>'sometimes|integer|min:0|max:1000000']);
+            'packageCount'=>'sometimes|integer|min:0|max:1000000', 'costPrice'=>'sometimes|nullable|integer|min:0|max:9999999999']);
         NroShopService::require(count($v)>0,'Chọn thay đổi cần lưu.');
         $l=DB::table('item_listings')->find($id); abort_unless($l,404); $this->account($r,$l->account_id);
         DB::transaction(function() use($id,$l,$v) {
@@ -621,7 +621,8 @@ class NroShopController extends Controller
                     NroShopService::require(NroListingStock::selectable($item,$allocated)>=(int)$line->quantity*($l->stock_mode==='auto'?1:$count),'Không đủ tồn sau khi trừ đồ giữ cho tin khác và đơn chưa nhận.');
                 }
             }
-            $changes=collect($v)->except('packageCount')->all();
+            $changes=collect($v)->except(['packageCount','costPrice'])->all();
+            if(array_key_exists('costPrice',$v)) $changes['cost_price']=$v['costPrice'];
             if(isset($v['packageCount'])) $changes['packages_remaining']=$count;
             if($l->stock_mode==='fixed' && $count===0 && ($v['status'] ?? $l->status)==='active') $changes['status']='sold';
             DB::table('item_listings')->where('id',$id)->update([...$changes,'updated_at'=>now()]);

@@ -15,12 +15,13 @@ class NroShopController extends Controller
         $cachePayload['q'] = trim((string) ($cachePayload['q'] ?? ''));
         if (($cachePayload['q'] ?? '') === '') unset($cachePayload['q']);
         ksort($cachePayload);
-        $cacheKey = ApiCache::key('nro-shop:listings', 'filters-v7-groups', $itemFilters->version(), (string) \Illuminate\Support\Facades\Cache::get('nro-shop:visibility-version', '0'), json_encode($cachePayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        $cacheKey = ApiCache::key('nro-shop:listings', 'filters-v8-stock', $itemFilters->version(), (string) \Illuminate\Support\Facades\Cache::get('nro-shop:visibility-version', '0'), json_encode($cachePayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 
         $payload = ApiCache::remember('public:nro-shop:listings', $cacheKey, 60, function () use ($filters, $s, $itemFilters) {
             $q = DB::table('item_listings')->where('status', 'active')->whereIn('account_id', DB::table('nro_accounts')->select('id')->whereNull('deleted_at')->where('shop_hidden', false)->where('login_sale_blocked', false))->where('policy_blocked', false);
             app(\App\Services\NroListingFilters::class)->apply($q, $filters, $itemFilters);
 
+            $q->whereIntegerInRaw('item_listings.id', \App\Services\NroListingStock::inStockListingIds());
             $page = $q->orderByDesc('id')->paginate(20);
             $payloads = $s->listings($page->items());
             return [
@@ -51,7 +52,9 @@ class NroShopController extends Controller
     private function publicListing(array $data): array
     {
         $public = $data['publicDescription'] ?? null;
-        return [...Arr::except($data, ['description', 'publicDescription']), ...($public !== null && $public !== '' ? ['description'=>$public] : [])];
+        return [...Arr::only($data, ['id','title','shopHidden','price','status','lastOrderStatus','serverIndex','serverId','serverName',
+            'stockMode','packagesRemaining','policyBlocked','quantityEnabled','available','stockAvailable','unavailableReasons','workerOnline','needsSync','items']),
+            ...($public !== null && $public !== '' ? ['description'=>$public] : [])];
     }
     public function purchase(Request $r, NroShopService $s)
     {
