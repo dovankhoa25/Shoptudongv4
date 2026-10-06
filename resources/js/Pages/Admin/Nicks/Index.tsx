@@ -637,7 +637,11 @@ export default function NickPage() {
                 </Row>
             </div>
 
-            <div className="mb-4">
+            <div className="mb-4 flex flex-wrap gap-2">
+                {canCreate && <>
+                    <Button type="primary" onClick={() => router.visit('/admin/games/accounts/create-background')}>Đăng nick · Xử lý ảnh nền</Button>
+                    <Button onClick={() => router.visit('/admin/games/accounts/media-publications')}>Theo dõi đăng nick</Button>
+                </>}
                 <Button
                     type="primary"
                     icon={<Filter className="w-4 h-4" />}

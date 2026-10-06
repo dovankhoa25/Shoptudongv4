@@ -7,6 +7,7 @@ import { ICategory } from "@/InterFaces/category";
 import { IAttribute } from "@/InterFaces/attribute";
 import { INick, INickAttributeCache } from "@/InterFaces/nick";
 import { UploadFull } from '@/Components/Upload/CustomUpload';
+import { MAX_NICK_IMAGES, MAX_NICK_IMAGE_URL_TEXT } from '@/Utils/NickMediaLimits';
 import axios from 'axios';
 const { TextArea } = Input;
 
@@ -102,6 +103,12 @@ const EditModal: React.FC<EditModalProps> = ({ onClose, nickId }) => {
     const handleSubmit = async (values: any) => {
         if (!selectedCategory || !nickData) {
             toast.error('Dữ liệu không hợp lệ!');
+            return;
+        }
+
+        const imageCount = imageMode === 'upload' ? images?.length || 0 : imageUrls.split('\n').filter(url => url.trim()).length;
+        if (imageCount > MAX_NICK_IMAGES) {
+            toast.error(`Mỗi nick được đăng tối đa ${MAX_NICK_IMAGES} ảnh.`);
             return;
         }
 
@@ -520,7 +527,7 @@ const EditModal: React.FC<EditModalProps> = ({ onClose, nickId }) => {
                                                         <UploadFull
                                                             value={images}
                                                             onChange={setImages}
-                                                            maxCount={100}
+                                                            maxCount={MAX_NICK_IMAGES}
                                                             maxSize={10}
                                                         />
                                                         {images && images.length > 0 && (
@@ -541,7 +548,7 @@ const EditModal: React.FC<EditModalProps> = ({ onClose, nickId }) => {
                                                     <div className="space-y-3">
                                                         <Form.Item
                                                             label="Danh sách URL ảnh mới"
-                                                            help="Mỗi URL một dòng, tối đa 10 ảnh"
+                                                            help={`Mỗi URL một dòng, tối đa ${MAX_NICK_IMAGES} ảnh`}
                                                         >
                                                             <TextArea
                                                                 value={imageUrls}
@@ -549,7 +556,7 @@ const EditModal: React.FC<EditModalProps> = ({ onClose, nickId }) => {
                                                                 placeholder={`https://example.com/image1.jpg\nhttps://example.com/image2.png`}
                                                                 rows={4}
                                                                 showCount
-                                                                maxLength={2000}
+                                                                maxLength={MAX_NICK_IMAGE_URL_TEXT}
                                                             />
                                                         </Form.Item>
                                                         {imageUrls.trim() && (
@@ -571,7 +578,7 @@ const EditModal: React.FC<EditModalProps> = ({ onClose, nickId }) => {
                                                                     {imageUrls.split('\n')
                                                                         .map(url => url.trim())
                                                                         .filter(url => url.length > 0)
-                                                                        .slice(0, 10)
+                                                                        .slice(0, MAX_NICK_IMAGES)
                                                                         .map((url, index) => (
                                                                             <div key={index} className="relative w-full h-20 rounded-lg overflow-hidden border border-gray-200 bg-gray-100">
                                                                                 <img
@@ -612,7 +619,7 @@ const EditModal: React.FC<EditModalProps> = ({ onClose, nickId }) => {
                                                         <li>• Để trống nếu không muốn thay đổi ảnh</li>
                                                         <li>• Ảnh mới sẽ thay thế hoàn toàn ảnh cũ</li>
                                                         <li>• Ảnh đầu tiên sẽ là ảnh đại diện</li>
-                                                        <li>• Tối đa 10 ảnh, mỗi ảnh tối đa 5MB</li>
+                                                        <li>• Tối đa {MAX_NICK_IMAGES} ảnh, mỗi ảnh tối đa 5MB</li>
                                                     </ul>
                                                 </div>
                                             </div>

@@ -24,8 +24,19 @@ class UpdateNickRequest extends FormRequest
             'attribute_cache_json' => 'nullable|array',
             'attribute_cache_json.*.attribute_id' => 'required|integer|exists:attributes,id',
             'attribute_cache_json.*.option_id'    => 'required|integer|exists:attribute_options,id',
+            'images'            => 'nullable|array|max:20',
             'images.*'          => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:2048',
-            'image_urls'        => 'nullable|json',
+            'image_urls' => ['bail', 'nullable', 'json', function ($attribute, $value, $fail) {
+                $urls = json_decode($value, true);
+                if (! is_array($urls) || ! array_is_list($urls)) {
+                    $fail('Danh sách URL ảnh phải là một mảng JSON.');
+                    return;
+                }
+                $images = $this->file('images', []);
+                if (count($urls) + (is_array($images) ? count($images) : 0) > 20) {
+                    $fail('Mỗi nick được đăng tối đa 20 ảnh, tính cả file và URL.');
+                }
+            }],
         ];
     }
 
@@ -41,6 +52,7 @@ class UpdateNickRequest extends FormRequest
             'images.*.image' => 'Ảnh tải lên không đúng định dạng.',
             'images.*.mimes' => 'Ảnh phải là jpeg, png, jpg, gif hoặc webp.',
             'images.*.max' => 'Kích thước ảnh không được vượt quá 2MB.',
+            'images.max' => 'Mỗi nick được đăng tối đa 20 ảnh.',
             'image_urls.json' => 'Danh sách URL ảnh phải là JSON hợp lệ.',
         ];
     }

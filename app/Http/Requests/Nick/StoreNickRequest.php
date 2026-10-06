@@ -41,11 +41,21 @@ class StoreNickRequest extends FormRequest
             'attribute_cache_json.*.option_value' => 'nullable|string',
 
             // File upload:
-            'images' => 'nullable|array',
+            'images' => 'nullable|array|max:20',
             'images.*' => 'file|image|max:5120', // max 5MB mỗi file
 
             // Hoặc URL upload:
-            'image_urls' => 'nullable|string', // JSON encoded array
+            'image_urls' => ['bail', 'nullable', 'json', function ($attribute, $value, $fail) {
+                $urls = json_decode($value, true);
+                if (! is_array($urls) || ! array_is_list($urls)) {
+                    $fail('Danh sách URL ảnh phải là một mảng JSON.');
+                    return;
+                }
+                $images = $this->file('images', []);
+                if (count($urls) + (is_array($images) ? count($images) : 0) > 20) {
+                    $fail('Mỗi nick được đăng tối đa 20 ảnh, tính cả file và URL.');
+                }
+            }],
         ];
     }
 
@@ -61,6 +71,8 @@ class StoreNickRequest extends FormRequest
             'category_id.exists' => 'Danh mục không tồn tại.',
             'images.*.image' => 'Tệp tải lên phải là hình ảnh.',
             'images.*.max' => 'Mỗi tệp ảnh tối đa 5MB.',
+            'images.max' => 'Mỗi nick được đăng tối đa 20 ảnh.',
+            'image_urls.json' => 'Danh sách URL ảnh phải là JSON hợp lệ.',
         ];
     }
 

@@ -1,0 +1,2 @@
+export const MAX_NICK_IMAGES = 20;
+export const MAX_NICK_IMAGE_URL_TEXT = MAX_NICK_IMAGES * 2049;

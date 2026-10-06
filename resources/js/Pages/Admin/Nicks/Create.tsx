@@ -1,5 +1,5 @@
 // Admin/Nicks/Create.tsx - FULLY OPTIMIZED (NO FLICKER)
-import React, { useState, useEffect, useCallback, memo } from 'react';
+import React, { useState, useEffect, useCallback, useRef, memo } from 'react';
 import { router, usePage } from "@inertiajs/react";
 import AdminLayout from "@/Layouts/AdminLayout";
 import { ICategory } from "@/InterFaces/category";
@@ -10,7 +10,7 @@ import { useToast } from "@/Components/ToastProvider";
 import {
     Card, Form, Input, Select, InputNumber, Button,
     Breadcrumb, Radio, Space, Divider, Tag, Alert,
-    message, Drawer
+    message, Drawer, Progress
 } from "antd";
 import {
     ArrowLeft, Save, Crown, DollarSign,
@@ -18,6 +18,8 @@ import {
 } from "lucide-react";
 import axios from "axios";
 import { UploadFull } from '@/Components/Upload/CustomUpload';
+import { useNickBackgroundUploads } from '@/Hooks/useNickBackgroundUploads';
+import { MAX_NICK_IMAGES, MAX_NICK_IMAGE_URL_TEXT } from '@/Utils/NickMediaLimits';
 
 const { TextArea } = Input;
 
@@ -75,7 +77,7 @@ const ImageSection = memo<ImageSectionProps>(({
                     <UploadFull
                         value={images}
                         onChange={onImagesChange}
-                        maxCount={100}
+                        maxCount={MAX_NICK_IMAGES}
                         maxSize={5}
                     />
 
@@ -94,7 +96,7 @@ const ImageSection = memo<ImageSectionProps>(({
                 <div className="space-y-3">
                     <Form.Item
                         label="Danh sách URL ảnh"
-                        help="Mỗi URL một dòng"
+                        help={`Mỗi URL một dòng, tối đa ${MAX_NICK_IMAGES} ảnh`}
                         className="mb-0"
                     >
                         <TextArea
@@ -103,7 +105,7 @@ const ImageSection = memo<ImageSectionProps>(({
                             placeholder={`https://example.com/image1.jpg\nhttps://example.com/image2.png`}
                             rows={6}
                             showCount
-                            maxLength={2000}
+                            maxLength={MAX_NICK_IMAGE_URL_TEXT}
                         />
                     </Form.Item>
 
@@ -123,7 +125,7 @@ const ImageSection = memo<ImageSectionProps>(({
                                     {imageUrls.split('\n')
                                         .map(url => url.trim())
                                         .filter(url => url.length > 0)
-                                        .slice(0, 100)
+                                        .slice(0, MAX_NICK_IMAGES)
                                         .map((url, index) => (
                                             <div
                                                 key={index}
@@ -185,13 +187,13 @@ const ImageSection = memo<ImageSectionProps>(({
                         <>
                             <li>• Hỗ trợ: JPG, PNG, GIF</li>
                             <li>• Kích thước tối đa: 5MB/ảnh</li>
-                            <li>• Tối đa 10 ảnh</li>
+                            <li>• Tối đa {MAX_NICK_IMAGES} ảnh</li>
                         </>
                     ) : (
                         <>
                             <li>• Chỉ URL ảnh hợp lệ</li>
                             <li>• Mỗi URL một dòng</li>
-                            <li>• Tối đa 10 URL</li>
+                            <li>• Tối đa {MAX_NICK_IMAGES} URL</li>
                         </>
                     )}
                     <li>• Ảnh đầu tiên là ảnh đại diện</li>
@@ -230,9 +232,10 @@ const ImageSection = memo<ImageSectionProps>(({
 ImageSection.displayName = 'ImageSection';
 
 export default function NickCreatePage() {
-    const { categories } = usePage<
+    const { categories, backgroundUpload = false } = usePage<
         PageProps & {
             categories: ICategory[];
+            backgroundUpload?: boolean;
         }
     >().props;
 
@@ -247,6 +250,20 @@ export default function NickCreatePage() {
     const [imageMode, setImageMode] = useState<'upload' | 'url'>('upload');
     const [imageUrls, setImageUrls] = useState<string>('');
     const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+    const [backgroundMode, setBackgroundMode] = useState(backgroundUpload);
+    const [submissionLocked, setSubmissionLocked] = useState(false);
+    const submittedPayload = useRef<Record<string, unknown> | null>(null);
+    const uploads = useNickBackgroundUploads(images, backgroundMode && imageMode === 'upload');
+
+    useEffect(() => {
+        if (!backgroundMode || imageMode !== 'upload' || uploads.complete) return;
+        const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+        window.addEventListener('beforeunload', warn);
+        const removeNavigationGuard = router.on('before', event => {
+            if (!window.confirm('Ảnh chưa tải lên hoàn tất. Rời trang sẽ bỏ các ảnh đang tải. Bạn vẫn muốn rời trang?')) event.preventDefault();
+        });
+        return () => { window.removeEventListener('beforeunload', warn); removeNavigationGuard(); };
+    }, [backgroundMode, imageMode, uploads.complete]);
 
     const toast = useToast();
 
@@ -291,6 +308,12 @@ export default function NickCreatePage() {
             return;
         }
 
+        const imageCount = imageMode === 'upload' ? images?.length || 0 : imageUrls.split('\n').filter(url => url.trim()).length;
+        if (imageCount > MAX_NICK_IMAGES) {
+            message.error(`Mỗi nick được đăng tối đa ${MAX_NICK_IMAGES} ảnh.`);
+            return;
+        }
+
         setLoading(true);
 
         try {
@@ -309,6 +332,41 @@ export default function NickCreatePage() {
                     });
                 }
             });
+
+            if (backgroundMode) {
+                if (!submittedPayload.current) {
+                    if (imageMode === 'upload' && !uploads.complete) {
+                        message.warning('Hãy đợi ảnh tải lên xong hoặc thử lại những ảnh lỗi.');
+                        setLoading(false);
+                        return;
+                    }
+                    submittedPayload.current = {
+                        request_id: crypto.randomUUID(),
+                        account_name: values.account_name, account_password: values.account_password,
+                        price: values.price, description: values.description || '', listing_type: values.listing_type,
+                        category_id: selectedCategory.id,
+                        attribute_cache_json: attributeCache.map(item => ({ attribute_id: item.attribute_id, option_id: item.option_id })),
+                        upload_ids: imageMode === 'upload' ? uploads.entries.map(entry => entry.id) : [],
+                        urls: imageMode === 'url' ? imageUrls.split('\n').map(url => url.trim()).filter(Boolean) : [],
+                    };
+                }
+                setSubmissionLocked(true);
+                try {
+                    await axios.post('/admin/games/accounts/media-publications', submittedPayload.current);
+                    message.success('Đã nhận bản đăng. Nick sẽ mở bán sau khi xử lý đủ ảnh.');
+                    router.visit('/admin/games/accounts/media-publications');
+                } catch (error) {
+                    if (axios.isAxiosError(error) && [422, 403].includes(error.response?.status || 0)) {
+                        submittedPayload.current = null;
+                        setSubmissionLocked(false);
+                        const details = error.response?.data?.errors;
+                        message.error(details ? Object.values(details).flat().join(' ') : error.response?.data?.message || 'Không thể lưu bản đăng.');
+                    } else {
+                        message.error('Chưa xác nhận được kết quả. Bấm Lưu lại để kiểm tra cùng yêu cầu, hoặc mở danh sách xử lý; không cần tạo bản đăng mới.');
+                    }
+                } finally { setLoading(false); }
+                return;
+            }
 
             const formData = new FormData();
             formData.append('account_name', values.account_name);
@@ -360,21 +418,24 @@ export default function NickCreatePage() {
 
     // ✅ CRITICAL: Memoize ALL handlers
     const handleImageModeChange = useCallback((e: any) => {
+        if (submissionLocked) return;
         setImageMode(e.target.value);
         if (e.target.value === 'upload') {
             setImageUrls('');
         } else {
             setImages(null);
         }
-    }, []);
+    }, [submissionLocked]);
 
     const handleImagesChange = useCallback((files: File[] | null) => {
+        if (submissionLocked) return;
         setImages(files);
-    }, []);
+    }, [submissionLocked]);
 
     const handleImageUrlsChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+        if (submissionLocked) return;
         setImageUrls(e.target.value);
-    }, []);
+    }, [submissionLocked]);
 
     return (
         <div className="p-4 sm:p-6">
@@ -404,7 +465,7 @@ export default function NickCreatePage() {
             {/* Header */}
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
                 <div>
-                    <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Thêm nick mới</h1>
+                    <h1 className="text-xl sm:text-2xl font-bold text-gray-900">{backgroundMode ? 'Đăng nick · Xử lý ảnh nền' : 'Thêm nick mới'}</h1>
                     <p className="text-sm sm:text-base text-gray-600 mt-1">
                         Tạo nick mới để bán trên hệ thống
                     </p>
@@ -424,6 +485,7 @@ export default function NickCreatePage() {
                         icon={<Save className="w-4 h-4" />}
                         onClick={() => form.submit()}
                         loading={loading}
+                        disabled={backgroundMode && imageMode === 'upload' && !uploads.complete}
                         size="large"
                         className="flex-1 sm:flex-none"
                     >
@@ -432,8 +494,33 @@ export default function NickCreatePage() {
                 </div>
             </div>
 
+            <div className="mb-4 space-y-3">
+                <Space wrap>
+                    <Button disabled={loading || submissionLocked} onClick={() => setBackgroundMode(!backgroundMode)}>
+                        {backgroundMode ? 'Dùng cách đăng cũ' : 'Dùng xử lý ảnh nền'}
+                    </Button>
+                    <Button onClick={() => router.visit('/admin/games/accounts/media-publications')}>Theo dõi đăng nick</Button>
+                </Space>
+                {backgroundMode && <Alert type="info" showIcon message="Ảnh được tải lên ngay khi chọn. Nick chỉ mở bán khi xử lý đủ ảnh."
+                    description={submissionLocked ? 'Đang giữ nguyên nội dung yêu cầu để kiểm tra kết quả, tránh đăng trùng. Bạn có thể bấm Lưu lại hoặc xem danh sách xử lý.' : 'Với ảnh từ máy, hãy đợi tải lên hoàn tất trước khi lưu và rời trang. Với URL, server sẽ tải ảnh sau khi nhận bản đăng.'} />}
+                {backgroundMode && imageMode === 'upload' && uploads.entries.length > 0 && <div className="rounded border p-3 dark:border-gray-700">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                        <span>Đã tải {uploads.entries.filter(entry => entry.status === 'ready').length}/{uploads.entries.length} ảnh</span>
+                        {uploads.entries.some(entry => entry.status === 'failed') && <Button size="small" onClick={uploads.retry}>Tải lại ảnh lỗi</Button>}
+                    </div>
+                    <div className="max-h-48 overflow-auto space-y-1">
+                        {uploads.entries.map((entry, index) => <div key={index} className="text-sm">
+                            <span>{index + 1}. {entry.file.name}</span>
+                            <Progress size="small" percent={entry.percent} status={entry.status === 'failed' ? 'exception' : entry.status === 'ready' ? 'success' : 'normal'} />
+                            {entry.error && <div className="text-red-600">{entry.error}</div>}
+                        </div>)}
+                    </div>
+                </div>}
+            </div>
+
             <Form
                 form={form}
+                disabled={submissionLocked}
                 layout="vertical"
                 onFinish={handleSubmit}
                 className="space-y-6"

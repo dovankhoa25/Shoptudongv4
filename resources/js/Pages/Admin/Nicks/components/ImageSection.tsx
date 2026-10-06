@@ -4,6 +4,7 @@ import { Form, Radio, Space, Tag } from 'antd';
 import { Upload } from 'lucide-react';
 import { UploadFull } from '@/Components/Upload/CustomUpload';
 import TextArea from 'antd/es/input/TextArea';
+import { MAX_NICK_IMAGES, MAX_NICK_IMAGE_URL_TEXT } from '@/Utils/NickMediaLimits';
 
 
 interface ImageSectionProps {
@@ -58,7 +59,7 @@ export const ImageSection = React.memo(({
                     <UploadFull
                         value={images}
                         onChange={onImagesChange}
-                        maxCount={100}
+                        maxCount={MAX_NICK_IMAGES}
                         maxSize={5}
                     />
 
@@ -77,7 +78,7 @@ export const ImageSection = React.memo(({
                 <div className="space-y-3">
                     <Form.Item
                         label="Danh sách URL ảnh"
-                        help="Mỗi URL một dòng"
+                        help={`Mỗi URL một dòng, tối đa ${MAX_NICK_IMAGES} ảnh`}
                         className="mb-0"
                     >
                         <TextArea
@@ -86,7 +87,7 @@ export const ImageSection = React.memo(({
                             placeholder={`https://example.com/image1.jpg\nhttps://example.com/image2.png`}
                             rows={6}
                             showCount
-                            maxLength={2000}
+                            maxLength={MAX_NICK_IMAGE_URL_TEXT}
                         />
                     </Form.Item>
 
@@ -106,7 +107,7 @@ export const ImageSection = React.memo(({
                                     {imageUrls.split('\n')
                                         .map(url => url.trim())
                                         .filter(url => url.length > 0)
-                                        .slice(0, 10)
+                                        .slice(0, MAX_NICK_IMAGES)
                                         .map((url, index) => (
                                             <div
                                                 key={index}
@@ -168,13 +169,13 @@ export const ImageSection = React.memo(({
                         <>
                             <li>• Hỗ trợ: JPG, PNG, GIF</li>
                             <li>• Kích thước tối đa: 5MB/ảnh</li>
-                            <li>• Tối đa 100 ảnh</li>
+                            <li>• Tối đa {MAX_NICK_IMAGES} ảnh</li>
                         </>
                     ) : (
                         <>
                             <li>• Chỉ URL ảnh hợp lệ</li>
                             <li>• Mỗi URL một dòng</li>
-                            <li>• Tối đa 100 URL</li>
+                            <li>• Tối đa {MAX_NICK_IMAGES} URL</li>
                         </>
                     )}
                     <li>• Ảnh đầu tiên là ảnh đại diện</li>

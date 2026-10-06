@@ -24,6 +24,7 @@ use App\Http\Controllers\Admin\GoldPriceController;
 use App\Http\Controllers\Admin\ImportController;
 use App\Http\Controllers\Admin\NickBulkUpdateController;
 use App\Http\Controllers\Admin\NickController;
+use App\Http\Controllers\Admin\NickPublicationController;
 use App\Http\Controllers\Admin\OrderController;
 use App\Http\Controllers\Admin\RandomBoxController;
 use App\Http\Controllers\Admin\RandomNickController;
@@ -51,7 +52,7 @@ use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
-Route::get('/', fn () => redirect()->route('login'));
+Route::get('/', fn() => redirect()->route('login'));
 // Route::get('/', function () {
 //     return Inertia::render('Welcome', [
 //         'canLogin' => Route::has('login'),
@@ -176,7 +177,7 @@ Route::prefix('admin')
                 Route::redirect('/', '/admin/ip-management/overview')->name('index');
                 Route::get('/ip-detail', [$controller, 'detail'])->name('detail');
                 foreach (['overview', 'devices', 'blocks', 'logins'] as $section) {
-                    Route::get('/'.$section, [$controller, 'index'])->defaults('section', $section)->name($section);
+                    Route::get('/' . $section, [$controller, 'index'])->defaults('section', $section)->name($section);
                 }
             });
 
@@ -375,14 +376,46 @@ Route::prefix('admin')
             });
 
             Route::prefix('accounts')->name('accounts.')->group(function () {
+                Route::middleware(Permission::middleware(Permission::NicksCreate, Permission::NicksManage))->group(function () {
+                    Route::get('/create-background', [NickPublicationController::class, 'create'])->name('create-background');
+                    Route::post('/media-uploads', [NickPublicationController::class, 'upload'])->middleware('throttle:180,1')->name('media-uploads.store');
+                    Route::delete('/media-uploads/{id}', [NickPublicationController::class, 'removeUpload'])->name('media-uploads.destroy');
+                    Route::get('/media-publications', [NickPublicationController::class, 'index'])->name('media-publications.index');
+                    Route::post('/media-publications', [NickPublicationController::class, 'store'])->middleware('throttle:30,1')->name('media-publications.store');
+                    Route::post('/media-publications/{uuid}/retry', [NickPublicationController::class, 'retry'])->middleware('throttle:30,1')->name('media-publications.retry');
+                    Route::delete('/media-publications/{uuid}', [NickPublicationController::class, 'cancel'])->name('media-publications.cancel');
+                });
+                // Route::get('/', [NickController::class, 'index'])
+                //     ->middleware(Permission::middleware(Permission::NicksView, Permission::NicksManage))
+                //     ->name('index');
+                // Route::get('/create', [NickController::class, 'create'])
+                //     ->middleware(Permission::middleware(Permission::NicksCreate, Permission::NicksManage))
+                //     ->name('create');
+                // Route::post('/', [NickController::class, 'store'])
+                //     ->middleware(Permission::middleware(Permission::NicksCreate, Permission::NicksManage))
+                //     ->name('store');
+                // Danh sách nick
                 Route::get('/', [NickController::class, 'index'])
-                    ->middleware(Permission::middleware(Permission::NicksView, Permission::NicksManage))
+                    ->middleware(Permission::middleware(
+                        Permission::NicksView,
+                        Permission::NicksManage
+                    ))
                     ->name('index');
-                Route::get('/create', [NickController::class, 'create'])
-                    ->middleware(Permission::middleware(Permission::NicksCreate, Permission::NicksManage))
+
+                // Mặc định mở form đăng nền
+                Route::get('/create', [NickPublicationController::class, 'create'])
+                    ->middleware(Permission::middleware(
+                        Permission::NicksCreate,
+                        Permission::NicksManage
+                    ))
                     ->name('create');
+
+                // Giữ hàm lưu cũ cho nút “Dùng cách đăng cũ”
                 Route::post('/', [NickController::class, 'store'])
-                    ->middleware(Permission::middleware(Permission::NicksCreate, Permission::NicksManage))
+                    ->middleware(Permission::middleware(
+                        Permission::NicksCreate,
+                        Permission::NicksManage
+                    ))
                     ->name('store');
                 Route::get('/detail/{id}', [NickController::class, 'show'])
                     ->middleware(Permission::middleware(Permission::NicksView, Permission::NicksManage))
@@ -428,7 +461,7 @@ Route::prefix('admin')
                 ->name('index');
         });
 
-       Route::prefix('services')->name('services.')->group(function () {
+        Route::prefix('services')->name('services.')->group(function () {
             Route::get('/', [ServiceController::class, 'index'])
                 ->middleware(Permission::middleware(Permission::ServicesView, Permission::ServicesManage))
                 ->name('index');
@@ -911,7 +944,7 @@ Route::middleware(['guest', 'throttle:10,1'])->group(function (): void {
         ->name('social.google.callback');
 });
 
-require __DIR__.'/auth.php';
+require __DIR__ . '/auth.php';
 
 Route::prefix('admin/live-views')->middleware(['auth', 'unlocked.user', 'throttle:120,1'])->group(function () {
     Route::post('/', [\App\Http\Controllers\Admin\LiveViewController::class, 'store']);
@@ -920,4 +953,4 @@ Route::prefix('admin/live-views')->middleware(['auth', 'unlocked.user', 'throttl
     Route::delete('{id}', [\App\Http\Controllers\Admin\LiveViewController::class, 'destroy'])->whereUuid('id');
 });
 
-Route::get('/admin/live-balance', fn (\Illuminate\Http\Request $r) => response()->json(\App\Services\UserBalanceSnapshot::read((int) $r->user()->id))->header('Cache-Control', 'no-store'))->middleware(['auth', 'unlocked.user']);
+Route::get('/admin/live-balance', fn(\Illuminate\Http\Request $r) => response()->json(\App\Services\UserBalanceSnapshot::read((int) $r->user()->id))->header('Cache-Control', 'no-store'))->middleware(['auth', 'unlocked.user']);

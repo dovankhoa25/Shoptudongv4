@@ -30,6 +30,16 @@ return [
 
     'connections' => [
 
+        // Isolated from QUEUE_CONNECTION: the new posting flow must never run inline.
+        'nick-media' => [
+            'driver' => 'redis',
+            'connection' => env('REDIS_QUEUE_CONNECTION', 'default'),
+            'queue' => 'nick-media',
+            'retry_after' => 180,
+            'block_for' => null,
+            'after_commit' => true,
+        ],
+
         'sync' => [
             'driver' => 'sync',
         ],
