@@ -4,6 +4,7 @@ export interface IRandomBox {
     category_id: number;
     name: string;
     price: number;
+    win_rate: number | string;
     price_formatted: string;
     image: string | null;
     image_url: string | null;

@@ -17,6 +17,7 @@ class RandomBox extends Model implements HasMedia
         'category_id',
         'name',
         'price',
+        'win_rate',
         'image',
         'is_public',
         'sort_order',
@@ -24,6 +25,7 @@ class RandomBox extends Model implements HasMedia
 
     protected $casts = [
         'price' => 'decimal:0',
+        'win_rate' => 'decimal:2',
         'is_public' => 'boolean',
         'sort_order' => 'integer',
     ];

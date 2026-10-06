@@ -14,6 +14,7 @@ class RandomBoxResource extends JsonResource
             'id' => $this->id,
             'name' => $this->name,
             'price' => $this->price,
+            'win_rate' => $this->win_rate,
             'price_formatted' => number_format($this->price) . 'đ',
             'image_url' =>  $this->getFirstMediaUrl('image'),
             // 'image_url' => $this->image ? asset('storage/' . $this->image) : null,

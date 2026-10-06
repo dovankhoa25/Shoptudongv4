@@ -283,6 +283,7 @@ class UserController extends Controller
             // Build query
             $query = RandomOrder::where('user_id', $user->id)
                 ->with([
+                    'randomBox.category',
                     'randomNick' => function ($query) {
                         $query->select('id', 'random_box_id', 'account', 'password', 'description', 'status', 'created_at')
                             ->with([
@@ -296,19 +297,15 @@ class UserController extends Controller
 
             // Apply search filter
             if ($search) {
-                $query->whereHas('randomNick', function ($nickQuery) use ($search) {
-                    $nickQuery->where('account', 'like', "%{$search}%")
-                        ->orWhereHas('randomBox', function ($boxQuery) use ($search) {
-                            $boxQuery->where('name', 'like', "%{$search}%");
-                        });
+                $query->where(function ($q) use ($search) {
+                    $q->whereHas('randomNick', fn ($n) => $n->where('account', 'like', "%{$search}%"))
+                        ->orWhereHas('randomBox', fn ($box) => $box->where('name', 'like', "%{$search}%"));
                 });
             }
-
-            // Apply status filter
-            if ($status) {
-                $query->whereHas('randomNick', function ($nickQuery) use ($status) {
-                    $nickQuery->where('status', $status);
-                });
+            if (in_array($status, ['win', 'lose'], true)) {
+                $query->where('result', $status);
+            } elseif ($status) {
+                $query->whereHas('randomNick', fn ($q) => $q->where('status', $status));
             }
 
             // Apply sorting
@@ -323,27 +320,23 @@ class UserController extends Controller
 
             // Transform data
             $transformedData = $orders->map(function ($order) {
+                $nick = $order->randomNick;
+                $box = $order->randomBox ?? $nick?->randomBox;
+                $boxData = $box ? [
+                    'id' => $box->id, 'name' => $box->name, 'image' => $box->image,
+                    'category' => $box->category ? [
+                        'id' => $box->category->id, 'name' => $box->category->name, 'slug' => $box->category->slug,
+                    ] : null,
+                ] : null;
                 return [
-                    'id' => $order->id,
-                    'price' => $order->price,
+                    'id' => $order->id, 'price' => $order->price,
                     'purchased_at' => $order->created_at->toISOString(),
-                    'nick' => [
-                        'id' => $order->randomNick->id,
-                        'account' => $order->randomNick->account,
-                        'password' => $order->randomNick->password,
-                        'description' => $order->randomNick->description,
-                        'status' => $order->randomNick->status,
-                        'box' => [
-                            'id' => $order->randomNick->randomBox->id,
-                            'name' => $order->randomNick->randomBox->name,
-                            'image' => $order->randomNick->randomBox->image,
-                            'category' => [
-                                'id' => $order->randomNick->randomBox->category->id,
-                                'name' => $order->randomNick->randomBox->category->name,
-                                'slug' => $order->randomNick->randomBox->category->slug,
-                            ],
-                        ],
-                    ],
+                    'result' => $order->result, 'win_rate_snapshot' => $order->win_rate_snapshot,
+                    'selected_slot' => $order->selected_slot, 'box' => $boxData,
+                    'nick' => $nick ? [
+                        'id' => $nick->id, 'account' => $nick->account, 'password' => $nick->password,
+                        'description' => $nick->description, 'status' => $nick->status, 'box' => $boxData,
+                    ] : null,
                 ];
             });
 

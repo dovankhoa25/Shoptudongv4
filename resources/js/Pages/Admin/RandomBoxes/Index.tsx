@@ -147,6 +147,12 @@ export default function RandomBoxPage() {
             )
         },
         {
+            key: 'win_rate',
+            title: 'Tỷ lệ trúng',
+            width: 110,
+            render: (value: number | string) => `${Number(value)}%`,
+        },
+        {
             key: 'category',
             title: 'Danh mục',
             width: 150,
@@ -296,7 +302,7 @@ export default function RandomBoxPage() {
                         className: 'text-blue-600 hover:text-blue-800'
                     },
                     manageNicks: {
-                        label: 'Quản lý nick',
+                        label: 'Kho acc trúng',
                         icon: Users, // import { Users } from 'lucide-react'
                         handler: handleManageNicks,
                         className: 'text-purple-600 hover:text-purple-800'

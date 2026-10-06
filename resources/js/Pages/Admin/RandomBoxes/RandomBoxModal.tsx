@@ -24,6 +24,7 @@ export default function RandomBoxModal({ onClose, randomBox, categories }: IProp
         category_id: randomBox?.category_id || "",
         name: randomBox?.name || "",
         price: randomBox?.price || 0,
+        win_rate: Number(randomBox?.win_rate ?? 100),
         image: null as File | null,
         is_public: randomBox?.is_public ?? true,
         sort_order: randomBox?.sort_order || 0,
@@ -55,6 +56,7 @@ export default function RandomBoxModal({ onClose, randomBox, categories }: IProp
         formData.append('category_id', data.category_id.toString());
         formData.append('name', data.name);
         formData.append('price', data.price.toString());
+        formData.append('win_rate', data.win_rate.toString());
         formData.append('is_public', data.is_public ? '1' : '0');
         formData.append('sort_order', data.sort_order.toString());
 
@@ -224,6 +226,10 @@ export default function RandomBoxModal({ onClose, randomBox, categories }: IProp
                             />
                         </Form.Item>
 
+                        <Form.Item label="Tỷ lệ trúng (%)" help="0% luôn xịt. Hết kho acc thưởng cũng xịt và vẫn tính tiền lượt mở.">
+                            <InputNumber min={0} max={100} precision={2} step={0.01} value={data.win_rate}
+                                onChange={(value) => setData('win_rate', value ?? 0)} addonAfter="%" />
+                        </Form.Item>
                         <div className="grid grid-cols-2 gap-4">
                             <Form.Item
                                 label={<div className="font-medium text-gray-700">Thứ tự sắp xếp</div>}
@@ -297,11 +303,11 @@ export default function RandomBoxModal({ onClose, randomBox, categories }: IProp
                 <div className="text-sm text-gray-500 mt-6 p-4 bg-gray-50 rounded-lg">
                     <p><strong>Lưu ý:</strong></p>
                     <ul className="list-disc list-inside space-y-1 mt-2">
-                        <li>Hộp random sẽ chứa các nick để bán theo cơ chế ngẫu nhiên</li>
+                        <li>Danh sách nick là kho acc thưởng; chỉ giao acc khi mở trúng</li>
                         <li>Giá áp dụng cho mỗi lần mua random từ hộp này</li>
                         <li>Thứ tự sắp xếp: số nhỏ hơn sẽ hiển thị trước</li>
                         <li>Hình ảnh nên có tỷ lệ vuông (1:1) để hiển thị đẹp nhất</li>
-                        <li>Sau khi tạo hộp, bạn có thể thêm nick vào hộp này</li>
+                        <li>Sau khi tạo hộp, thêm acc trúng bằng chức năng quản lý nick</li>
                     </ul>
                 </div>
             </Form>

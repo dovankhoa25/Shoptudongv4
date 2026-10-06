@@ -17,6 +17,7 @@ class UpdateRandomBoxRequest extends FormRequest
             'category_id' => 'required|exists:categories,id',
             'name' => 'required|string|max:255',
             'price' => 'required|numeric|min:0|max:999999999',
+            'win_rate' => 'required|numeric|min:0|max:100|decimal:0,2',
             'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
             'is_public' => 'boolean',
             'sort_order' => 'integer|min:0',

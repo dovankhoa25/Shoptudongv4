@@ -212,7 +212,7 @@ class NickController extends Controller
             ApiCache::key(
                 'nick-category',
                 $category->id,
-                'random',
+                'random-v2',
                 json_encode($queryParams, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
             ),
             90,
@@ -264,7 +264,7 @@ class NickController extends Controller
         $queryParams = $request->query();
         ksort($queryParams);
         $cacheKey = ApiCache::key(
-            'nick-random-box-detail',
+            'nick-random-box-detail-v2',
             $randomBox->id,
             json_encode($queryParams, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
         );
@@ -274,17 +274,14 @@ class NickController extends Controller
             $cacheKey,
             60,
             function () use ($request, $randomBox) {
-                $orders = $this->parseSort($request);
-
-                $query = RandomNick::select('id', 'status')
-                    ->where('random_box_id', $randomBox->id)
-                    ->where('status', 'available');
-
-                foreach ($orders as [$field, $dir]) {
-                    $query->orderBy($field, $dir);
-                }
-
-                $randomNicks = $query->paginate(20);
+                // Selection tiles are independent of account inventory.
+                $slots = collect(range(1, 20))->map(fn ($slot) => [
+                    'id' => $slot, 'random_box_id' => $randomBox->id, 'status' => 'available',
+                    'account' => '', 'image' => $randomBox->image,
+                ]);
+                $randomNicks = new \Illuminate\Pagination\LengthAwarePaginator(
+                    $slots, 20, 20, 1, ['path' => $request->url()]
+                );
 
                 return [
                     'template' => 'random_detail',
@@ -298,20 +295,24 @@ class NickController extends Controller
 
     public function buyRandom(Request $request, $categorySlug, $boxId)
     {
-        return $this->purchaseRandom($request, $categorySlug, (int)$boxId, null);
+        return $this->purchaseRandom($request, $categorySlug, (int)$boxId);
     }
 
     public function buySpecificNick(Request $request, $categorySlug, $boxId, $nickId)
     {
-        return $this->purchaseRandom($request, $categorySlug, (int)$boxId, (int)$nickId);
+        return response()->json(['message' => 'Luồng mở hộp đã thay đổi. Vui lòng tải lại trang.'], 409);
     }
 
-    private function purchaseRandom(Request $request, string $slug, int $boxId, ?int $nickId)
+    private function purchaseRandom(Request $request, string $slug, int $boxId)
     {
-        $data = $request->validate(['idempotency_key' => ['nullable', 'string', 'max:64', 'regex:/^[a-zA-Z0-9_-]+$/']]);
+        $data = $request->validate([
+            'idempotency_key' => ['required', 'string', 'max:64', 'regex:/^[a-zA-Z0-9_-]+$/'],
+            'draw_version' => ['required', 'integer', 'in:2'],
+            'selected_slot' => ['nullable', 'integer', 'min:1', 'max:20'],
+        ]);
         try {
             return response()->json(app(\App\Services\RandomPurchaseService::class)->purchase(
-                (int)$request->user()->id, $slug, $boxId, $nickId, $data['idempotency_key'] ?? null,
+                (int)$request->user()->id, $slug, $boxId, isset($data['selected_slot']) ? (int)$data['selected_slot'] : null, $data['idempotency_key'],
             ));
         } catch (\Symfony\Component\HttpKernel\Exception\HttpExceptionInterface $error) {
             return response()->json(['message' => $error->getMessage(),

@@ -11,6 +11,11 @@ class RandomOrder extends Model
         'user_id',
         'random_nick_id',
         'price',
+        'random_box_id',
+        'result',
+        'win_rate_snapshot',
+        'lose_reason',
+        'selected_slot',
         'purchase_key',
         'purchase_fingerprint',
     ];
@@ -18,9 +23,16 @@ class RandomOrder extends Model
 
     protected $casts = [
         'price' => 'decimal:0',
+        'win_rate_snapshot' => 'decimal:2',
+        'selected_slot' => 'integer',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
     ];
+
+    public function randomBox(): BelongsTo
+    {
+        return $this->belongsTo(RandomBox::class);
+    }
 
     public function user(): BelongsTo
     {
@@ -32,6 +44,6 @@ class RandomOrder extends Model
      */
     public function randomNick(): BelongsTo
     {
-        return $this->belongsTo(RandomNick::class);
+        return $this->belongsTo(RandomNick::class)->withTrashed();
     }
 }

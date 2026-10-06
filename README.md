@@ -9,3 +9,6 @@
 
 0.1.8
 - update filter shopnro
+
+0.2.0
+- update randombox
