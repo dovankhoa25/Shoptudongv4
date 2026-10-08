@@ -27,7 +27,7 @@ class CancelStaleGoldTransactions extends Command
     {
         $goldCancelled = $this->closeExpiredPendingOrders(
             modelClass: GoldTransaction::class,
-            pendingTimeout: $this->positiveConfig('trading.gold_order_pending_timeout_minutes', 60),
+            pendingTimeout: $this->positiveConfig('trading.gold_order_pending_timeout_minutes', 20),
             orderType: 'gold',
         );
         $goldRefunded = $this->refundElapsedCancellations(
@@ -41,7 +41,7 @@ class CancelStaleGoldTransactions extends Command
 
         $gemCancelled = $this->closeExpiredPendingOrders(
             modelClass: GemTransaction::class,
-            pendingTimeout: $this->positiveConfig('trading.gem_order_pending_timeout_minutes', 60),
+            pendingTimeout: $this->positiveConfig('trading.gem_order_pending_timeout_minutes', 20),
             orderType: 'gem',
         );
         $gemRefunded = $this->refundElapsedCancellations(

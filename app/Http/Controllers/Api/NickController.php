@@ -212,7 +212,7 @@ class NickController extends Controller
             ApiCache::key(
                 'nick-category',
                 $category->id,
-                'random-v2',
+                'random-v3',
                 json_encode($queryParams, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
             ),
             90,
@@ -221,9 +221,7 @@ class NickController extends Controller
 
                 $query = RandomBox::where('category_id', $category->id)
                     ->where('is_public', true)
-                    ->withCount(['randomNicks as available_nicks_count' => function ($query) {
-                        $query->where('status', 'available');
-                    }])
+                    ->select(['id', 'category_id', 'name', 'price', 'image'])
                     ->orderBy('sort_order', 'asc');
 
                 foreach ($orders as [$field, $dir]) {
@@ -252,9 +250,7 @@ class NickController extends Controller
         $randomBox = RandomBox::where('id', $boxId)
             ->where('category_id', $category->id)
             ->where('is_public', true)
-            ->withCount(['randomNicks as available_nicks_count' => function ($query) {
-                $query->where('status', 'available');
-            }])
+            ->select(['id', 'category_id', 'name', 'price', 'image'])
             ->first();
 
         if (! $randomBox) {
@@ -264,7 +260,7 @@ class NickController extends Controller
         $queryParams = $request->query();
         ksort($queryParams);
         $cacheKey = ApiCache::key(
-            'nick-random-box-detail-v2',
+            'nick-random-box-detail-v3',
             $randomBox->id,
             json_encode($queryParams, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
         );

@@ -12,3 +12,5 @@
 
 0.2.0
 - update randombox
+0.2.1
+- fix mã hoá

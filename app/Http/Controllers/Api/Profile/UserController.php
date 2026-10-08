@@ -331,7 +331,7 @@ class UserController extends Controller
                 return [
                     'id' => $order->id, 'price' => $order->price,
                     'purchased_at' => $order->created_at->toISOString(),
-                    'result' => $order->result, 'win_rate_snapshot' => $order->win_rate_snapshot,
+                    'result' => $order->result,
                     'selected_slot' => $order->selected_slot, 'box' => $boxData,
                     'nick' => $nick ? [
                         'id' => $nick->id, 'account' => $nick->account, 'password' => $nick->password,

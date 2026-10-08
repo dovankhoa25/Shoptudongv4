@@ -17,6 +17,7 @@ class RandomPurchaseConsistencyTest extends TestCase
         \Illuminate\Foundation\Testing\RefreshDatabaseState::$migrated = false;
     }
     private function fixture(): array {
+        User::factory()->create(['id'=>1,'balance'=>1000]);
         $buyer = User::factory()->create(['balance' => 500]);
         $seller = User::factory()->create(['balance' => 100]);
         $game = GameType::create(['name'=>'Test']);
@@ -32,12 +33,41 @@ class RandomPurchaseConsistencyTest extends TestCase
         $this->postJson($url.'/buy',['draw_version'=>2,'idempotency_key'=>'attempt-1'])->assertOk()
             ->assertJsonPath('nick.id',$one->json('nick.id'));
         $this->assertEquals(300,$buyer->fresh()->balance);
-        $this->assertEquals(300,$seller->fresh()->balance);
+        $this->assertEquals(100,$seller->fresh()->balance);
+        $this->assertEquals(1200,User::findOrFail(1)->balance);
         $this->assertSame(1,RandomOrder::count());
         $this->postJson($url.'/buy',['draw_version'=>2,'idempotency_key'=>'attempt-2'])->assertOk();
         $this->postJson($url.'/buy',['draw_version'=>2,'idempotency_key'=>'attempt-3'])->assertStatus(400);
         $this->assertEquals(100,$buyer->fresh()->balance);
         $this->assertSame(2,RandomOrder::count());
+    }
+    public function test_missing_revenue_account_does_not_charge_or_consume_stock(): void {
+        [$buyer,,$box,$url]=$this->fixture();
+        DB::table('users')->where('id',1)->delete();
+        $this->postJson($url.'/buy',['draw_version'=>2,'idempotency_key'=>'missing-admin'])->assertStatus(409);
+        $this->assertEquals(500,$buyer->fresh()->balance);
+        $this->assertSame(0,RandomOrder::count());
+        $this->assertSame(3,RandomNick::where('status','available')->count());
+    }
+    public function test_revenue_limit_rejects_purchase_atomically(): void {
+        [$buyer,,$box,$url]=$this->fixture();
+        DB::table('users')->where('id',1)->update(['balance'=>\App\Services\TransactionService::MAX_BALANCE]);
+        $this->postJson($url.'/buy',['draw_version'=>2,'idempotency_key'=>'full-admin'])->assertStatus(409);
+        $this->assertEquals(500,$buyer->fresh()->balance);
+        $this->assertSame(0,RandomOrder::count());
+        $this->assertSame(3,RandomNick::where('status','available')->count());
+    }
+    public function test_admin_own_purchase_has_balanced_debit_and_credit_and_replays_once(): void {
+        [,, $box,$url]=$this->fixture();
+        $box->update(['win_rate'=>0]);
+        Passport::actingAs(User::findOrFail(1),['*']);
+        $request=['draw_version'=>2,'idempotency_key'=>'admin-open'];
+        $one=$this->postJson($url.'/buy',$request)->assertOk()->assertJsonPath('transaction.remaining_balance',1000);
+        $this->postJson($url.'/buy',$request)->assertOk()->assertJsonPath('transaction.order_id',$one->json('transaction.order_id'));
+        $this->assertEquals(1000,User::findOrFail(1)->balance);
+        $this->assertDatabaseHas('transactions',['user_id'=>1,'type'=>'buy_random','amount'=>-200,'balance_before'=>1000,'balance_after'=>800]);
+        $this->assertDatabaseHas('transactions',['user_id'=>1,'type'=>'sell_random','amount'=>200,'balance_before'=>800,'balance_after'=>1000]);
+        $this->assertSame(2,DB::table('transactions')->where('user_id',1)->count());
     }
     public function test_selected_slot_retry_conflict_and_stale_balance(): void {
         [$buyer,,$box,$url]=$this->fixture();
@@ -65,6 +95,7 @@ class RandomPurchaseConsistencyTest extends TestCase
         $this->postJson($url.'/buy',$request)->assertOk()->assertJsonPath('result','lose')->assertJsonPath('transaction.order_id',$one->json('transaction.order_id'));
         $this->assertEquals(300,$buyer->fresh()->balance);
         $this->assertEquals(100,$seller->fresh()->balance);
+        $this->assertEquals(1200,User::findOrFail(1)->balance);
         $this->assertSame(3,RandomNick::where('status','available')->count());
         $this->assertDatabaseHas('random_orders',['result'=>'lose','lose_reason'=>'probability','win_rate_snapshot'=>0,'random_nick_id'=>null,'random_box_id'=>$box->id]);
         $this->getJson('/api/profile/random')->assertOk()->assertJsonPath('data.0.result','lose')->assertJsonPath('data.0.nick',null)->assertJsonPath('data.0.box.id',$box->id);
@@ -76,6 +107,7 @@ class RandomPurchaseConsistencyTest extends TestCase
         $this->postJson($url.'/buy',['draw_version'=>2,'idempotency_key'=>'empty'])->assertOk()->assertJsonPath('result','lose')->assertJsonPath('nick',null);
         $this->assertEquals(300,$buyer->fresh()->balance);
         $this->assertEquals(100,$seller->fresh()->balance);
+        $this->assertEquals(1200,User::findOrFail(1)->balance);
         $this->assertDatabaseHas('random_orders',['result'=>'lose','lose_reason'=>'empty_stock','random_box_id'=>$box->id]);
         $this->getJson($url)->assertOk()->assertJsonCount(20,'data.data')->assertJsonPath('data.data.0.account','');
     }
@@ -127,6 +159,22 @@ class RandomPurchaseConsistencyTest extends TestCase
             foreach ([0,100,1.25] as $rate) $this->assertFalse(\Illuminate\Support\Facades\Validator::make(['win_rate'=>$rate],$rules)->fails());
             foreach ([-1,100.01,1.234,'invalid'] as $rate) $this->assertTrue(\Illuminate\Support\Facades\Validator::make(['win_rate'=>$rate],$rules)->fails());
         }
+    }
+    public function test_customer_endpoints_do_not_expose_random_configuration(): void {
+        [$buyer,,$box,$url]=$this->fixture();
+        $box->update(['win_rate'=>0]);
+        $category=Category::findOrFail($box->category_id);
+        $this->getJson('/api/categories/'.$category->slug.'/nicks')->assertOk()
+            ->assertJsonPath('data.data.0.id',$box->id)
+            ->assertJsonMissingPath('data.data.0.win_rate')
+            ->assertJsonMissingPath('data.data.0.available_nicks_count');
+        $this->getJson($url)->assertOk()->assertJsonPath('box.id',$box->id)
+            ->assertJsonMissingPath('box.win_rate')->assertJsonMissingPath('box.available_nicks_count');
+        $this->postJson($url.'/buy',['draw_version'=>2,'idempotency_key'=>'private-config'])->assertOk()
+            ->assertJsonPath('result','lose')->assertJsonMissingPath('win_rate_snapshot');
+        $this->getJson('/api/profile/random')->assertOk()->assertJsonMissingPath('data.0.win_rate_snapshot');
+        $this->assertDatabaseHas('random_boxes',['id'=>$box->id,'win_rate'=>0]);
+        $this->assertDatabaseHas('random_orders',['random_box_id'=>$box->id,'win_rate_snapshot'=>0]);
     }
     public function test_post_commit_cache_failure_does_not_report_failed_payment(): void {
         [$buyer,,$box,$url]=$this->fixture();

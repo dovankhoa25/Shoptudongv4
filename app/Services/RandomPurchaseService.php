@@ -10,6 +10,8 @@ use Throwable;
 
 class RandomPurchaseService
 {
+    private const REVENUE_USER_ID = 1;
+
     public function purchase(int $buyerId, string $slug, int $boxId, ?int $selectedSlot, ?string $key): array
     {
         $fingerprint = hash('sha256', json_encode([$slug, $boxId, $selectedSlot]));
@@ -22,8 +24,11 @@ class RandomPurchaseService
             $result = DB::transaction(function () use ($buyerId, $slug, $boxId, $selectedSlot, $key, $fingerprint, &$prepared, &$orderId, &$roll) {
                 $prepared = null;
                 $orderId = null;
-                // Serialize this buyer's attempts, including requests using a stale auth model.
-                $buyer = User::whereKey($buyerId)->lockForUpdate()->first();
+                // Lock accounts in a fixed order; serialize retries and credits to the revenue wallet.
+                $users = User::whereIn('id', [$buyerId, self::REVENUE_USER_ID])
+                    ->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+                $buyer = $users->get($buyerId);
+                $recipient = $users->get(self::REVENUE_USER_ID);
                 abort_unless($buyer && !$buyer->isLocked(), 403, 'Tài khoản không thể mua lúc này.');
                 if ($key) {
                     $previous = RandomOrder::where('user_id', $buyerId)->where('purchase_key', $key)->lockForUpdate()->first();
@@ -32,6 +37,7 @@ class RandomPurchaseService
                         return $this->response($previous, $buyerId);
                     }
                 }
+                abort_unless($recipient, 409, 'Chưa cấu hình tài khoản nhận tiền random.');
                 $category = Category::where('slug', $slug)->where('is_public', true)->where('status', 'active')->first();
                 abort_unless($category, 404, 'Không tìm thấy danh mục.');
                 $box = RandomBox::whereKey($boxId)->where('category_id', $category->id)
@@ -40,6 +46,8 @@ class RandomPurchaseService
                 $price = (int)$box->price;
                 abort_if($price < 0, 409, 'Giá hộp quà không hợp lệ.');
                 abort_if((int)$buyer->balance < $price, 400, 'Số dư không đủ.');
+                $recipientBalance = (int)$recipient->balance - ($buyerId === self::REVENUE_USER_ID ? $price : 0);
+                abort_if($recipientBalance > TransactionService::MAX_BALANCE - $price, 409, 'Tài khoản nhận tiền random đã đạt giới hạn số dư.');
                 $rate = (float)$box->win_rate;
                 abort_if($rate < 0 || $rate > 100, 409, 'Tỷ lệ trúng không hợp lệ.');
                 // Keep the same draw if the database retries a deadlocked transaction.
@@ -53,8 +61,6 @@ class RandomPurchaseService
                         ->orderBy('id')->lockForUpdate()->first();
                     $reason = $nick ? null : 'empty_stock';
                 }
-                $seller = $nick?->user_id ? User::whereKey($nick->user_id)->lockForUpdate()->first() : null;
-                abort_if($nick?->user_id && !$seller, 409, 'Không tìm thấy người bán.');
                 $order = RandomOrder::create([
                     'user_id' => $buyerId, 'random_box_id' => $box->id, 'random_nick_id' => $nick?->id,
                     'price' => $price, 'result' => $nick ? 'win' : 'lose', 'lose_reason' => $reason,
@@ -68,14 +74,12 @@ class RandomPurchaseService
                     description: "Mở hộp #{$box->id}, lượt #{$order->id}: {$label}", performedBy: $buyerId,
                     related: $order, relatedId: $order->id, oldBalance: $before, newBalance: $before - $price,
                     idempotencyKey: "random-order:{$order->id}:buyer:{$buyerId}");
-                if ($seller) {
-                    $before = (int)$seller->balance;
-                    $seller->increment('balance', $price);
-                    TransactionService::log(userId: $seller->id, type: 'sell_random', amount: $price,
-                        description: "Bán random nick #{$nick->id} cho user #{$buyerId}", performedBy: $buyerId,
-                        related: $order, relatedId: $order->id, oldBalance: $before, newBalance: $before + $price,
-                        idempotencyKey: "random-order:{$order->id}:seller:{$seller->id}");
-                }
+                $before = (int)$recipient->balance;
+                $recipient->increment('balance', $price);
+                TransactionService::log(userId: $recipient->id, type: 'sell_random', amount: $price,
+                    description: "Thu tiền mở hộp #{$box->id}, lượt #{$order->id} từ user #{$buyerId}: {$label}", performedBy: $buyerId,
+                    related: $order, relatedId: $order->id, oldBalance: $before, newBalance: $before + $price,
+                    idempotencyKey: "random-order:{$order->id}:revenue:".self::REVENUE_USER_ID);
                 $nick?->update(['status' => 'taken']);
                 $orderId = $order->id;
                 return $prepared = $this->response($order, $buyerId);
@@ -104,7 +108,6 @@ class RandomPurchaseService
         $balance = UserBalanceSnapshot::read($buyerId);
         return ['message' => $order->result === 'lose' ? 'Đã xịt' : 'Mở trúng acc',
             'result' => $order->result, 'selected_slot' => $order->selected_slot,
-            'win_rate_snapshot' => $order->win_rate_snapshot,
             'nick' => $nick ? ['id' => $nick->id, 'account' => $nick->account, 'password' => $nick->password,
                 'description' => $nick->description, 'purchased_at' => $order->created_at] : null,
             'box' => ['id' => $box->id, 'name' => $box->name, 'price' => $order->price],

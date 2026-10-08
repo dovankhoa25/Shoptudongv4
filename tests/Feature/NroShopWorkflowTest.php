@@ -966,6 +966,33 @@ class NroShopWorkflowTest extends TestCase
         $this->assertEquals(800, $buyer->fresh()->balance); $this->assertEquals(0, $seller->fresh()->balance);
     }
 
+    public function test_dedicated_key_covers_account_receiving_replay_and_worker_claim(): void
+    {
+        $key = \Illuminate\Encryption\Encrypter::generateKey('AES-256-CBC');
+        $cipher = new \Illuminate\Encryption\Encrypter($key, 'AES-256-CBC');
+        config(['nro-shop.credential_key' => 'base64:'.base64_encode($key)]);
+        $seller = $this->seller(); $a = $this->warehouse($seller); $listing = $this->listing($seller, $a);
+        $this->assertSame('secret-pass', $cipher->decryptString(DB::table('nro_accounts')->where('id', $a->id)->value('game_password')));
+        $buyer = User::factory()->create(['balance' => 1000]);
+        $order = app(NroShopService::class)->purchase($buyer, $listing, '', 10, (string) Str::uuid());
+        $request = ['mode' => 'auto', 'username' => 'customer', 'password' => 'PRIVATE_RECEIVER', 'requestKey' => (string) Str::uuid()];
+        $receiving = app(\App\Services\NroReceivingService::class);
+        $session = $receiving->start($buyer, $order, $request);
+        $raw = DB::table('nro_delivery_sessions')->where('id', $session)->value('receiver_credentials');
+        $this->assertSame('PRIVATE_RECEIVER', json_decode($cipher->decryptString($raw), true)['password']);
+
+        // Dedicated NRO data must keep working independently of Laravel's app key.
+        \Illuminate\Support\Facades\Crypt::swap(new \Illuminate\Encryption\Encrypter(\Illuminate\Encryption\Encrypter::generateKey('AES-256-CBC'), 'AES-256-CBC'));
+        $this->assertSame($session, $receiving->start($buyer, $order, $request));
+        $this->assertSame($session, $receiving->start($buyer, $order, [...$request, 'requestKey' => (string) Str::uuid()]));
+        $this->assertDatabaseCount('nro_delivery_sessions', 1);
+        $job = $this->withToken($this->token)->postJson('/app/nro-worker/claim', ['protocolVersion' => 3, 'types' => ['delivery']])
+            ->assertOk()->assertHeader('Cache-Control', 'no-store, private')->json('data');
+        $this->assertSame('secret-pass', $job['account']['password']);
+        $this->assertSame('PRIVATE_RECEIVER', $job['receiving']['receiver']['password']);
+        $this->assertStringNotContainsString('PRIVATE_RECEIVER', json_encode(app(NroShopService::class)->order($order)));
+    }
+
     public function test_auto_receiving_credentials_stay_private_during_review_and_clear_on_final_close(): void
     {
         $seller = $this->seller(); $a = $this->warehouse($seller); $listing = $this->listing($seller, $a);

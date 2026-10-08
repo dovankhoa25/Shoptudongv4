@@ -2,6 +2,14 @@
 
 Phạm vi: backend wegamenew, shophhp.net v4 và tool QLTK. Chưa sao chép sang 123nick.com v4.
 
+## Khóa mã hóa thông tin đăng nhập NRO
+
+`NRO_CREDENTIAL_KEY` cấu hình key riêng cho `nro_accounts.game_password` (acc kho/acc NRO) và `nro_delivery_sessions.receiver_credentials` (acc nhận đồ tự động). Key có dạng `base64:` với 32 byte sau giải mã. Cả ghi mới, sửa mật khẩu, kiểm tra yêu cầu nhận lặp và worker claim đều dùng chung dịch vụ mã hóa; định dạng AES-256-CBC có MAC của Laravel được giữ nguyên.
+
+Nếu đặt đúng key đã mã hóa dữ liệu NRO cũ thì dữ liệu đó đọc được ngay, không cần migration hoặc mã hóa lại hàng loạt. Dữ liệu cũ theo `APP_KEY`/`APP_PREVIOUS_KEYS` vẫn có đường đọc dự phòng; dữ liệu ghi mới luôn dùng `NRO_CREDENTIAL_KEY` khi đã cấu hình. Chưa đặt key riêng thì giữ hành vi Laravel cũ. Key riêng sai định dạng bị từ chối, không âm thầm dùng key khác để ghi dữ liệu.
+
+Sau khi triển khai source và cập nhật biến trong file môi trường đang dùng, chạy `php artisan config:cache` (hoặc `php artisan config:cache --env=production` nếu dùng `.env.production`) rồi khởi động lại tiến trình Laravel chạy lâu. Giữ và sao lưu key riêng cùng database. Thay giá trị key riêng cần kế hoạch chuyển dữ liệu; không tạo lại key mỗi lần deploy. Không thay `ACCOUNT_KEY` của tin bán nick hay `APP_KEY` của các chức năng khác.
+
 ## Luồng hoạt động
 
 1. Admin/CTV có quyền thêm acc chọn riêng server hiển thị từ servers và server đăng nhập từ server_game_login. Tool nhận IP/port từ bản ghi server_game_login. Không suy ra ID bằng serverIndex. Với acc cũ, admin mở Cấu hình để gán hai server trước khi quét/bán.
@@ -73,7 +81,7 @@ Form cho CTV kiểm tra, sửa và bỏ chọn rồi gửi attributeSelections (
 
 ## Cài local / triển khai sau
 
-Local đã chạy riêng migration 000001, 000006, 000007 và 000008 ngày 2026_09_08. Không chạy các migration khác ngoài phạm vi. Máy mới phải chạy bốn migration này theo thứ tự và bảo toàn APP_KEY vì mật khẩu đã mã hóa phụ thuộc khóa đó.
+Local đã chạy riêng migration 000001, 000006, 000007 và 000008 ngày 2026_09_08. Không chạy các migration khác ngoài phạm vi. Máy mới phải chạy bốn migration này theo thứ tự và bảo toàn các key đã dùng mã hóa dữ liệu; xem cấu hình `NRO_CREDENTIAL_KEY` ở trên cho phần NRO.
 
 Mở qltk/NroShopDesktop/release/QLTK-Shop.exe (một EXE tự chứa runtime/core/map), nhập URL backend và API key, chọn số luồng. Bật giao đồ để nhận cả snapshot và đơn. Danh sách acc có nút tải; bảng hiển thị từng job và hai vai trò acc giao/nhận. Dừng gửi lệnh ngắt an toàn; chờ worker đóng các session và gửi kết quả.
 

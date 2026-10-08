@@ -4,7 +4,6 @@ namespace App\Services;
 
 use App\Models\NroAccount;
 use App\Models\User;
-use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 
 class NroReceivingService
@@ -49,7 +48,7 @@ class NroReceivingService
                     ->where('s.receiver_lock',$lock)->whereIn('s.status',NroOrderFlow::ACTIVE_SESSIONS)
                     ->where(fn($q)=>$q->where('o.account_id','!=',$a->id)->orWhere('o.buyer_id','!=',$user->id))->exists(),
                     'Acc nhận đang được dùng với kho hoặc người mua khác. Hoàn tất phiên đó trước.');
-                $credentials = Crypt::encryptString(json_encode(['username' => $username, 'password' => $v['password']]));
+                $credentials = app(NroCredentialCipher::class)->encryptString(json_encode(['username' => $username, 'password' => $v['password']]));
             }
             $session = DB::table('nro_delivery_sessions')->insertGetId([
                 'order_id' => $id,
@@ -74,7 +73,7 @@ class NroReceivingService
         if ($session->mode !== $v['mode']) return false;
         if ($v['mode']==='manual') return mb_strtolower(trim($v['recipientName']), 'UTF-8') === mb_strtolower(trim($session->recipient_name), 'UTF-8');
         if (!$session->receiver_credentials) return true;
-        $login=json_decode(Crypt::decryptString($session->receiver_credentials),true);
+        $login=json_decode(app(NroCredentialCipher::class)->decryptString($session->receiver_credentials),true);
         return trim($v['username']) === $login['username'] && hash_equals($login['password'],$v['password']);
     }
 

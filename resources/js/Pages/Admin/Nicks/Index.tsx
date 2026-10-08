@@ -310,7 +310,7 @@ export default function NickPage() {
             render: (id: number) => (
                 <span
                     className="font-mono font-bold text-blue-600 hover:text-blue-800 cursor-pointer hover:underline transition-colors"
-                    onClick={() => window.open(`http://shophhp.vn/nick/${id}`, '_blank')}
+                    onClick={() => window.open(`http://shophhp.net/nick/${id}`, '_blank')}
                     title={`Xem chi tiết nick #${id}`}
                 >
                     #{id}

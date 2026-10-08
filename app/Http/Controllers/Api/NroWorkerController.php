@@ -3,6 +3,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\NroAccount;
+use App\Services\NroCredentialCipher;
 use App\Services\NroSnapshotService;
 use App\Services\NroShopService;
 use Illuminate\Http\Request;
@@ -102,7 +103,7 @@ class NroWorkerController extends Controller
                         'host' => $endpoint->ip, 'port' => (int) $endpoint->port, 'serverId' => $account->server_id,
                         'deliveryMap' => $account->delivery_map, 'deliveryZone' => $account->delivery_zone, 'deliveryZoneMode' => $account->delivery_zone_mode, 'lastBatchKey'=>DB::table('nro_delivery_rounds as r')->join('nro_worker_jobs as j','j.id','=','r.job_id')->where('j.account_id',$account->id)->orderByDesc('r.id')->value('r.batch_key')],
                     'receiving' => $session ? ['id' => $session->id, 'mode' => $session->mode, 'recipientName' => $session->recipient_name === null ? null : mb_strtolower(trim($session->recipient_name), 'UTF-8'),
-                        'receiver' => $session->receiver_credentials ? json_decode(\Illuminate\Support\Facades\Crypt::decryptString($session->receiver_credentials), true) : null] : null,
+                        'receiver' => $session->receiver_credentials ? json_decode(app(NroCredentialCipher::class)->decryptString($session->receiver_credentials), true) : null] : null,
                     'order' => $job->order_id ? [...$shop->order($job->order_id), 'buyerId'=>(int)DB::table('item_orders')->where('id',$job->order_id)->value('buyer_id')] : null]])->header('Cache-Control', 'no-store');
             }
             return response()->json(['data' => null]);
