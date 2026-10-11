@@ -10,6 +10,8 @@ class AtmTopup extends Model
 {
     public const STATUS_COMPLETED = 'completed';
 
+    public const STATUS_NEEDS_REVIEW = 'needs_review';
+
     protected $fillable = [
         'user_id',
         'provider',
@@ -26,6 +28,7 @@ class AtmTopup extends Model
         'accumulated',
         'description',
         'status',
+        'review_reason',
         'payload',
     ];
 

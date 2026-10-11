@@ -105,7 +105,7 @@ export const ADMIN_TABLE_SEARCH_FIELDS = {
         ...relatedUserFields,
     ],
     bankTopups: [
-        exact('sepay_id', 'ID SePay'),
+        exact('transaction_id', 'ID giao dịch'),
         exact('payment_code', 'Mã thanh toán'),
         exact('reference', 'Mã tham chiếu'),
         exact('account_number', 'Số tài khoản'),

@@ -11,7 +11,7 @@ class EnforceIpBlock
     public function handle(Request $request, Closure $next)
     {
         // These integrations retain their dedicated key/signature authentication.
-        if ($request->is('app/*', 'api/app/*', 'api/charge/callback', 'api/webhook/sepay', 'webhooks/*', 'up')
+        if ($request->is('app/*', 'api/app/*', 'api/charge/callback', 'api/webhook/sepay', 'api/webhook/gpmpay', 'webhooks/*', 'up')
             || $request->routeIs('logout', 'api.logout', 'account.logout')) {
             return $next($request);
         }

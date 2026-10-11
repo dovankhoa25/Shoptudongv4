@@ -42,7 +42,7 @@ export interface BankTopupItem {
     transaction_at: string;
     account_number: string;
     sub_account: string | null;
-    payment_code: string;
+    payment_code: string | null;
     content: string | null;
     transfer_type: string;
     amount: number;
@@ -50,6 +50,7 @@ export interface BankTopupItem {
     accumulated: number | null;
     description: string | null;
     status: string;
+    review_reason: string | null;
     created_at: string;
 }
 
@@ -72,10 +73,10 @@ export default function DepositDetailModal({ item, type, onClose }: Props) {
 
     return (
         <ConfigProvider theme={{ algorithm: darkMode ? theme.darkAlgorithm : theme.defaultAlgorithm }}>
-            <Modal open title={type === 'card' ? `Chi tiết nạp thẻ #${item.id}` : `Chi tiết SePay #${item.id}`} onCancel={onClose} footer={null} width={760}>
+            <Modal open title={type === 'card' ? `Chi tiết nạp thẻ #${item.id}` : `Chi tiết nạp ngân hàng #${item.id}`} onCancel={onClose} footer={null} width={760}>
                 <div className="grid gap-3 sm:grid-cols-2">
-                    <Detail label="Người dùng" value={user ? `${user.username} (#${user.id})` : 'Người dùng đã xóa'} />
-                    <Detail label="Trạng thái" value={item.status} />
+                    <Detail label="Người dùng" value={user ? `${user.username} (#${user.id})` : type === 'bank' && item.status === 'needs_review' ? 'Chưa xác định' : 'Người dùng đã xóa'} />
+                    <Detail label="Trạng thái" value={item.status === 'needs_review' ? 'Cần xử lý' : item.status === 'completed' ? 'Hoàn tất' : item.status} />
 
                     {type === 'card' ? (() => {
                         const card = item as CardDepositItem;
@@ -100,14 +101,16 @@ export default function DepositDetailModal({ item, type, onClose }: Props) {
                         return <>
                             <Detail label="Ngân hàng" value={bank.gateway} />
                             <Detail label="Số tiền" value={formatCurrency(bank.amount)} />
-                            <Detail label="ID SePay" value={bank.provider_transaction_id} />
+                            <Detail label="Nguồn" value={bank.provider === 'gpmpay' ? 'GPMPay' : bank.provider === 'sepay' ? 'SePay' : bank.provider} />
+                            <Detail label="ID giao dịch" value={bank.provider_transaction_id} />
                             <Detail label="Mã tham chiếu" value={bank.reference_code} />
-                            <Detail label="Mã thanh toán" value={<span className="font-mono">{bank.payment_code}</span>} />
+                            <Detail label="Mã thanh toán" value={<span className="font-mono">{bank.payment_code || '—'}</span>} />
                             <Detail label="Tài khoản nhận" value={<span className="font-mono">{bank.account_number}</span>} />
                             <Detail label="Thời gian ngân hàng" value={new Date(bank.transaction_at).toLocaleString('vi-VN')} />
                             <Detail label="Số dư ngân hàng" value={bank.accumulated === null ? '—' : formatCurrency(bank.accumulated)} />
                             <div className="sm:col-span-2"><Detail label="Nội dung" value={bank.content} /></div>
                             <div className="sm:col-span-2"><Detail label="Mô tả" value={bank.description} /></div>
+                            {bank.review_reason && <div className="sm:col-span-2"><Detail label="Lý do cần xử lý" value={bank.review_reason} /></div>}
                         </>;
                     })()}
                 </div>

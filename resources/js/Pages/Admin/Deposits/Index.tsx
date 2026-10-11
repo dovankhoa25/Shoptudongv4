@@ -15,11 +15,12 @@ interface DepositsPageProps extends PageProps {
     bankTopups: PaginatedData<BankTopupItem>;
     filters: {
         card: { search?: string; status?: string; card_type_id?: number };
-        bank: { search?: string; gateway?: string };
+        bank: { search?: string; gateway?: string; status?: string };
     };
     gateways: string[];
     stats: {
         bank_total: number;
+        pending_bank_topups: number;
         card_total: number;
         pending_cards: number;
         active_card_types: number;
@@ -30,6 +31,7 @@ interface DepositsPageProps extends PageProps {
 type Tab = 'bank' | 'cards' | 'types';
 
 const STATUS_META: Record<string, { label: string; className: string }> = {
+    needs_review: { label: 'Cần xử lý', className: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' },
     pending: { label: 'Đang xử lý', className: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' },
     confirmed: { label: 'Sai mệnh giá', className: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300' },
     completed: { label: 'Hoàn tất', className: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' },
@@ -166,7 +168,12 @@ export default function DepositsPage() {
 
     const bankColumns: Column<BankTopupItem>[] = useMemo(() => [
         { key: 'id', title: 'Mã', width: 80, render: (value: number) => <span className="font-mono text-xs text-slate-500">#{value}</span> },
-        { key: 'user', title: 'Người dùng', width: 230, render: (user: DepositUser | null) => <UserCell user={user} /> },
+        { key: 'user', title: 'Người dùng', width: 230, render: (user: DepositUser | null, bank: BankTopupItem) => !user && bank.status === 'needs_review' ? <span className="text-sm italic text-amber-600">Chưa xác định</span> : <UserCell user={user} /> },
+        {
+            key: 'status', title: 'Trạng thái', width: 145,
+            filters: [{ text: 'Cần xử lý', value: 'needs_review' }, { text: 'Hoàn tất', value: 'completed' }],
+            render: (value: string, bank: BankTopupItem) => <span title={bank.review_reason ?? undefined}><StatusBadge status={value} /></span>,
+        },
         {
             key: 'gateway',
             title: 'Ngân hàng',
@@ -181,8 +188,9 @@ export default function DepositsPage() {
             align: 'right',
             render: (value: number) => <span className="font-semibold text-emerald-600">+{formatCurrency(value)}</span>,
         },
-        { key: 'payment_code', title: 'Mã thanh toán', width: 160, render: (value: string) => <span className="font-mono text-sm">{value}</span> },
-        { key: 'provider_transaction_id', title: 'ID SePay', width: 145, render: (value: string) => <span className="font-mono text-xs text-slate-500">{value}</span> },
+        { key: 'payment_code', title: 'Mã thanh toán', width: 160, render: (value: string | null) => <span className="font-mono text-sm">{value || '—'}</span> },
+        { key: 'provider', title: 'Nguồn', width: 105, render: (value: string) => value === 'gpmpay' ? 'GPMPay' : value === 'sepay' ? 'SePay' : value },
+        { key: 'provider_transaction_id', title: 'ID giao dịch', width: 200, render: (value: string) => <span className="font-mono text-xs text-slate-500">{value}</span> },
         { key: 'reference_code', title: 'Mã tham chiếu', width: 190, render: (value: string | null) => <span className="font-mono text-xs text-slate-500">{value || '—'}</span> },
         { key: 'transaction_at', title: 'Thời gian', width: 180, render: (value: string) => <span className="text-sm text-slate-500">{formatDateTime(value)}</span> },
     ], [gateways]);
@@ -229,8 +237,8 @@ export default function DepositsPage() {
                 <DataTable<BankTopupItem>
                     storageKey="admin-bank-topups-table" density="compact" rowKey="id" selectable={false} striped stickyHeader
                     data={bankTopups.data} columns={bankColumns} loading={bankTable.loading}
-                    searchValue={bankTable.filters.search} searchPreset="bankTopups" searchPlaceholder="Tìm user, ID SePay, mã thanh toán hoặc tham chiếu..."
-                    title="Lịch sử nạp ngân hàng" description={`${bankTopups.meta.total.toLocaleString('vi-VN')} webhook đã xử lý`}
+                    searchValue={bankTable.filters.search} searchPreset="bankTopups" searchPlaceholder="Tìm user, ID giao dịch, mã thanh toán hoặc tham chiếu..."
+                    title="Lịch sử nạp ngân hàng" description={`${bankTopups.meta.total.toLocaleString('vi-VN')} giao dịch · ${stats.pending_bank_topups.toLocaleString('vi-VN')} cần xử lý`}
                     onView={item => setDetail({ type: 'bank', item })} onSearch={bankTable.handleSearch}
                     onReset={bankTable.handleResetFilters} onFiltersChange={bankTable.setColumnFilters}
                     pagination={{ current: bankTopups.meta.current_page, pageSize: bankTopups.meta.per_page, total: bankTopups.meta.total, showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], onChange: bankTable.handlePageChange }}

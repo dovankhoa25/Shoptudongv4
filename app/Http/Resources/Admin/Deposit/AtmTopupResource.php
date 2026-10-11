@@ -30,6 +30,7 @@ class AtmTopupResource extends JsonResource
             'accumulated' => $this->accumulated === null ? null : (int) $this->accumulated,
             'description' => $this->description,
             'status' => $this->status,
+            'review_reason' => $this->review_reason,
             'created_at' => $this->created_at?->toISOString(),
         ];
     }

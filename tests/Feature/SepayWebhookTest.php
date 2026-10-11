@@ -18,6 +18,7 @@ class SepayWebhookTest extends TestCase
     {
         parent::setUp();
 
+        config()->set('services.bank_deposit.provider', 'sepay');
         config()->set('services.sepay.webhook_key', 'sepay-test-key');
         config()->set('services.sepay.transfer_prefix', 'shop');
         Event::fake([UserEvent::class]);
@@ -90,6 +91,21 @@ class SepayWebhookTest extends TestCase
             ->assertJsonPath('success', true);
 
         $this->assertSame(20000, (int) $user->refresh()->balance);
+    }
+
+    public function test_sepay_does_not_credit_when_gpmpay_is_selected(): void
+    {
+        config()->set('services.bank_deposit.provider', 'gpmpay');
+        $user = User::factory()->create(['balance' => 0]);
+
+        $this->postJson('/api/webhook/sepay', $this->payload($user, 1, 100000), $this->authorization())
+            ->assertOk()
+            ->assertJsonPath('ignored', true)
+            ->assertJsonPath('reason', 'provider_disabled');
+
+        $this->assertSame(0, (int) $user->refresh()->balance);
+        $this->assertDatabaseCount('atm_topups', 0);
+        $this->assertDatabaseCount('transactions', 0);
     }
 
     public function test_multiple_payment_prefixes_can_be_configured(): void

@@ -147,6 +147,46 @@ class AdminDepositManagementTest extends TestCase
             ->assertForbidden();
     }
 
+    public function test_unmatched_bank_transfers_are_prioritized_filterable_and_excluded_from_credited_total(): void
+    {
+        $admin = User::factory()->create();
+        $admin->givePermissionTo(AppPermission::DepositsView->value);
+        $customer = User::factory()->create();
+        $pending = $this->bankTopup($customer);
+        $pending->forceFill([
+            'user_id' => null,
+            'provider' => 'gpmpay',
+            'provider_transaction_id' => 'f68120ba-c60a-433a-a7af-3746a4eec807',
+            'payment_code' => null,
+            'status' => AtmTopup::STATUS_NEEDS_REVIEW,
+            'review_reason' => 'Nội dung không có mã thanh toán hợp lệ.',
+        ])->save();
+        $completed = $this->bankTopup($customer);
+
+        $this->actingAs($admin)->get(route('admin.deposits.index'))
+            ->assertOk()->assertInertia(fn (Assert $page) => $page
+            ->where('bankTopups.data.0.id', $pending->id)
+            ->where('bankTopups.data.0.user', null)
+            ->where('bankTopups.data.0.status', AtmTopup::STATUS_NEEDS_REVIEW)
+            ->where('bankTopups.data.0.review_reason', $pending->review_reason)
+            ->where('bankTopups.data.1.id', $completed->id)
+            ->where('stats.bank_total', 100000)
+            ->where('stats.pending_bank_topups', 1));
+
+        $this->get(route('admin.deposits.index', ['bank_status' => AtmTopup::STATUS_NEEDS_REVIEW]))
+            ->assertOk()->assertInertia(fn (Assert $page) => $page
+            ->has('bankTopups.data', 1)
+            ->where('bankTopups.data.0.id', $pending->id)
+            ->where('filters.bank.status', AtmTopup::STATUS_NEEDS_REVIEW));
+
+        foreach (['transaction_id', 'sepay_id'] as $alias) {
+            $this->get(route('admin.deposits.index', ['bank_search' => $alias.':'.$pending->provider_transaction_id]))
+                ->assertOk()->assertInertia(fn (Assert $page) => $page
+                ->has('bankTopups.data', 1)
+                ->where('bankTopups.data.0.id', $pending->id));
+        }
+    }
+
     private function bankTopup(User $user): AtmTopup
     {
         return AtmTopup::query()->create([

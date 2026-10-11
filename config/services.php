@@ -27,6 +27,15 @@ return [
         'graph_version' => env('FACEBOOK_GRAPH_VERSION', 'v23.0'),
     ],
 
+    'bank_deposit' => [
+        'provider' => env('BANK_DEPOSIT_PROVIDER', 'sepay'),
+    ],
+
+    'gpmpay' => [
+        'auth_mode' => env('GPMPAY_WEBHOOK_AUTH_MODE', 'hmac'),
+        'webhook_secret' => env('GPMPAY_WEBHOOK_SECRET'),
+    ],
+
     'sepay' => [
         'webhook_key' => env('SEPAY_WEBHOOK_API_KEY'),
         'transfer_prefix' => env('SEPAY_TRANSFER_PREFIX', 'shop'),

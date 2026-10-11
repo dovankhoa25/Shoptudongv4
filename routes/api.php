@@ -98,6 +98,8 @@ Route::post('/charge/callback', [RechargeController::class, 'callback'])
     ]);
 Route::post('/webhook/sepay', [WebhookController::class, 'handle'])
     ->middleware('throttle:financial-webhook');
+Route::post('/webhook/gpmpay', \App\Http\Controllers\Api\GpmPayWebhookController::class)
+    ->middleware('throttle:financial-webhook');
 
 Route::prefix('app')->name('app.')->group(function (): void {
     Route::get('/carot/recharges/pending', [AppCarotRechargeController::class, 'pending'])->name('carot.pending');

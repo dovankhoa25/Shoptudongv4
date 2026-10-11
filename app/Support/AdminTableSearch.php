@@ -420,6 +420,7 @@ final class AdminTableSearch
             'bankTopups' => [
                 ['provider_transaction_id', 'reference_code', 'payment_code', 'account_number', 'content', $user],
                 [
+                    'transaction_id' => self::exact('provider_transaction_id'),
                     'sepay_id' => self::exact('provider_transaction_id'),
                     'payment_code' => self::exact('payment_code'),
                     'reference' => self::exact('reference_code'),

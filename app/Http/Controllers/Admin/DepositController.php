@@ -33,6 +33,7 @@ class DepositController extends Controller
             'card_card_type_id' => ['nullable', 'integer', Rule::exists('card_types', 'id')],
             'bank_search' => ['nullable', 'string', 'max:191'],
             'bank_gateway' => ['nullable', 'string', 'max:50'],
+            'bank_status' => ['nullable', Rule::in([AtmTopup::STATUS_COMPLETED, AtmTopup::STATUS_NEEDS_REVIEW])],
         ]);
 
         $cardSearch = trim((string) ($validated['card_search'] ?? ''));
@@ -70,6 +71,11 @@ class DepositController extends Controller
                         $validated['bank_gateway'] ?? null,
                         fn ($query, string $gateway) => $query->where('gateway', $gateway)
                     )
+                    ->when(
+                        $validated['bank_status'] ?? null,
+                        fn ($query, string $status) => $query->where('status', $status)
+                    )
+                    ->orderByRaw('CASE WHEN status = ? THEN 0 ELSE 1 END', [AtmTopup::STATUS_NEEDS_REVIEW])
                     ->latest('id')
                     ->paginate($this->perPage($request, 'bank_per_page'), ['*'], 'bank_page')
                     ->withQueryString()
@@ -83,6 +89,7 @@ class DepositController extends Controller
                 'bank' => [
                     'search' => $validated['bank_search'] ?? null,
                     'gateway' => $validated['bank_gateway'] ?? null,
+                    'status' => $validated['bank_status'] ?? null,
                 ],
             ],
             'gateways' => AtmTopup::query()
@@ -91,7 +98,8 @@ class DepositController extends Controller
                 ->orderBy('gateway')
                 ->pluck('gateway'),
             'stats' => [
-                'bank_total' => (int) AtmTopup::query()->sum('amount'),
+                'bank_total' => (int) AtmTopup::query()->where('status', AtmTopup::STATUS_COMPLETED)->sum('amount'),
+                'pending_bank_topups' => AtmTopup::query()->where('status', AtmTopup::STATUS_NEEDS_REVIEW)->count(),
                 'card_total' => (int) Card::query()->where('status', Card::STATUS_COMPLETED)->sum('amount_user'),
                 'pending_cards' => Card::query()->where('status', Card::STATUS_PENDING)->count(),
                 'active_card_types' => CardType::query()->where('status', true)->count(),

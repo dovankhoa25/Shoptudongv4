@@ -3,14 +3,14 @@
 namespace App\Services\Deposit;
 
 use App\Models\AtmTopup;
-use App\Models\Transaction;
 use App\Models\User;
-use App\Services\TransactionService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class SepayWebhookService
 {
+    public function __construct(private readonly BankTopupCreditor $creditor) {}
+
     /**
      * @param  array<string, mixed>  $payload
      * @return array{topup: AtmTopup, created: bool, balance: int}
@@ -61,34 +61,7 @@ class SepayWebhookService
                 ];
             }
 
-            $balanceBefore = (int) $user->balance;
-
-            if ($balanceBefore > TransactionService::MAX_BALANCE - $amount) {
-                throw ValidationException::withMessages([
-                    'transferAmount' => 'Số dư sau khi nạp vượt giới hạn lưu trữ.',
-                ]);
-            }
-
-            $balanceAfter = $balanceBefore + $amount;
-            $user->forceFill(['balance' => $balanceAfter])->save();
-
-            Transaction::query()->create([
-                'user_id' => $user->id,
-                'performed_by' => null,
-                'type' => Transaction::TYPE_BANK_DEPOSIT,
-                'amount' => $amount,
-                'balance_before' => $balanceBefore,
-                'balance_after' => $balanceAfter,
-                'description' => 'Nạp tiền qua '.$payload['gateway'].' - atm #'.$providerTransactionId.'.',
-                'related_type' => AtmTopup::class,
-                'related_id' => (string) $topup->id,
-                'idempotency_key' => 'sepay:'.$providerTransactionId,
-                'metadata' => [
-                    'gateway' => $payload['gateway'],
-                    'reference_code' => $payload['referenceCode'] ?? null,
-                    'payment_code' => $payload['code'],
-                ],
-            ]);
+            $balanceAfter = $this->creditor->credit($topup, $user);
 
             return [
                 'topup' => $topup,
