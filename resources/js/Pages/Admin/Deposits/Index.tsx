@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { router, usePage } from '@inertiajs/react';
 import { CheckCircle2, Clock3, CreditCard, Landmark, Settings2, UserRound } from 'lucide-react';
 import AdminLayout from '@/Layouts/AdminLayout';
@@ -15,9 +15,10 @@ interface DepositsPageProps extends PageProps {
     bankTopups: PaginatedData<BankTopupItem>;
     filters: {
         card: { search?: string; status?: string; card_type_id?: number };
-        bank: { search?: string; gateway?: string; status?: string };
+        bank: { search?: string; gateway?: string; status?: string; provider?: string; start_date: string; end_date: string; all_dates: number };
     };
     gateways: string[];
+    bankToday: string;
     stats: {
         bank_total: number;
         pending_bank_topups: number;
@@ -55,10 +56,10 @@ const UserCell = ({ user }: { user: DepositUser | null }) => user ? (
     </div>
 ) : <span className="text-sm italic text-slate-400">Người dùng đã xóa</span>;
 
-const formatDateTime = (value: string) => new Date(value).toLocaleString('vi-VN');
+const formatDateTime = (value: string) => new Date(value).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
 
 export default function DepositsPage() {
-    const { cardTypes, cards, bankTopups, filters: initialFilters, gateways, stats, can } = usePage<DepositsPageProps>().props;
+    const { cardTypes, cards, bankTopups, filters: initialFilters, gateways, bankToday, stats, can } = usePage<DepositsPageProps>().props;
     const [activeTab, setActiveTab] = useState<Tab>('bank');
     const [editingType, setEditingType] = useState<CardTypeItem | null | undefined>(undefined);
     const [detail, setDetail] = useState<{ type: 'card'; item: CardDepositItem } | { type: 'bank'; item: BankTopupItem } | null>(null);
@@ -68,6 +69,7 @@ export default function DepositsPage() {
         initialFilters: initialFilters.card,
         initialData: cards,
         paramPrefix: 'card_',
+        preserveOtherParams: true,
         only: ['cards', 'filters'],
         debounceMs: 400,
     });
@@ -76,9 +78,28 @@ export default function DepositsPage() {
         initialFilters: initialFilters.bank,
         initialData: bankTopups,
         paramPrefix: 'bank_',
-        only: ['bankTopups', 'filters'],
+        preserveOtherParams: true,
+        only: ['bankTopups', 'filters', 'stats', 'bankToday'],
         debounceMs: 400,
     });
+
+    const [bankDates, setBankDates] = useState({
+        start: initialFilters.bank.start_date,
+        end: initialFilters.bank.end_date,
+    });
+    useEffect(() => {
+        setBankDates({ start: initialFilters.bank.start_date, end: initialFilters.bank.end_date });
+    }, [initialFilters.bank.start_date, initialFilters.bank.end_date]);
+
+    const applyBankDates = (start: string, end: string, allDates = 0) => {
+        setBankDates({ start, end });
+        bankTable.setColumnFilters(previous => ({
+            ...previous, start_date: start, end_date: end, all_dates: allDates,
+        }));
+    };
+    const bankPeriod = initialFilters.bank.all_dates
+        ? 'Tất cả ngày'
+        : initialFilters.bank.start_date.split('-').reverse().join('/') + ' – ' + initialFilters.bank.end_date.split('-').reverse().join('/');
 
     const cardTypeColumns: Column<CardTypeItem>[] = useMemo(() => [
         {
@@ -170,9 +191,17 @@ export default function DepositsPage() {
         { key: 'id', title: 'Mã', width: 80, render: (value: number) => <span className="font-mono text-xs text-slate-500">#{value}</span> },
         { key: 'user', title: 'Người dùng', width: 230, render: (user: DepositUser | null, bank: BankTopupItem) => !user && bank.status === 'needs_review' ? <span className="text-sm italic text-amber-600">Chưa xác định</span> : <UserCell user={user} /> },
         {
-            key: 'status', title: 'Trạng thái', width: 145,
+            key: 'status', title: 'Trạng thái', width: 260,
             filters: [{ text: 'Cần xử lý', value: 'needs_review' }, { text: 'Hoàn tất', value: 'completed' }],
-            render: (value: string, bank: BankTopupItem) => <span title={bank.review_reason ?? undefined}><StatusBadge status={value} /></span>,
+            render: (value: string, bank: BankTopupItem) => (
+                <div className="space-y-1">
+                    <StatusBadge status={value} />
+                    {value === 'needs_review' && <>
+                        <p className="text-xs font-medium text-amber-700 dark:text-amber-300">Chưa cộng tiền</p>
+                        <p className="max-w-xs text-xs text-slate-500">{bank.review_reason}</p>
+                    </>}
+                </div>
+            ),
         },
         {
             key: 'gateway',
@@ -186,10 +215,18 @@ export default function DepositsPage() {
             title: 'Số tiền',
             width: 155,
             align: 'right',
-            render: (value: number) => <span className="font-semibold text-emerald-600">+{formatCurrency(value)}</span>,
+            render: (value: number, bank: BankTopupItem) => <span className={'font-semibold ' + (bank.status === 'needs_review' ? 'text-amber-600' : 'text-emerald-600')}>{formatCurrency(value)}</span>,
         },
         { key: 'payment_code', title: 'Mã thanh toán', width: 160, render: (value: string | null) => <span className="font-mono text-sm">{value || '—'}</span> },
-        { key: 'provider', title: 'Nguồn', width: 105, render: (value: string) => value === 'gpmpay' ? 'GPMPay' : value === 'sepay' ? 'SePay' : value },
+        {
+            key: 'content', title: 'Nội dung chuyển khoản', width: 280,
+            render: (value: string | null) => <p className="max-w-xs break-words text-sm text-slate-600 dark:text-slate-300">{value?.trim() ? value : <span className="italic text-amber-600">Không có nội dung</span>}</p>,
+        },
+        {
+            key: 'provider', title: 'Nguồn', width: 105,
+            filters: [{ text: 'DVKPay', value: 'dvkpay' }, { text: 'SePay', value: 'sepay' }],
+            render: (value: string) => ['dvkpay', 'gpmpay'].includes(value) ? 'DVKPay' : value === 'sepay' ? 'SePay' : value,
+        },
         { key: 'provider_transaction_id', title: 'ID giao dịch', width: 200, render: (value: string) => <span className="font-mono text-xs text-slate-500">{value}</span> },
         { key: 'reference_code', title: 'Mã tham chiếu', width: 190, render: (value: string | null) => <span className="font-mono text-xs text-slate-500">{value || '—'}</span> },
         { key: 'transaction_at', title: 'Thời gian', width: 180, render: (value: string) => <span className="text-sm text-slate-500">{formatDateTime(value)}</span> },
@@ -205,7 +242,7 @@ export default function DepositsPage() {
         <div className="space-y-5">
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                 {[
-                    { label: 'Tổng nạp ngân hàng', value: formatCurrency(stats.bank_total), icon: Landmark, color: 'text-emerald-600 bg-emerald-100 dark:bg-emerald-900/30' },
+                    { label: 'Ngân hàng đã cộng (theo bộ lọc)', value: formatCurrency(stats.bank_total), icon: Landmark, color: 'text-emerald-600 bg-emerald-100 dark:bg-emerald-900/30' },
                     { label: 'Tổng nạp thẻ', value: formatCurrency(stats.card_total), icon: CreditCard, color: 'text-blue-600 bg-blue-100 dark:bg-blue-900/30' },
                     { label: 'Thẻ đang xử lý', value: stats.pending_cards.toLocaleString('vi-VN'), icon: Clock3, color: 'text-amber-600 bg-amber-100 dark:bg-amber-900/30' },
                     { label: 'Loại thẻ đang bật', value: stats.active_card_types.toLocaleString('vi-VN'), icon: CheckCircle2, color: 'text-violet-600 bg-violet-100 dark:bg-violet-900/30' },
@@ -234,15 +271,58 @@ export default function DepositsPage() {
             </div>
 
             {activeTab === 'bank' && (
-                <DataTable<BankTopupItem>
-                    storageKey="admin-bank-topups-table" density="compact" rowKey="id" selectable={false} striped stickyHeader
-                    data={bankTopups.data} columns={bankColumns} loading={bankTable.loading}
-                    searchValue={bankTable.filters.search} searchPreset="bankTopups" searchPlaceholder="Tìm user, ID giao dịch, mã thanh toán hoặc tham chiếu..."
-                    title="Lịch sử nạp ngân hàng" description={`${bankTopups.meta.total.toLocaleString('vi-VN')} giao dịch · ${stats.pending_bank_topups.toLocaleString('vi-VN')} cần xử lý`}
-                    onView={item => setDetail({ type: 'bank', item })} onSearch={bankTable.handleSearch}
-                    onReset={bankTable.handleResetFilters} onFiltersChange={bankTable.setColumnFilters}
-                    pagination={{ current: bankTopups.meta.current_page, pageSize: bankTopups.meta.per_page, total: bankTopups.meta.total, showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], onChange: bankTable.handlePageChange }}
-                />
+                <div className="space-y-3">
+                    <form
+                        className="flex flex-wrap items-end gap-3 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
+                        onSubmit={event => {
+                            event.preventDefault();
+                            applyBankDates(bankDates.start, bankDates.end);
+                        }}
+                    >
+                        <label className="space-y-1 text-sm font-medium text-slate-600 dark:text-slate-300">
+                            <span className="block">Từ ngày</span>
+                            <input type="date" required value={bankDates.start} max={bankDates.end || undefined}
+                                onChange={event => setBankDates(previous => ({ ...previous, start: event.target.value }))}
+                                className="rounded-lg border-slate-300 bg-white text-sm dark:border-slate-600 dark:bg-slate-800" />
+                        </label>
+                        <label className="space-y-1 text-sm font-medium text-slate-600 dark:text-slate-300">
+                            <span className="block">Đến ngày</span>
+                            <input type="date" required value={bankDates.end} min={bankDates.start || undefined}
+                                onChange={event => setBankDates(previous => ({ ...previous, end: event.target.value }))}
+                                className="rounded-lg border-slate-300 bg-white text-sm dark:border-slate-600 dark:bg-slate-800" />
+                        </label>
+                        <button type="submit" disabled={bankTable.loading}
+                            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Lọc ngày</button>
+                        <button type="button" onClick={() => applyBankDates(bankToday, bankToday)}
+                            className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium dark:border-slate-600">Hôm nay</button>
+                        <button type="button" onClick={() => applyBankDates(initialFilters.bank.start_date, initialFilters.bank.end_date, 1)}
+                            className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium dark:border-slate-600">Tất cả ngày</button>
+                        <p className="w-full text-xs text-slate-500">Theo thời gian giao dịch ngân hàng · giờ Việt Nam · trọn ngày từ 00:00 đến 23:59:59.</p>
+                    </form>
+                    {stats.pending_bank_topups > 0 && (
+                        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
+                            <p><strong>{stats.pending_bank_topups.toLocaleString('vi-VN')} giao dịch cần xử lý (tất cả ngày).</strong> Các giao dịch này chưa cộng tiền; xem nội dung và lý do bên dưới.</p>
+                            <button type="button" className="font-semibold underline" onClick={() => {
+                                bankTable.handleSearch('');
+                                bankTable.setColumnFilters({ start_date: bankToday, end_date: bankToday, all_dates: 1, status: 'needs_review' });
+                            }}>Xem toàn bộ cần xử lý</button>
+                        </div>
+                    )}
+                    <DataTable<BankTopupItem>
+                        storageKey="admin-bank-topups-table" density="compact" rowKey="id" selectable={false} striped stickyHeader
+                        data={bankTopups.data} columns={bankColumns} loading={bankTable.loading}
+                        searchValue={bankTable.filters.search} searchPreset="bankTopups" searchPlaceholder="Tìm user, ID giao dịch, mã thanh toán hoặc tham chiếu..."
+                        title="Lịch sử nạp ngân hàng" description={`${bankTopups.meta.total.toLocaleString('vi-VN')} giao dịch · ${bankPeriod}`}
+                        onView={item => setDetail({ type: 'bank', item })} onSearch={bankTable.handleSearch}
+                        onReset={bankTable.handleResetFilters} onFiltersChange={values => bankTable.setColumnFilters(previous => ({
+                            ...values,
+                            start_date: previous.start_date ?? initialFilters.bank.start_date,
+                            end_date: previous.end_date ?? initialFilters.bank.end_date,
+                            all_dates: previous.all_dates ?? initialFilters.bank.all_dates,
+                        }))}
+                        pagination={{ current: bankTopups.meta.current_page, pageSize: bankTopups.meta.per_page, total: bankTopups.meta.total, showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], onChange: bankTable.handlePageChange }}
+                    />
+                </div>
             )}
 
             {activeTab === 'cards' && (

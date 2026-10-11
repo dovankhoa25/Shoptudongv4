@@ -19,7 +19,7 @@ class GpmPayWebhookController extends Controller
             ($payload['test'] ?? false) == true => 'verification',
             $payload['source'] !== 'REAL' => 'simulated',
             $payload['transferType'] !== 'in' => 'outgoing',
-            config('services.bank_deposit.provider') !== 'gpmpay' => 'provider_disabled',
+            ! in_array(config('services.bank_deposit.provider'), ['gpmpay', 'both'], true) => 'provider_disabled',
             default => null,
         };
 

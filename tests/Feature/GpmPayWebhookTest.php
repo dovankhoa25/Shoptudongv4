@@ -46,7 +46,7 @@ class GpmPayWebhookTest extends TestCase
             ->assertJsonPath('balance', 150000);
 
         $topup = AtmTopup::query()->sole();
-        $this->assertSame('gpmpay', $topup->provider);
+        $this->assertSame('dvkpay', $topup->provider);
         $this->assertSame('shop'.$user->id, $topup->payment_code);
         $this->assertSame(AtmTopup::STATUS_COMPLETED, $topup->status);
         $this->assertNull($topup->review_reason);
@@ -171,6 +171,20 @@ class GpmPayWebhookTest extends TestCase
         $this->assertDatabaseCount('transactions', 1);
     }
 
+    public function test_retry_of_legacy_gpmpay_record_does_not_credit_after_the_source_rename(): void
+    {
+        $user = User::factory()->create(['balance' => 0]);
+        $payload = $this->payload('shop'.$user->id);
+        $this->send($payload)->assertOk()->assertJsonPath('credited', true);
+        AtmTopup::query()->sole()->forceFill(['provider' => 'gpmpay'])->save();
+        Transaction::query()->sole()->forceFill(['idempotency_key' => 'gpmpay:'.$payload['id']])->save();
+
+        $this->send($payload)->assertOk()->assertJsonPath('duplicate', true)->assertJsonPath('credited', false);
+        $this->assertSame(100000, (int) $user->refresh()->balance);
+        $this->assertDatabaseCount('atm_topups', 1);
+        $this->assertDatabaseCount('transactions', 1);
+    }
+
     public function test_unmatched_retry_is_acknowledged_without_overwriting_or_auto_resolving(): void
     {
         $user = User::factory()->create(['balance' => 0]);
@@ -195,11 +209,14 @@ class GpmPayWebhookTest extends TestCase
             'transferAmount' => 1, 'referenceCode' => 'GPMPAY-VERIFY',
             'source' => 'SIMULATED', 'test' => true,
         ];
-        $this->send($verification)->assertOk()->assertJsonPath('reason', 'verification');
-        $this->send([...$this->payload('shop'.$user->id), 'source' => 'SIMULATED'])
-            ->assertOk()->assertJsonPath('reason', 'simulated');
-        $this->send([...$this->payload('shop'.$user->id), 'transferType' => 'out'])
-            ->assertOk()->assertJsonPath('reason', 'outgoing');
+        foreach (['gpmpay', 'both'] as $provider) {
+            config(['services.bank_deposit.provider' => $provider]);
+            $this->send($verification)->assertOk()->assertJsonPath('reason', 'verification');
+            $this->send([...$this->payload('shop'.$user->id), 'source' => 'SIMULATED'])
+                ->assertOk()->assertJsonPath('reason', 'simulated');
+            $this->send([...$this->payload('shop'.$user->id), 'transferType' => 'out'])
+                ->assertOk()->assertJsonPath('reason', 'outgoing');
+        }
 
         $this->assertSame(0, (int) $user->refresh()->balance);
         $this->assertDatabaseCount('atm_topups', 0);
@@ -214,6 +231,78 @@ class GpmPayWebhookTest extends TestCase
         $this->send([...$this->payload('shop'.$user->id), 'test' => true])->assertOk()->assertJsonPath('reason', 'verification');
         $this->assertDatabaseCount('atm_topups', 0);
         $this->assertSame(0, (int) $user->refresh()->balance);
+    }
+
+    public function test_both_mode_accepts_both_sources_with_independent_authentication_and_retries(): void
+    {
+        config([
+            'services.bank_deposit.provider' => 'both',
+            'services.sepay.webhook_key' => 'sepay-test-key',
+            'services.sepay.transfer_prefix' => 'shop',
+        ]);
+        $user = User::factory()->create(['balance' => 50000]);
+        $gpmpay = [...$this->payload('vang'.$user->id), 'gateway' => 'MBBank'];
+        $sepay = [
+            'id' => 75172732,
+            'gateway' => 'MBBank',
+            'transactionDate' => '2026-10-11 10:35:50',
+            'accountNumber' => '0357602845',
+            'code' => 'shop'.$user->id,
+            'content' => 'Chuyen khoan shop'.$user->id,
+            'transferType' => 'in',
+            'transferAmount' => 20000,
+            'referenceCode' => 'FT26233120302804',
+            'accumulated' => 0,
+        ];
+        $sepayHeaders = ['Authorization' => 'Apikey sepay-test-key'];
+
+        $this->postJson('/api/webhook/sepay', $sepay, ['Authorization' => 'Apikey gpmpay-test-secret'])
+            ->assertUnauthorized();
+        $this->send($gpmpay, $sepayHeaders)->assertUnauthorized();
+        $this->assertDatabaseCount('atm_topups', 0);
+        $this->assertDatabaseCount('transactions', 0);
+        $this->assertSame(50000, (int) $user->refresh()->balance);
+
+        $this->postJson('/api/webhook/sepay', $sepay, $sepayHeaders)
+            ->assertOk()->assertJsonPath('success', true)->assertJsonPath('balance', 70000);
+        $this->send($gpmpay)->assertOk()->assertJsonPath('credited', true)->assertJsonPath('balance', 170000);
+
+        $this->postJson('/api/webhook/sepay', $sepay, $sepayHeaders)
+            ->assertOk()->assertJsonPath('duplicate', true);
+        $this->send($gpmpay)->assertOk()->assertJsonPath('duplicate', true)->assertJsonPath('credited', false);
+
+        $this->assertSame(170000, (int) $user->refresh()->balance);
+        $this->assertDatabaseCount('atm_topups', 2);
+        $this->assertDatabaseCount('transactions', 2);
+        $this->assertDatabaseHas('atm_topups', [
+            'provider' => 'sepay',
+            'provider_transaction_id' => '75172732',
+            'account_number' => $sepay['accountNumber'],
+            'user_id' => $user->id,
+        ]);
+        $this->assertDatabaseHas('atm_topups', [
+            'provider' => 'dvkpay',
+            'provider_transaction_id' => $gpmpay['id'],
+            'account_number' => $gpmpay['accountNumber'],
+            'user_id' => $user->id,
+        ]);
+    }
+
+    public function test_both_mode_keeps_unmatched_gpmpay_transfers_for_review(): void
+    {
+        config(['services.bank_deposit.provider' => 'both']);
+        $user = User::factory()->create(['balance' => 50000]);
+        $payload = $this->payload('chuyen tien khong co ma');
+
+        $this->send($payload)->assertOk()->assertJsonPath('credited', false)->assertJsonPath('needs_review', true);
+        $this->send($payload)->assertOk()->assertJsonPath('duplicate', true)->assertJsonPath('credited', false);
+
+        $this->assertSame(50000, (int) $user->refresh()->balance);
+        $this->assertDatabaseCount('atm_topups', 1);
+        $this->assertDatabaseCount('transactions', 0);
+        $this->assertSame('dvkpay', AtmTopup::query()->sole()->provider);
+        $this->assertSame(AtmTopup::STATUS_NEEDS_REVIEW, AtmTopup::query()->sole()->status);
+        Event::assertNotDispatched(UserEvent::class);
     }
 
     public function test_hmac_rejects_missing_malformed_stale_future_and_modified_body_signatures(): void

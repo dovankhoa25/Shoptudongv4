@@ -17,6 +17,7 @@ use App\Http\Controllers\Api\BotController;
 use App\Http\Controllers\Api\CardTypeController;
 use App\Http\Controllers\Api\CarotRechargeController;
 use App\Http\Controllers\Api\CategoryController;
+use App\Http\Controllers\Api\GpmPayWebhookController;
 use App\Http\Controllers\Api\HomeController;
 use App\Http\Controllers\Api\ImportController;
 use App\Http\Controllers\Api\NickController;
@@ -98,7 +99,7 @@ Route::post('/charge/callback', [RechargeController::class, 'callback'])
     ]);
 Route::post('/webhook/sepay', [WebhookController::class, 'handle'])
     ->middleware('throttle:financial-webhook');
-Route::post('/webhook/gpmpay', \App\Http\Controllers\Api\GpmPayWebhookController::class)
+Route::post('/webhook/gpmpay',GpmPayWebhookController::class)
     ->middleware('throttle:financial-webhook');
 
 Route::prefix('app')->name('app.')->group(function (): void {

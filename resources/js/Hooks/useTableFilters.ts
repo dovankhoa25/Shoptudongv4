@@ -19,6 +19,8 @@ interface UseTableFiltersOptions {
      * their query params colliding. Defaults to '' (unprefixed), matching the original behaviour.
      */
     paramPrefix?: string;
+    /** Keep query params belonging to other tabs when using a prefix. */
+    preserveOtherParams?: boolean;
     /**
      * Inertia partial-reload prop keys (passed through as the visit's `only` option). When set,
      * the server only re-evaluates/returns these props instead of the whole page — see
@@ -49,6 +51,7 @@ export function useTableFilters({
     initialData,
     debounceMs = 500,
     paramPrefix = '',
+    preserveOtherParams = false,
     only,
 }: UseTableFiltersOptions) {
     const initialFilterValues = initialFilters as Record<string, unknown>;
@@ -74,8 +77,18 @@ export function useTableFilters({
     const mounted = useRef(false);
     const suppressNextFilterRequest = useRef(false);
 
+    const getOtherParams = useCallback(() => {
+        const params: Record<string, string> = {};
+        if (preserveOtherParams && paramPrefix && typeof window !== 'undefined') {
+            new URLSearchParams(window.location.search).forEach((value, key) => {
+                if (!key.startsWith(paramPrefix)) params[key] = value;
+            });
+        }
+        return params;
+    }, [paramPrefix, preserveOtherParams]);
+
     const buildParams = useCallback(() => {
-        const params: Record<string, any> = {};
+        const params: Record<string, any> = { ...getOtherParams() };
         if (filters.search?.trim()) params[prefixed('search')] = filters.search.trim();
 
         Object.entries(columnFilters).forEach(([key, value]) => {
@@ -86,7 +99,7 @@ export function useTableFilters({
             }
         });
         return params;
-    }, [columnFilters, filters.search, prefixed]);
+    }, [columnFilters, filters.search, getOtherParams, prefixed]);
 
     const requestFilteredData = useMemo(
         () => debounce((params: Record<string, any>) => {
@@ -152,6 +165,7 @@ export function useTableFilters({
         setFilters({ search: '' });
         setColumnFilters({});
         router.get(route(routeName), {
+            ...getOtherParams(),
             [prefixed('page')]: 1,
             [prefixed('per_page')]: initialData.meta.per_page,
         }, {
@@ -161,7 +175,7 @@ export function useTableFilters({
             onStart: () => setLoading(true),
             onFinish: () => setLoading(false),
         });
-    }, [initialData.meta.per_page, prefixed, requestFilteredData, routeName, visitOptions]);
+    }, [getOtherParams, initialData.meta.per_page, prefixed, requestFilteredData, routeName, visitOptions]);
 
     return {
         filters,

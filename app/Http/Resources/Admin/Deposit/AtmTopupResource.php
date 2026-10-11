@@ -16,7 +16,7 @@ class AtmTopupResource extends JsonResource
                 'username' => $this->user->username,
                 'email' => $this->user->email,
             ] : null),
-            'provider' => $this->provider,
+            'provider' => $this->provider === 'gpmpay' ? 'dvkpay' : $this->provider,
             'provider_transaction_id' => $this->provider_transaction_id,
             'gateway' => $this->gateway,
             'transaction_at' => $this->transaction_at?->toISOString(),

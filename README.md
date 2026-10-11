@@ -14,3 +14,6 @@
 - update randombox
 0.2.1
 - fix mã hoá
+
+0.2.2
+- bổ sung gpm pay

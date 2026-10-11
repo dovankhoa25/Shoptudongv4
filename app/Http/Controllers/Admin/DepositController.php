@@ -12,9 +12,11 @@ use App\Models\AtmTopup;
 use App\Models\Card;
 use App\Models\CardType;
 use App\Support\AdminTableSearch;
+use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -32,12 +34,41 @@ class DepositController extends Controller
             ])],
             'card_card_type_id' => ['nullable', 'integer', Rule::exists('card_types', 'id')],
             'bank_search' => ['nullable', 'string', 'max:191'],
+            'bank_provider' => ['nullable', Rule::in(['sepay', 'dvkpay'])],
             'bank_gateway' => ['nullable', 'string', 'max:50'],
+            'bank_start_date' => ['nullable', 'date_format:Y-m-d'],
+            'bank_end_date' => ['nullable', 'date_format:Y-m-d'],
+            'bank_all_dates' => ['nullable', 'boolean'],
             'bank_status' => ['nullable', Rule::in([AtmTopup::STATUS_COMPLETED, AtmTopup::STATUS_NEEDS_REVIEW])],
         ]);
 
         $cardSearch = trim((string) ($validated['card_search'] ?? ''));
         $bankSearch = trim((string) ($validated['bank_search'] ?? ''));
+
+        $today = CarbonImmutable::today('Asia/Ho_Chi_Minh')->toDateString();
+        $bankStartDate = $validated['bank_start_date'] ?? $today;
+        $bankEndDate = $validated['bank_end_date'] ?? $bankStartDate;
+        $bankAllDates = $request->boolean('bank_all_dates');
+
+        if ($bankEndDate < $bankStartDate) {
+            throw ValidationException::withMessages([
+                'bank_end_date' => 'Ngày kết thúc phải bằng hoặc sau ngày bắt đầu.',
+            ]);
+        }
+
+        // Both webhook providers store bank timestamps in the application timezone.
+        // Use an exclusive next-day bound to include the entire end date.
+        $bankQuery = AtmTopup::query()
+            ->when(! $bankAllDates, fn ($query) => $query
+                ->where('transaction_at', '>=', CarbonImmutable::parse($bankStartDate, 'Asia/Ho_Chi_Minh')->startOfDay()->setTimezone(config('app.timezone')))
+                ->where('transaction_at', '<', CarbonImmutable::parse($bankEndDate, 'Asia/Ho_Chi_Minh')->addDay()->startOfDay()->setTimezone(config('app.timezone'))))
+            ->when($bankSearch !== '', function ($query) use ($bankSearch) {
+                AdminTableSearch::applyPreset($query, $bankSearch, 'bankTopups');
+            })
+            ->when($validated['bank_gateway'] ?? null, fn ($query, string $gateway) => $query->where('gateway', $gateway))
+            ->when($validated['bank_status'] ?? null, fn ($query, string $status) => $query->where('status', $status))
+            ->when($validated['bank_provider'] ?? null, fn ($query, string $provider) => $query
+                ->whereIn('provider', $provider === 'dvkpay' ? ['dvkpay', 'gpmpay'] : ['sepay']));
 
         return Inertia::render('Admin/Deposits/Index', [
             'cardTypes' => CardTypeResource::collection(
@@ -62,19 +93,8 @@ class DepositController extends Controller
                     ->withQueryString()
             ),
             'bankTopups' => fn () => AtmTopupResource::collection(
-                AtmTopup::query()
+                (clone $bankQuery)
                     ->with('user:id,username,email,deleted_at')
-                    ->when($bankSearch !== '', function ($query) use ($bankSearch) {
-                        AdminTableSearch::applyPreset($query, $bankSearch, 'bankTopups');
-                    })
-                    ->when(
-                        $validated['bank_gateway'] ?? null,
-                        fn ($query, string $gateway) => $query->where('gateway', $gateway)
-                    )
-                    ->when(
-                        $validated['bank_status'] ?? null,
-                        fn ($query, string $status) => $query->where('status', $status)
-                    )
                     ->orderByRaw('CASE WHEN status = ? THEN 0 ELSE 1 END', [AtmTopup::STATUS_NEEDS_REVIEW])
                     ->latest('id')
                     ->paginate($this->perPage($request, 'bank_per_page'), ['*'], 'bank_page')
@@ -89,16 +109,21 @@ class DepositController extends Controller
                 'bank' => [
                     'search' => $validated['bank_search'] ?? null,
                     'gateway' => $validated['bank_gateway'] ?? null,
+                    'provider' => $validated['bank_provider'] ?? null,
+                    'start_date' => $bankStartDate,
+                    'end_date' => $bankEndDate,
+                    'all_dates' => (int) $bankAllDates,
                     'status' => $validated['bank_status'] ?? null,
                 ],
             ],
+            'bankToday' => $today,
             'gateways' => AtmTopup::query()
                 ->whereNotNull('gateway')
                 ->distinct()
                 ->orderBy('gateway')
                 ->pluck('gateway'),
             'stats' => [
-                'bank_total' => (int) AtmTopup::query()->where('status', AtmTopup::STATUS_COMPLETED)->sum('amount'),
+                'bank_total' => (int) (clone $bankQuery)->where('status', AtmTopup::STATUS_COMPLETED)->sum('amount'),
                 'pending_bank_topups' => AtmTopup::query()->where('status', AtmTopup::STATUS_NEEDS_REVIEW)->count(),
                 'card_total' => (int) Card::query()->where('status', Card::STATUS_COMPLETED)->sum('amount_user'),
                 'pending_cards' => Card::query()->where('status', Card::STATUS_PENDING)->count(),

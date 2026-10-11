@@ -24,11 +24,19 @@ class GpmPayWebhookService
         $content = $payload['content'] ?? $payload['description'] ?? '';
         [$code, $userId, $reason] = $this->paymentCode((string) $content);
 
+        // Keep old source labels compatible with webhook retries after the rename.
+        $legacy = AtmTopup::query()->where('provider', 'gpmpay')
+            ->where('provider_transaction_id', strtolower($payload['id']))->first();
+
+        if ($legacy) {
+            return ['topup' => $legacy, 'created' => false, 'credited' => false, 'balance' => null];
+        }
+
         return DB::transaction(function () use ($payload, $originalPayload, $content, $code, $userId, $reason): array {
             // The provider's UUID is unique in the database, including unmatched transfers.
             // Retries never replace the first payload or turn an unmatched transfer into a credit.
             $topup = AtmTopup::query()->createOrFirst(
-                ['provider' => 'gpmpay', 'provider_transaction_id' => strtolower($payload['id'])],
+                ['provider' => 'dvkpay', 'provider_transaction_id' => strtolower($payload['id'])],
                 [
                     'user_id' => null,
                     'gateway' => $payload['gateway'],

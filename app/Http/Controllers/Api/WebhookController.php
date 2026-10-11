@@ -16,11 +16,13 @@ class WebhookController extends Controller
 
     public function handle(SepayWebhookRequest $request): JsonResponse
     {
-        if (config('services.bank_deposit.provider') !== 'sepay') {
+        $payload = $request->validated();
+
+        if (! in_array(config('services.bank_deposit.provider'), ['sepay', 'both'], true)) {
             return response()->json(['success' => true, 'ignored' => true, 'reason' => 'provider_disabled']);
         }
 
-        $result = $this->sepay->process($request->validated());
+        $result = $this->sepay->process($payload);
 
         if (! $result['created']) {
             return response()->json([

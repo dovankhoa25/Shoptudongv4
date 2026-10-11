@@ -40,7 +40,8 @@ class BankTopupCreditor
             'description' => 'Nạp tiền qua '.$topup->gateway.' - atm #'.$topup->provider_transaction_id.'.',
             'related_type' => AtmTopup::class,
             'related_id' => (string) $topup->id,
-            'idempotency_key' => $topup->provider.':'.$topup->provider_transaction_id,
+            // The source label can change; the existing payment identity must remain stable.
+            'idempotency_key' => ($topup->provider === 'dvkpay' ? 'gpmpay' : $topup->provider).':'.$topup->provider_transaction_id,
             'metadata' => [
                 'gateway' => $topup->gateway,
                 'reference_code' => $topup->reference_code,
