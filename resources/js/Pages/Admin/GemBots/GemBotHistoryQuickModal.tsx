@@ -36,7 +36,7 @@ interface GemBotHistoryQuickModalProps {
 const FIELD_LABELS: Record<string, string> = {
     name: 'Tên',
     type: 'Loại',
-    status: 'Trạng thái',
+    status: 'Bật trên web',
     server_id: 'Server ID',
     server_game_id: 'Login ID',
     map_id: 'Map ID',
@@ -44,6 +44,9 @@ const FIELD_LABELS: Record<string, string> = {
     area_number: 'Khu vực',
     coordinates: 'Tọa độ',
     gem_qty: 'Số ngọc',
+    gift_ticket_qty: 'Vé ngọc',
+    consign_item_qty: 'Đồ ký giao dịch được',
+    stock_version: 'Phiên bản tồn',
     proxy: 'Proxy',
     account_name: 'Tài khoản',
     updated_by: 'Cập nhật bởi',
@@ -76,8 +79,9 @@ const SOURCE_CONFIG: Record<string, {
 
 const formatValue = (key: string, value: any): string => {
     if (value === null || value === undefined) return '(trống)';
-    if (key === 'status' || key === 'is_active') return value ? 'Hoạt động' : 'Tạm dừng';
-    if (key === 'gem_qty' || key === 'price')
+    if (key === 'status') return value ? 'Bật trên web' : 'Tắt trên web';
+    if (key === 'is_active') return value ? 'Hoạt động' : 'Tạm dừng';
+    if (['gem_qty', 'gift_ticket_qty', 'consign_item_qty', 'stock_version', 'price'].includes(key))
         return new Intl.NumberFormat('vi-VN').format(Number(value));
     if (key === 'account_password') return '***';
     return String(value);

@@ -255,11 +255,15 @@ class GemPriceController extends Controller
 
         $deliveryMethod = $validated['delivery_method'] ?? 'consignment';
         $multiplier = $gemPrice->multiplierFor($deliveryMethod);
-        $gems = $gemPrice->calculateGems($validated['vnd_amount'], $deliveryMethod);
+        $quote = $gemPrice->quoteOrder((int) $validated['vnd_amount'], $deliveryMethod);
 
         return response()->json([
             'vnd_amount' => $validated['vnd_amount'],
-            'gems' => $gems,
+            'gems' => $quote['gem_qty'],
+            'requested_amount' => $quote['requested_amount'],
+            'charged_amount' => $quote['charged_amount'],
+            'unused_amount' => $quote['unused_amount'],
+            'ticket_qty' => $quote['ticket_qty'],
             'multiplier' => $multiplier,
             'multiplier_display' => $deliveryMethod === 'consignment'
                 ? $gemPrice->multiplier_display

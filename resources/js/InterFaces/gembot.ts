@@ -12,6 +12,8 @@ export interface IGemBot {
     gem_qty: number;
     gift_ticket_qty?: number | null;
     consign_item_qty?: number | null;
+    gift_available_gems?: number;
+    gift_unreserved_gems?: number;
     server_game_id: number;
     gem_qty_formatted: string;
     map_info: {

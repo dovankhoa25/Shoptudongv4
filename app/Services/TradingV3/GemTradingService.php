@@ -7,7 +7,8 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 class GemTradingService {
     public function updateBot(int $id, array $d): GemBot {
-        $bot=DB::transaction(function() use($id,$d) {
+        $visibilityChanged=$d['action']!=='lease';
+        $bot=DB::transaction(function() use($id,$d,&$visibilityChanged) {
             $bot=GemBot::whereKey($id)->lockForUpdate()->firstOrFail();
             if($d['action']==='lease') {
                 abort_unless($bot->status && $bot->server?->status,409,'Bot or server is disabled.');
@@ -15,7 +16,9 @@ class GemTradingService {
                 abort_if(GemTransaction::where('bot_id',$id)->where('status','processing')->where(fn($q)=>$q->whereNull('processing_version')->orWhere('processing_version',2))->exists(),409,'Tool v2 has an unfinished order on this bot.');
                 abort_if(GemTransaction::where('bot_id',$id)->where('status','processing')
                     ->whereNotNull('processing_owner')->where('processing_owner','!=',$d['worker_id'])->exists(),409,'Another worker has an unfinished order.');
-                $bot->forceFill(['v3_worker_id'=>$d['worker_id'],'v3_lease_until'=>now()->addSeconds(config('trading_v3.lease_seconds'))])->save();
+                $leaseUntil=now()->addSeconds(config('trading_v3.lease_seconds'));
+                $visibilityChanged=!$bot->v3_worker_id || !$bot->v3_lease_until?->isFuture() || $leaseUntil->lt($bot->v3_lease_until);
+                $bot->forceFill(['v3_worker_id'=>$d['worker_id'],'v3_lease_until'=>$leaseUntil])->save();
             } else {
                 $this->assertOwner($bot,$d['worker_id']);
                 if($d['action']==='release') {
@@ -28,7 +31,7 @@ class GemTradingService {
             }
             return $bot->fresh('server');
         },3);
-        ApiCache::clearGroups(['public:gembot']);
+        if($visibilityChanged) ApiCache::clearGroups(['public:gembot','public:server-prices']);
         return $bot;
     }
     private function assertOwner(GemBot $bot,string $worker): void {

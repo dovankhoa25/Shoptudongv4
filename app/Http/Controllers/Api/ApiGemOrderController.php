@@ -260,14 +260,14 @@ class ApiGemOrderController extends Controller
         // ✅ Tính ngọc
         $deliveryMethod = $validated['delivery_method'] ?? 'consignment';
         $multiplier = $gemPrice->multiplierFor($deliveryMethod);
-        $moneyAmount = $validated['money_amount'];
+        $quote = $gemPrice->quoteOrder((int) $validated['money_amount'], $deliveryMethod);
+        $moneyAmount = $quote['charged_amount'];
+        $gemQtyTotal = $quote['gem_qty'];
 
-        $gemQtyTotal = $gemPrice->calculateOrderGems($moneyAmount, $deliveryMethod);
-
-        if ($deliveryMethod === 'gift_ticket' && ($gemQtyTotal <= 0 || $gemQtyTotal % 10 !== 0)) {
+        if ($deliveryMethod === 'gift_ticket' && $quote['ticket_qty'] <= 0) {
             return response()->json([
                 'success' => false,
-                'message' => 'Mỗi vé tặng 10 ngọc. Vui lòng chọn số tiền nhận số ngọc là bội của 10.',
+                'message' => 'Số tiền chưa đủ mua một vé tặng 10 ngọc.',
             ], 422);
         }
 
@@ -355,6 +355,7 @@ class ApiGemOrderController extends Controller
                 'user_id' => $user->id,
                 'server_id' => $validated['server_id'],
                 'character_name' => $characterName,
+                // Store the actual debit so cancellations/refunds return the correct amount.
                 'amount_vnd' => $moneyAmount,
                 'gem_qty' => $gemQtyTotal,
                 'delivery_method' => $deliveryMethod,
@@ -381,6 +382,11 @@ class ApiGemOrderController extends Controller
                     'server_id' => $order->server_id,
                     'character_name' => $order->character_name,
                     'gem_qty' => (int) $order->gem_qty,
+                    'delivery_method' => $deliveryMethod,
+                    'requested_amount' => $quote['requested_amount'],
+                    'charged_amount' => $moneyAmount,
+                    'unused_amount' => $quote['unused_amount'],
+                    'ticket_qty' => $quote['ticket_qty'],
                 ],
             );
 
@@ -395,6 +401,11 @@ class ApiGemOrderController extends Controller
                     'server_id' => $order->server_id,
                     'character_name' => $order->character_name,
                     'amount_vnd' => $order->amount_vnd,
+                    'requested_amount' => $quote['requested_amount'],
+                    'charged_amount' => $moneyAmount,
+                    'unused_amount' => $quote['unused_amount'],
+                    'ticket_qty' => $quote['ticket_qty'],
+                    'balance_after' => $balanceAfter,
                     'gem_qty' => $order->gem_qty,
                     'delivery_method' => $order->delivery_method,
                     'bot_id' => $order->bot_id,

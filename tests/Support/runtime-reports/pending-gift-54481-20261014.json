@@ -1,0 +1,95 @@
+{
+  "recorded_utc": "2026-10-13T22:51:55.4947194+00:00",
+  "diagnostic": "GET only; no login, claim, lease, release, stock update or order mutation.",
+  "clock_correction_seconds": -257,
+  "bot": {
+    "id": 9975,
+    "name": "q3wrf",
+    "status": true,
+    "server_id": 2,
+    "server_login_id": 2,
+    "server_enabled": true,
+    "server_name": "2 sao",
+    "map_id": 84,
+    "area_number": 1,
+    "coordinates": "652-336",
+    "gem_qty": 530950,
+    "gift_ticket_qty": 16286,
+    "consign_item_qty": 4,
+    "stock_version": 6,
+    "last_synced_at": "2026-10-13T22:29:50Z",
+    "has_worker": true,
+    "v3_lease_until": "2026-10-13T22:48:57Z"
+  },
+  "orders": [
+    {
+      "source": "detail",
+      "order": {
+        "id": 54484,
+        "bot_id": 9975,
+        "server_id": 2,
+        "character_name": "xmvwjjfsz",
+        "character_id": 14998590,
+        "gem_qty": 120,
+        "delivery_method": "gift_ticket",
+        "status": "completed",
+        "delivery_phase": "completed",
+        "processing_version": 3,
+        "has_owner": true,
+        "owner_matches_bot_worker": true,
+        "delivery_data_keys": [
+          "claim",
+          "last_step_id"
+        ],
+        "delivered_gem_qty": 120,
+        "bot_gem_spent_qty": 120,
+        "tickets_used_qty": 12,
+        "created_at": "2026-10-13T22:28:36Z",
+        "completed_at": "2026-10-13T22:29:50Z"
+      }
+    }
+  ],
+  "requests": [
+    {
+      "round": 1,
+      "route": "gem/bots",
+      "status": 200,
+      "duration_ms": 368.6,
+      "data_count": 49,
+      "response_size": 26156
+    },
+    {
+      "round": 1,
+      "route": "gem-transactions",
+      "status": 200,
+      "duration_ms": 143.7,
+      "data_count": 0,
+      "response_size": 26
+    },
+    {
+      "round": 1,
+      "route": "gem-transactions",
+      "status": 200,
+      "duration_ms": 134.1,
+      "data_count": 0,
+      "response_size": 26
+    },
+    {
+      "round": 1,
+      "route": "gem-transactions/54481",
+      "status": 403,
+      "duration_ms": 138.1,
+      "data_count": null,
+      "response_size": 53
+    },
+    {
+      "round": 1,
+      "route": "gem-transactions/54484",
+      "status": 200,
+      "duration_ms": 153.7,
+      "data_count": 18,
+      "response_size": 667
+    }
+  ],
+  "failure": "API rejected or returned an invalid response."
+}

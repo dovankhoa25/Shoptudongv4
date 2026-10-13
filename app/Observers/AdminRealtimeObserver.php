@@ -3,9 +3,12 @@
 namespace App\Observers;
 
 use App\Models\AtmTopup;
+use App\Models\Bot;
 use App\Models\Card;
 use App\Models\CarotRecharge;
 use App\Models\GemTransaction;
+use App\Models\GemBot;
+use App\Models\GemPrice;
 use App\Models\GoldTransaction;
 use App\Models\Import;
 use App\Models\NickOrder;
@@ -37,6 +40,17 @@ class AdminRealtimeObserver implements ShouldHandleEventsAfterCommit
     {
         if(array_diff(array_keys($model->getChanges()),['updated_at'])===[])return;
 
+        // A worker renews its lease often. Refresh stock/configuration only when the
+        // durable values shown on the page change, not on leases or sync timestamps.
+        if (($model instanceof Bot || $model instanceof GemBot) && !$model->wasChanged([
+            'name', 'account_name', 'account_password', 'type', 'server_id', 'server_game_id',
+            'gold_qty', 'gold_bar_qty', 'gem_qty', 'gift_ticket_qty', 'consign_item_qty',
+            'map_name', 'map_id', 'area_number', 'coordinates', 'proxy', 'status',
+        ])) return;
+        if ($model instanceof GemPrice && !$model->wasChanged([
+            'server_id', 'multiplier', 'gift_ticket_multiplier', 'min_amount', 'status',
+        ])) return;
+
         $this->notify($model, $model->wasChanged('status') ? 'status_updated' : 'updated');
     }
 
@@ -54,7 +68,7 @@ class AdminRealtimeObserver implements ShouldHandleEventsAfterCommit
         }
 
         $status = $model->getAttribute('status');
-        $status = is_scalar($status) ? (string) $status : null;
+        $status = is_bool($status) ? ($status ? '1' : '0') : (is_scalar($status) ? (string) $status : null);
         $resourceId = $model->getKey();
 
         if (! is_int($resourceId) && ! is_string($resourceId)) {
@@ -75,6 +89,9 @@ class AdminRealtimeObserver implements ShouldHandleEventsAfterCommit
     private function resource(Model $model): ?string
     {
         return match (true) {
+            $model instanceof Bot => 'gold_bot',
+            $model instanceof GemBot => 'gem_bot',
+            $model instanceof GemPrice => 'gem_price',
             $model instanceof GoldTransaction => $model->type === GoldTransaction::TYPE_IMPORT
                 ? 'gold_import'
                 : 'gold_order',
@@ -96,6 +113,9 @@ class AdminRealtimeObserver implements ShouldHandleEventsAfterCommit
     private function label(string $resource): string
     {
         return match ($resource) {
+            'gold_bot' => 'Bot vàng',
+            'gem_bot' => 'Bot ngọc',
+            'gem_price' => 'Giá ngọc',
             'gold_order', 'legacy_gold_order' => 'Đơn vàng',
             'gold_import', 'legacy_gold_import' => 'Đơn nhập vàng',
             'gem_order' => 'Đơn ngọc',
@@ -114,6 +134,8 @@ class AdminRealtimeObserver implements ShouldHandleEventsAfterCommit
     private function statusLabel(?string $status): string
     {
         return match ($status) {
+            '1' => 'bật',
+            '0' => 'tắt',
             'pending' => 'đang chờ',
             'approved' => 'đã nhận',
             'processing' => 'đang xử lý',

@@ -40,7 +40,7 @@ interface BotHistoryQuickModalProps {
 const FIELD_LABELS: Record<string, string> = {
     name: 'Tên',
     type: 'Loại',
-    status: 'Trạng thái',
+    status: 'Bật trên web',
     server_id: 'Server ID',
     server_game_id: 'Login ID',
     map_id: 'Map ID',
@@ -79,7 +79,7 @@ const SOURCE_CONFIG: Record<string, {
 
 const formatValue = (key: string, value: any): string => {
     if (value === null || value === undefined) return '(trống)';
-    if (key === 'status') return value ? 'Hoạt động' : 'Tạm dừng';
+    if (key === 'status') return value ? 'Bật trên web' : 'Tắt trên web';
     if (key === 'gold_qty' || key === 'gold_bar_qty')
         return new Intl.NumberFormat('vi-VN').format(Number(value));
     if (key === 'account_password') return '***';

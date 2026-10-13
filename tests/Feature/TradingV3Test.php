@@ -6,13 +6,16 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Str;
 use Tests\TestCase;
+use Tests\Concerns\QueuesTradingBotActivity;
 class TradingV3Test extends TestCase {
     use RefreshDatabase;
+    use QueuesTradingBotActivity;
     private string $worker='00000000-0000-4000-8000-000000000001';
     private string $secret='test-only-secret-with-at-least-32-characters';
     protected function setUp(): void {
         parent::setUp();config()->set('trading_v3',require base_path('config/trading_v3.php'));config()->set('trading_v3.enabled',true);config()->set('trading_v3.hmac_secret',$this->secret);
         config()->set('services.app_api_key','legacy-test');Event::fake();
+        $this->fakeTradingActivityQueue();
     }
     private function callSigned(string $method,string $path,array $data=[],?array $headers=null) {
         $body=in_array($method,['GET','HEAD'])?'':json_encode($data);
@@ -107,9 +110,13 @@ class TradingV3Test extends TestCase {
         $p['character_name']='buyer2';$p['money_amount']=50000;
         $this->postJson('/api/gem/orders',$p)->assertConflict();
         $this->assertSame(90000,(int)$user->fresh()->balance);$this->assertDatabaseCount('gem_transactions',1);
-        $p['money_amount']=11000;$this->postJson('/api/gem/orders',$p)->assertUnprocessable();
+        $p['money_amount']=9999;$this->postJson('/api/gem/orders',$p)->assertUnprocessable();
         $this->assertSame(90000,(int)$user->fresh()->balance);
         $this->getJson('/api/bots/overview')->assertJsonPath('data.gem_selling.0.gift_ticket_qty',10)->assertJsonPath('data.gem_selling.0.gift_available_gems',80);
+        $p['money_amount']=11000;$this->postJson('/api/gem/orders',$p)->assertCreated()
+            ->assertJsonPath('data.gem_qty',20)->assertJsonPath('data.charged_amount',10000)->assertJsonPath('data.unused_amount',1000);
+        $this->assertSame(80000,(int)$user->fresh()->balance);
+        $this->assertSame(60,\App\Services\TradingV3\GemStock::giftCapacity($b->fresh()));
     }
     public function test_v2_can_resume_an_idle_released_bot_but_cannot_touch_v3_work(): void {
         $b=$this->bot();$this->lease($b);$o=$this->order($b,'consignment');
@@ -153,14 +160,17 @@ class TradingV3Test extends TestCase {
     public function test_activity_is_an_event_and_does_not_change_database_bot(): void {
         $b=$this->bot();$this->lease($b);$before=$b->refresh()->getAttributes();
         $this->callSigned('POST',"/app/v3/gem/bots/{$b->id}/activity",['worker_id'=>$this->worker,'code'=>'travelling','map_id'=>1,'zone'=>2,'x'=>100,'y'=>200])->assertOk();
+        $this->runQueuedTradingActivities();
         $this->assertSame($before,$b->refresh()->getAttributes());
         Event::assertDispatched(TradingBotActivity::class,fn($e)=>$e->activity['code']==='travelling' && $e->activity['map_id']===1);
         $this->callSigned('POST',"/app/v3/gem/bots/{$b->id}/activity",['worker_id'=>$this->worker,'code'=>'paused','online_seconds'=>0])->assertOk();
+        $this->runQueuedTradingActivities();
         $this->assertSame($before,$b->refresh()->getAttributes());
         Event::assertDispatched(TradingBotActivity::class,fn($e)=>$e->activity['code']==='paused' && $e->activity['text']==='Đã tạm dừng Ngọc tại QLTK');
         $this->callSigned('POST',"/app/v3/gem/bots/{$b->id}/activity",['worker_id'=>$this->worker,'code'=>'reconciling','online_seconds'=>60])->assertOk();
+        $this->runQueuedTradingActivities();
         $this->assertSame($before,$b->refresh()->getAttributes());
-        Event::assertDispatched(TradingBotActivity::class,fn($e)=>$e->activity['code']==='reconciling' && $e->activity['text']==='Đang tự đối chiếu sau kết nối lại');
+        Event::assertDispatched(TradingBotActivity::class,fn($e)=>$e->activity['code']==='reconciling' && $e->activity['text']==='Đang đối chiếu tồn và giao dịch');
     }
     public function test_lost_done_response_can_be_acked_after_another_worker_leases_bot(): void {
         $b=$this->bot();$this->lease($b);$o=$this->order($b);$token=$this->claim($b,$o);

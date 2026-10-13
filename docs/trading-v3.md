@@ -20,7 +20,7 @@ Activity `paused` biểu thị module bị tạm dừng tại QLTK và chỉ g�
 
 `map_name`, `map_id`, `area_number`, `coordinates` là cấu hình web. Request tool cấm ghi những trường này, kể cả trong receipt snapshot. Tool đi đúng map/khu/tọa độ; vị trí quan sát thực gửi trong event Hoạt động.
 
-V2 tiếp tục nhận đơn ký gửi chưa thuộc v3. V2 không nhận đơn vé hoặc đơn v3, không sửa bot có lease v3/đơn v3 chưa xong. Dừng v3 khi rảnh sẽ release bot; khi mất mạng lease hết sau 90s. Đơn v3 chưa hoàn tất vẫn giữ owner và journal, cần đối soát trước khi đổi tool. Giữ DB/migration v3 khi quay về tool v2; không rollback schema đang có biên nhận.
+V2 tiếp tục nhận đơn ký gửi chưa thuộc v3. V2 không nhận đơn vé hoặc đơn v3, không sửa bot có lease v3/đơn v3 chưa xong. Dừng v3 khi rảnh sẽ release bot; khi mất mạng lease hết sau TTL được API xác nhận. API per-bot cũ vẫn dùng TTL 90s; heartbeat theo lô dùng chu kỳ người vận hành chọn cộng tối thiểu 60s (mặc định 150s → TTL 210s; 600s → TTL 660s). Đơn v3 chưa hoàn tất vẫn giữ owner và journal, cần đối soát trước khi đổi tool. Giữ DB/migration v3 khi quay về tool v2; không rollback schema đang có biên nhận.
 
 ## API
 
@@ -28,7 +28,9 @@ Root `/app/v3/`, tất cả yêu cầu HMAC, không dùng `APP_API_KEY` v2:
 
 | Method/path | Công việc |
 |---|---|
-| GET `config` | Khoảng chờ login 120s, tặng lại tối thiểu 10s, lease 90s |
+| GET `config` | Khoảng chờ login 120s, tặng lại tối thiểu 10s, capability batch và chu kỳ gia hạn mặc định 150s |
+| POST `heartbeat` | Gia hạn bot ngọc/vàng chung, tối đa một UPDATE cho mỗi bảng bot; ACK riêng từng bot |
+| POST `activities` | Hoạt động nhiều bot qua Redis/queue → Ably; không ghi trạng thái vào DB |
 | GET `servers/login` | Endpoint login từ DB |
 | GET `gem/bots` | Full bot + credentials cho tool đã xác thực |
 | PUT `gem/bots/{id}` | `action=lease`, `stock`, `release` |
@@ -45,6 +47,20 @@ Root `/app/v3/`, tất cả yêu cầu HMAC, không dùng `APP_API_KEY` v2:
 | GET `gold-transfers?worker_id=<uuid>` | Reservation chuyển nội bộ còn `claimed` của worker |
 | PUT `gold-transfers/{uuid}` | `action=claim`, `receipt`, `cancel`; UUID và điều khoản giữ nguyên khi retry |
 
+### Gia hạn theo lô và hoạt động realtime
+
+`POST heartbeat` nhận `worker_id`, `renewal_interval_seconds` (10–3.600 giây), `gem_bot_ids` và `gold_bot_ids` (tối đa 1.000 ID mỗi loại). Backend khóa hàng bot theo ID tăng dần, đọc server/endpoint/đơn/chuyển chưa hoàn tất theo nhóm, rồi cập nhật các ID hợp lệ bằng một câu UPDATE mỗi bảng. Không gọi lại service/resource từng bot, không sửa tồn, map/khu/tọa độ hoặc status của web, và không ghi lịch sử cho việc gia hạn. Đơn/receipt/DONE vẫn dùng API và ledger hiện có.
+
+Response gồm `server_time`, `renewal_interval_seconds`, `lease_seconds`, `gem_bots` và `gold_bots`. Mỗi ACK có `{id, granted, code, lease_until}`; bot hợp lệ có `code=renewed`. Các code từ chối gồm `disabled`, `server_disabled`, `login_invalid`, `not_found`, `owned_elsewhere`, `legacy_order`, `unfinished_order`, `unfinished_transfer`; một bot bị từ chối không làm thất bại cả lô. Từ chối không kéo dài lease, cũng không xóa owner của đơn/chuyển đang xử lý. Claim tiền mới vẫn cần lease hợp lệ; receipt của đúng owner tiếp tục đối soát được theo quy tắc trước đây.
+
+Gia hạn của cùng owner khi lease đang còn hạn và giữ nguyên/kéo dài TTL không xóa cache public. Nếu đổi chu kỳ ngắn hơn hoặc fallback sang endpoint cũ làm lease kết thúc sớm hơn, backend invalidate cache để tồn vé có thể mua không còn dựa trên TTL cũ. Acquisition sau khi lease hết hạn hoặc release/đổi tồn vẫn invalidate nhóm cần thiết. Cache public ngọc không sống lâu hơn lease sắp hết của bot trong cache. Danh sách vàng gom reservation/khả năng nhận theo cả danh sách (74 bot kiểm thử dùng 5 SELECT thay vì phát sinh truy vấn riêng mỗi bot).
+
+Chu kỳ gia hạn và chu kỳ hoạt động là hai phần độc lập: kéo gia hạn lên 10 phút không làm realtime chờ 10 phút. `POST activities` nhận `{worker_id, activities:[{bot_type, bot_id, code, map_id, zone, x, y, online_seconds, wait_seconds}]}`, tối đa 2.000 frame. `bot_type` là `gem_bot` hoặc `bot`. Response có `accepted_count`, kết quả `rejected` theo frame và `activity_delivered` theo khả năng tiếp nhận; ACK không chứng minh frontend đã nhận Ably. Hoạt động lưu tạm TTL 35s trong Redis, worker chỉ publish bản mới nhất còn hạn; API trả trước khi gọi Ably. Những endpoint activity riêng từng bot vẫn giữ và gửi hoạt động/thông báo khách bất đồng bộ.
+
+Cần Redis dùng chung và worker riêng `php artisan queue:work redis --queue=trading-activity`; `QUEUE_CONNECTION=sync` chung không được dùng cho luồng hoạt động này. Không dùng activity queue để lưu/gửi receipt tài chính. Redis/queue hoặc Ably lỗi không làm đổi status, tồn hay đơn; frame cũ hết hạn và tool gửi lại hoạt động mới.
+
+`NRO_TRADING_V3_RENEWAL_INTERVAL_SECONDS=150` cấu hình giá trị mặc định backend. QLTK có thể gửi giá trị riêng, ví dụ 600 để gia hạn 10 phút/lần. `NRO_TRADING_V3_ACTIVITY_QUEUE_CONNECTION=redis`, `NRO_TRADING_V3_ACTIVITY_QUEUE=trading-activity`, `NRO_TRADING_V3_ACTIVITY_CACHE_STORE=redis` chọn queue/cache dùng chung riêng cho hoạt động. Bản backend cũ không có capability batch vẫn nhận các endpoint per-bot trước đây; tool phải giữ chu kỳ cũ khi fallback, không áp chu kỳ dài cho lease 90s.
+
 Claim khóa bot rồi khóa đơn trong DB transaction, kiểm tra server/owner/lease/tồn và đóng băng tên, số ngọc, cách giao. Phase giữ character ID và kế hoạch món đồ. Phase có `step_id` được ACK idempotent; không thể tự đánh dấu trang bị đã giao thành công qua phase.
 
 Receipt cần `worker_id`, `bot_id`, `processing_token`, UUID `step_id`, `character_id`, delta ngọc/vé, `completed`, `evidence.kind` + `confirmed=true`, `bot_snapshot` với version mới và số ngọc xanh/vé/đồ ký gửi. Snapshot phải khớp delta dự kiến; receipt giao đồ chỉ giảm một món, mua ký gửi tăng một món, tặng vé giữ số món.
@@ -53,7 +69,7 @@ API xử lý đơn và tồn bot trong cùng transaction, trả `ack_id=step_id`
 
 Nếu DONE đã commit nhưng response mất và bot đã được worker khác thuê, owner gốc vẫn gửi lại frozen receipt để nhận ACK. Nhánh này chỉ đọc ledger đã commit, không thay tồn hay lease của worker mới.
 
-API mua web `/api/gem/orders` nhận `delivery_method` optional; mặc định ký gửi. Vé yêu cầu số ngọc bội 10, bot v3 đang giữ lease và đủ tồn khả dụng sau khi trừ các đơn đã dành cho bot. Không đủ tồn hoặc sai số lượng thì không trừ tiền user. Không tự làm tròn/thu tiền đơn vé không hợp lệ.
+API mua web `/api/gem/orders` nhận `delivery_method` optional; mặc định ký gửi. Báo giá vé lấy số vé nguyên theo tiền khách nhập, mỗi vé tương ứng 10 ngọc, rồi chỉ trừ tiền tương ứng với số vé đó. Bot v3 cần giữ lease và đủ tồn khả dụng sau khi trừ các đơn đã dành cho bot. Không đủ tồn thì không trừ tiền user. Xem `docs/gem-ticket-pricing.md` để biết công thức tiền thực trừ và phần dư.
 
 ## Vàng và kho phụ
 
@@ -98,12 +114,26 @@ Admin gem bots có vé/đồ/Hoạt động/thời gian online. Admin đơn ng�
 
 Admin bot vàng có Hoạt động/thời gian online; đơn bán/nhập có phase, tiến độ thỏi/vàng tươi và số còn lại. Các resource public chỉ trả tiến độ hiển thị, không trả owner/token hoặc intent nội bộ.
 
+### Admin v3 cập nhật ngày 2026-10-14
+
+- Danh sách và trang chi tiết bot ngọc/vàng nhận tồn, cấu hình và thống kê qua AdminLive private sau khi transaction commit. Danh sách giá ngọc nhận thay đổi giá theo cùng luồng. Các quyền admin, bộ lọc và phân trang hiện có vẫn áp dụng; cập nhật lease hoặc snapshot tồn không đổi không phát lại toàn bộ bảng.
+- Tồn bot ngọc gồm ngọc xanh, vé và đồ ký giao dịch được. `gift_unreserved_gems` là khả năng tặng từ tồn chưa giữ chỗ, lấy mức nhỏ hơn giữa ngọc xanh và số vé quy đổi sau reservation; đây không phải cam kết bot đang online. Tạo/đổi/hủy đơn ngọc cũng cập nhật phần tồn chưa giữ chỗ. API public tiếp tục kiểm tra status, v3 enabled và lease khi báo số ngọc có thể mua.
+- Hoạt động, vị trí thực và thời gian online chỉ lấy từ event `TradingBotActivity` trong RAM, hết hiệu lực sau 35 giây. `status` hiển thị “Bật/Tắt trên web”; map/khu/tọa độ trong form là điểm đứng cấu hình, không bị activity ghi đè. Public event không chứa worker, mã đơn, tên khách, mật khẩu hoặc tin nhắn riêng.
+- Form sửa bot hiển thị tồn mới nhất chỉ để đọc; lưu tên, proxy, điểm đứng hoặc status không gửi lại tồn cũ. Backend bỏ qua field tồn không được gửi và đọc lại bot dưới khóa trước khi ghi lịch sử. Cập nhật realtime không xóa phần cấu hình admin đang nhập. Mật khẩu đang lưu không trả vào form; bỏ trống giữ nguyên mật khẩu.
+- Đơn ngọc hiển thị cách nhận, bot, phase, số ngọc đã chi/thực nhận và số vé đã dùng. Đơn vàng giữ tiến độ thỏi/vàng tươi. Receipt/DONE và tồn là dữ liệu lưu DB; hoạt động không được dùng để tự hoàn tất đơn.
+
+Phần admin này không thêm migration hoặc biến môi trường. Cần đưa source PHP và toàn bộ `public/build` được tạo bởi `npm run build` lên cùng bản phát hành; chạy lại `php artisan queue:restart` cho worker dài hạn đang dùng source cũ. Schema v3/giá vé và cấu hình Ably đã yêu cầu ở các phần triển khai vẫn phải có. Kiểm thử SQLite và preview dữ liệu giả trên localhost không xác nhận Ably hay DB production.
+
+Validation local: 110 test/1.119 assertions về AdminLive, tồn/receipt/đơn, cấu hình bot và giá vé đạt; 2 test/3 assertions phân quyền kênh admin đạt khi chạy riêng với key giả. 16 test frontend về fallback HTTP và vòng đời activity đạt. `npm run build` (TypeScript + Vite) đạt. Preview dùng component thật với dữ liệu giả: giá vé/fallback, tồn đổi không reset form, payload sửa bot không gửi tồn/mật khẩu, tiến độ ký gửi/vé và activity hết hạn đều được kiểm tra. Không deploy hoặc thay DB/.env vận hành trong lượt này.
+
 ## Deploy
+
+Cập nhật batch/config/vé ngày 14/10/2026: backend 108 test/1.247 assertions SQLite đạt; QLTK thường và NativeAOT bảo vệ cùng đạt 268 checks. Vé gửi đúng ba packet theo protocol, cách ít nhất 1,5s, nhận đúng form/menu mới và giữ TCP; đây là kiểm tra loopback, chưa tặng vé thật trên SV6 trong lượt này. Kiểm tra bổ sung gồm OFF → ON toàn bộ bot từ web với chu kỳ 600s và snapshot GET cũ không ghi đè receipt ACK mới. Luồng receipt/DONE lưu bền giữ nguyên. Không thêm migration cho phần batch; không thay DB/.env vận hành trong lượt phát triển này.
 
 1. Chạy migration bổ sung trước khi đưa controller/resource mới vào phục vụ: `php artisan migrate --force`.
 2. Trong `.env` backend đặt `NRO_TRADING_V3_ENABLED=true`, `NRO_TRADING_V3_TOOL_ID=nro-trading-v3`, `NRO_TRADING_V3_HMAC_SECRET=<random-secret-at-least-32-characters>`; sinh secret mới, không dùng lại khóa v2. Đã bổ sung mẫu không có secret trong `.env.example`.
 3. Giữ cấu hình Ably hiện tại: `BROADCAST_CONNECTION=ably`, `ABLY_KEY`, `ABLY_PUBLIC_KEY`, `VITE_ABLY_PUBLIC_KEY` và cấu hình frontend Ably tương ứng. Đảm bảo quyền publish backend/subscribe public và private auth hiện có.
-4. `php artisan config:cache`, `php artisan route:cache`, `php artisan queue:restart`; build asset admin/frontend sau khi deploy source.
+4. `php artisan config:cache`, `php artisan route:cache`, `php artisan queue:restart`; build asset admin/frontend sau khi deploy source. Chạy worker Redis riêng cho queue `trading-activity` và giữ worker này bằng process manager hiện có; nếu worker không chạy, hoạt động realtime hết hạn nhưng luồng đơn/tồn không bị chuyển sang queue này.
 5. Nhập API URL/HMAC trên QLTK hoặc dùng env trong README. Kiểm tra endpoint login/map/khu/tọa độ/proxy trên web, bắt đầu với một bot test.
 
 Vàng dùng cùng migration, HMAC và các biến v3 ở trên; không cần secret hoặc bảng job riêng. Kiểm tra role CSV và tồn túi thực tế trước khi bật, giữ cấu hình server/status/điểm đứng/proxy do web quản lý.

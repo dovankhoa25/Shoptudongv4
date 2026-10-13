@@ -7,6 +7,7 @@ import type { IGemOrder } from '@/InterFaces/gemorder';
 import type { PageProps } from '@/types';
 import RefundModal from './RefundModal';
 import StatusUpdateModal from './StatusUpdateModal';
+import GemDeliveryProgress from '@/Components/GemDeliveryProgress';
 
 interface Props extends PageProps {
     order: IGemOrder | { data: IGemOrder };
@@ -22,9 +23,11 @@ export default function GemOrderShow() {
         ['Khách hàng', `${order.user.username} (${order.user.email})`, User],
         ['Server', order.server.name, Server],
         ['Nhân vật', order.character_name, User],
-        ['Số tiền', order.amount_vnd_formatted, Gem],
-        ['Số ngọc', order.gem_qty_formatted, Gem],
-        ['Hệ số giao dịch', order.price_formatted, Gem],
+        ['Tiền thực trừ', order.amount_vnd_formatted, Gem],
+        ['Ngọc của đơn', `${order.gem_qty_formatted} ngọc`, Gem],
+        ['Cách nhận ngọc', order.delivery_method_label ?? (order.delivery_method === 'gift_ticket' ? 'Vé tặng ngọc' : 'Đồ ký gửi'), Gem],
+        ['Bot xử lý', order.bot_id ? `Bot #${order.bot_id}${order.processing_version === 3 ? ' · Tool v3' : ''}` : 'Chưa chọn bot', RefreshCw],
+        ['Hệ số giao dịch', order.multiplier_display ?? `x${order.price_at_transaction}`, Gem],
         ['Nguồn cập nhật', order.updated_by === 'app' ? 'Ứng dụng bot' : 'Website/Admin', RefreshCw],
         ['Cập nhật gần nhất', order.last_synced_at ?? 'Chưa đồng bộ', Clock],
         ['Bắt đầu hủy quá hạn', order.cancel_requested_at ?? 'Không có', Clock],
@@ -64,9 +67,13 @@ export default function GemOrderShow() {
                         type="warning"
                         showIcon
                         message="Đơn đang được bot xử lý"
-                        description="Job tự động sẽ không hủy hoặc hoàn đơn này. Nếu giao dịch không thể tiếp tục, admin cần kiểm tra rồi dùng nút Hoàn tiền."
+                        description={order.processing_version === 3
+                            ? 'Tool lưu tiến độ và tự đối chiếu trước khi tiếp tục. Trang cập nhật theo kết quả tool gửi về.'
+                            : 'Job tự động không hủy hoặc hoàn đơn đang xử lý. Admin cần kiểm tra kết quả trước khi hoàn tiền.'}
                     />
                 )}
+
+                {order.processing_version === 3 && <GemDeliveryProgress order={order} />}
 
                 {order.is_timeout_cancellation && (
                     <Alert

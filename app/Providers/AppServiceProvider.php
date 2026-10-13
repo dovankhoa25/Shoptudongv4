@@ -5,9 +5,12 @@ namespace App\Providers;
 use App\Listeners\RecordAccessTokenCreated;
 use App\Listeners\RecordAccessTokenRevoked;
 use App\Models\AtmTopup;
+use App\Models\Bot;
 use App\Models\Card;
 use App\Models\CarotRecharge;
 use App\Models\GemTransaction;
+use App\Models\GemBot;
+use App\Models\GemPrice;
 use App\Models\GoldTransaction;
 use App\Models\Import;
 use App\Models\NickOrder;
@@ -67,6 +70,9 @@ class AppServiceProvider extends ServiceProvider
         ]);
 
         foreach ([
+            Bot::class,
+            GemBot::class,
+            GemPrice::class,
             GoldTransaction::class,
             GemTransaction::class,
             ServiceOrder::class,

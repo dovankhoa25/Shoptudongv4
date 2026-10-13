@@ -210,7 +210,7 @@ export default function GemBotPage() {
         },
         {
             key: 'map_info',
-            title: 'Vị trí',
+            title: 'Điểm đứng cấu hình',
             width: 180,
             render: (mapInfo: any, record: IGemBot) => (
                 <div className="text-sm">
@@ -240,7 +240,7 @@ export default function GemBotPage() {
         },
         {
             key: 'gem_qty_formatted',
-            title: 'Số ngọc',
+            title: 'Ngọc xanh',
             width: 140,
             align: 'right',
             sortable: true,
@@ -260,10 +260,10 @@ export default function GemBotPage() {
         },
         {
             key: 'gift_ticket_qty', title: 'Vé ngọc', width: 100, align: 'right',
-            render: (qty: number | null) => qty == null ? 'Chưa đồng bộ' : qty.toLocaleString('vi-VN'),
+            render: (qty: number | null, record: IGemBot) => qty == null ? 'Chưa đồng bộ' : <div><strong>{Number(qty).toLocaleString('vi-VN')}</strong><div className="text-[11px] text-purple-600">Chưa giữ {Number(record.gift_unreserved_gems ?? 0).toLocaleString('vi-VN')} ngọc</div></div>,
         },
         {
-            key: 'consign_item_qty', title: 'Đồ ký gửi', width: 110, align: 'right',
+            key: 'consign_item_qty', title: 'Đồ ký giao dịch', width: 110, align: 'right',
             render: (qty: number | null) => qty == null ? 'Chưa đồng bộ' : qty.toLocaleString('vi-VN'),
         },
         {
@@ -293,12 +293,12 @@ export default function GemBotPage() {
         },
         {
             key: 'status_label',
-            title: 'Trạng thái',
+            title: 'Bật trên web',
             width: 120,
             align: 'center',
             filters: [
-                { text: '✅ Hoạt động', value: true },
-                { text: '⏸️ Tạm dừng', value: false },
+                { text: '✅ Bật trên web', value: true },
+                { text: '⏸️ Tắt trên web', value: false },
             ],
             render: (statusLabel: string, record: IGemBot) => {
                 const statusConfig = {
@@ -319,7 +319,7 @@ export default function GemBotPage() {
                 return (
                     <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${config.color}`}>
                         <span className={`w-2 h-2 rounded-full mr-1.5 ${config.dot}`}></span>
-                        {statusLabel}
+                        {record.status ? 'ON' : 'OFF'}
                     </span>
                 );
             },
@@ -371,11 +371,11 @@ export default function GemBotPage() {
         {
             key: 'status',
             type: 'select' as const,
-            label: 'Trạng thái',
+            label: 'Bật trên web',
             options: [
                 // { label: 'Tất cả', value: '' },
-                { label: 'Hoạt động', value: '1' },
-                { label: 'Tạm dừng', value: '0' }
+                { label: 'Bật trên web', value: '1' },
+                { label: 'Tắt trên web', value: '0' }
             ],
             value: currentFilters.status?.toString() || ''
         },
@@ -434,7 +434,7 @@ export default function GemBotPage() {
                         <div className="flex items-center gap-3">
                             <Sparkles className="w-8 h-8 text-green-500" />
                             <div>
-                                <p className="text-sm text-green-600 font-medium">Bot hoạt động</p>
+                                <p className="text-sm text-green-600 font-medium">Bot bật trên web</p>
                                 <p className="text-2xl font-bold text-green-700">{stats.active_bots}</p>
                             </div>
                         </div>
@@ -507,7 +507,7 @@ export default function GemBotPage() {
             <GemBotModal
                 open={modalOpen}
                 onClose={handleCloseModal}
-                gemBot={selectedGemBot}
+                gemBot={selectedGemBot ? gemBots.data.find(bot => bot.id === selectedGemBot.id) ?? selectedGemBot : null}
                 servers={servers}
                 logins={logins}
             />

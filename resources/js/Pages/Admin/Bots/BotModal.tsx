@@ -1,5 +1,5 @@
 // Admin/Bots/BotModal.tsx - Updated for multiple types
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { router } from "@inertiajs/react";
 import {
     Modal, Form, Input, InputNumber, Switch, Button,
@@ -45,9 +45,13 @@ export default function BotModal({ open, onClose, bot, servers, logins }: BotMod
     const [form] = Form.useForm<FormData>();
     const [loading, setLoading] = useState(false);
     const toast = useToast();
+    const initializedFor = useRef<string | null>(null);
 
     // Initialize form data
     useEffect(() => {
+        const formKey = open ? String(bot?.id ?? 'new') : null;
+        if (initializedFor.current === formKey) return;
+        initializedFor.current = formKey;
         if (open) {
             if (bot) {
                 // Edit mode - populate form with bot data
@@ -57,7 +61,7 @@ export default function BotModal({ open, onClose, bot, servers, logins }: BotMod
                 form.setFieldsValue({
                     name: bot.name || '',
                     account_name: bot.account_name,
-                    account_password: bot.account_password,
+                    account_password: '',
                     types: typesArray, // Use array
                     server_id: bot.server_id,
                     server_game_id: bot.server_game_id,
@@ -91,12 +95,11 @@ export default function BotModal({ open, onClose, bot, servers, logins }: BotMod
         const submitData = {
             name: values.name?.trim() || null,
             account_name: values.account_name.trim(),
-            account_password: values.account_password?.trim() || '',
+            account_password: values.account_password?.trim() || undefined,
             type: typeString, // Send as comma-separated string
             server_id: values.server_id,
             server_game_id: values.server_game_id,
-            gold_bar_qty: values.gold_bar_qty || 0,
-            gold_qty: values.gold_qty || 0,
+            ...(!bot ? { gold_bar_qty: values.gold_bar_qty || 0, gold_qty: values.gold_qty || 0 } : {}),
             map_name: values.map_name?.trim() || null,
             map_id: values.map_id.trim(),
             area_number: values.area_number.trim(),
@@ -104,6 +107,8 @@ export default function BotModal({ open, onClose, bot, servers, logins }: BotMod
             proxy: values.proxy?.trim() || '',
             status: values.status,
         };
+
+        if (bot && !submitData.account_password) delete submitData.account_password;
 
         const url = bot ? `/admin/bots/${bot.id}` : '/admin/bots';
         const method = bot ? 'put' : 'post';
@@ -295,7 +300,7 @@ export default function BotModal({ open, onClose, bot, servers, logins }: BotMod
                             label={
                                 <Space>
                                     <EyeInvisibleOutlined />
-                                    <span>Mật khẩu tài khoản</span>
+                                    <span>{bot ? 'Mật khẩu mới (bỏ trống nếu không đổi)' : 'Mật khẩu tài khoản'}</span>
                                     {!bot && <span className="text-red-500">*</span>}
                                 </Space>
                             }
@@ -437,8 +442,8 @@ export default function BotModal({ open, onClose, bot, servers, logins }: BotMod
                     <Form.Item
                         label={
                             <Space>
-                                <span>Trạng thái hoạt động</span>
-                                <Tooltip title="Bot có thể hoạt động hay không">
+                                <span>Bật bot trên web</span>
+                                <Tooltip title="ON cho phép tool chạy bot. Hoạt động hiện tại hiển thị riêng qua realtime.">
                                     <InfoCircleOutlined className="text-gray-400" />
                                 </Tooltip>
                             </Space>
@@ -447,8 +452,8 @@ export default function BotModal({ open, onClose, bot, servers, logins }: BotMod
                         valuePropName="checked"
                     >
                         <Switch
-                            checkedChildren="Hoạt động"
-                            unCheckedChildren="Tạm dừng"
+                            checkedChildren="ON"
+                            unCheckedChildren="OFF"
                             className="bg-gray-200"
                         />
                     </Form.Item>
@@ -456,6 +461,15 @@ export default function BotModal({ open, onClose, bot, servers, logins }: BotMod
 
                 {/* Inventory Information */}
                 <Card title="Thông tin kho" className="mb-4" size="small">
+                    {bot ? (
+                        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/20">
+                            <div className="grid grid-cols-2 gap-3 text-sm">
+                                <div><p className="text-xs text-gray-500">Thỏi trong hành trang</p><strong>{Number(bot.gold_bar_qty || 0).toLocaleString('vi-VN')} / 999</strong></div>
+                                <div><p className="text-xs text-gray-500">Vàng tươi</p><strong>{Number(bot.gold_qty || 0).toLocaleString('vi-VN')}</strong></div>
+                            </div>
+                            <p className="mt-2 text-xs text-gray-500">Tồn được tool đồng bộ; lưu cấu hình giữ nguyên tồn trên web.</p>
+                        </div>
+                    ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {/* Gold Quantity */}
                         <Form.Item
@@ -553,10 +567,12 @@ export default function BotModal({ open, onClose, bot, servers, logins }: BotMod
                             />
                         </Form.Item>
                     </div>
+                    )}
                 </Card>
 
                 {/* Location Information */}
-                <Card title="Thông tin vị trí" className="mb-6" size="small">
+                <Card title="Điểm đứng được cấu hình" className="mb-6" size="small">
+                    <p className="mb-3 text-xs text-gray-500">Tool phải tới map, khu và tọa độ này. Vị trí thực tế hiển thị ở ô Hoạt động.</p>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {/* Map Name */}
                         <Form.Item

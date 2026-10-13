@@ -15,6 +15,7 @@ import { useToast } from "@/Components/ToastProvider";
 import { useTableFilters } from "@/Hooks/useTableFilters";
 import { IGemOrder } from '@/InterFaces/gemorder';
 import { IServer } from '@/InterFaces/server';
+import GemDeliveryProgress from '@/Components/GemDeliveryProgress';
 
 interface GemOrderFilters {
     search?: string;
@@ -228,7 +229,11 @@ export default function GemOrderPage() {
         },
         {
             key: 'delivery_method', title: 'Cách giao', width: 150,
-            render: (method: string, record: IGemOrder) => <div className="text-xs"><div>{method === 'gift_ticket' ? 'Vé tặng ngọc' : 'Đồ ký gửi'}</div>{record.bot_id && <div className="text-slate-500">Bot #{record.bot_id} · Đã chi {record.bot_gem_spent_qty ?? 0} ngọc</div>}{record.processing_version === 3 && <div className="text-blue-600">Tool v3 · {record.delivery_phase}</div>}</div>,
+            render: (method: string, record: IGemOrder) => <div className="space-y-1 text-xs"><div>{record.delivery_method_label ?? (method === 'gift_ticket' ? 'Vé tặng ngọc' : 'Đồ ký gửi')}</div>{record.bot_id && <div className="text-gray-500">Bot #{record.bot_id}</div>}{method === 'gift_ticket' && <div className="text-purple-700">{Math.floor(record.gem_qty / 10).toLocaleString('vi-VN')} vé cần tặng</div>}</div>,
+        },
+        {
+            key: 'delivery_phase', title: 'Tiến độ giao', width: 230,
+            render: (_: unknown, record: IGemOrder) => <GemDeliveryProgress order={record} />,
         },
         {
             key: 'character_name',
@@ -240,7 +245,7 @@ export default function GemOrderPage() {
         },
         {
             key: 'amount_vnd_formatted',
-            title: 'Số tiền',
+            title: 'Tiền đã trừ',
             width: 150,
             align: 'right',
             sortable: true,

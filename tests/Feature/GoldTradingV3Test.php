@@ -8,8 +8,10 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\{DB,Event};
 use Illuminate\Support\Str;
 use Tests\TestCase;
+use Tests\Concerns\QueuesTradingBotActivity;
 class GoldTradingV3Test extends TestCase {
     use RefreshDatabase;
+    use QueuesTradingBotActivity;
     private string $worker='00000000-0000-4000-8000-000000000101';
     private string $other='00000000-0000-4000-8000-000000000102';
     private string $secret='test-only-gold-secret-at-least-32-characters';
@@ -19,6 +21,7 @@ class GoldTradingV3Test extends TestCase {
         parent::setUp();config()->set('trading_v3',require base_path('config/trading_v3.php'));
         config()->set('trading_v3.enabled',true);config()->set('trading_v3.hmac_secret',$this->secret);
         config()->set('services.app_api_key','legacy-test');Event::fake();
+        $this->fakeTradingActivityQueue();
         $this->server=Server::create(['name'=>'business-test','status'=>true]);
         $this->loginId=(int)DB::table('server_game_login')->max('id')+1;
         DB::table('server_game_login')->insert(['id'=>$this->loginId,'name'=>'test-login','ip'=>'test.example','port'=>'14445']);
@@ -219,6 +222,7 @@ class GoldTradingV3Test extends TestCase {
     public function test_activity_is_transient_and_admin_cannot_complete_or_cancel_owned_orders(): void {
         $b=$this->bot();$this->lease($b);$o=$this->order($b);$this->claim($b,$o);$before=$b->refresh()->getAttributes();
         $this->signed('POST',"/app/v3/gold/bots/{$b->id}/activity",['worker_id'=>$this->worker,'code'=>'refilling','map_id'=>1,'zone'=>2])->assertOk();
+        $this->runQueuedTradingActivities();
         $this->assertSame($before,$b->refresh()->getAttributes());Event::assertDispatched(TradingBotActivity::class,fn($e)=>$e->activity['bot_type']==='bot' && $e->activity['code']==='refilling');
         \Spatie\Permission\Models\Role::findOrCreate('super-admin','web');$admin=User::factory()->create();$admin->assignRole('super-admin');$this->actingAs($admin);
         $this->put('/admin/orders/'.$o->id.'/status',['status'=>'completed'])->assertSessionHasErrors('status');

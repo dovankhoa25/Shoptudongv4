@@ -15,6 +15,9 @@ class GemPriceResource extends JsonResource
      */
     public function toArray($request)
     {
+        $ticketQuote = $this->resource->quoteOrder(10000, 'gift_ticket');
+        $consignmentQuote = $this->resource->quoteOrder(10000, 'consignment');
+
         return [
             'id' => $this->id,
             'server' => [
@@ -26,8 +29,10 @@ class GemPriceResource extends JsonResource
             'multiplier' => $this->multiplier,
             'gift_ticket_multiplier' => $this->gift_ticket_multiplier,
             'gift_ticket_gems_per_10k' => (float) $this->resource->multiplierFor('gift_ticket') * 10,
+            'gift_ticket_quote_per_10k' => $ticketQuote,
+            'consignment_quote_per_10k' => $consignmentQuote,
             'min_amount' => (int) ($this->min_amount ?? 10000),
-            'multiplier_display' => $this->multiplier_display, // x13, x13.5
+            'multiplier_display' => 'x'.rtrim(rtrim(number_format((float) $this->multiplier, 2, ',', ''), '0'), ','),
             'gems_per_10k' => $this->gems_per_base, // 130, 135
             'gems_per_10k_formatted' => number_format($this->gems_per_base) . ' ngọc/10k',
             'status' => $this->status,

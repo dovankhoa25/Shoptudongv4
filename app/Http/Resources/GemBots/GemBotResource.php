@@ -14,6 +14,8 @@ class GemBotResource extends JsonResource
      */
     public function toArray($request)
     {
+        $availableStock = \App\Services\TradingV3\GemStock::available($this->resource);
+
         return [
             'id' => $this->id,
             'name' => $this->name,
@@ -31,6 +33,8 @@ class GemBotResource extends JsonResource
             'gem_qty' => $this->gem_qty,
             'gift_ticket_qty' => $this->gift_ticket_qty,
             'consign_item_qty' => $this->consign_item_qty,
+            'gift_available_gems' => \App\Services\TradingV3\GemStock::giftCapacity($this->resource, $availableStock),
+            'gift_unreserved_gems' => min(intdiv($availableStock['gems'], 10), $availableStock['tickets']) * 10,
             'gem_qty_formatted' => number_format($this->gem_qty),
             'map_info' => [
                 'map_name' => $this->map_name,

@@ -49,11 +49,22 @@ class Reader {
             });
             abort_unless($response instanceof \Illuminate\Http\JsonResponse && $response->isSuccessful(),403);
             $data=$response->getData(true);
-            return $view['props']===null ? $data : Arr::only($data['props'] ?? [],$view['props']);
+            $projection=$view['props']===null ? $data : Arr::only($data['props'] ?? [],$view['props']);
+            // Bot forms submit a replacement password, never an existing password.
+            // Keep this boundary even if a future admin resource accidentally adds one.
+            if (preg_match('~^/admin/(bots|gem-bots)(/\d+)?$~', $parts['path'] ?? '')) {
+                $projection=$this->withoutBotPasswords($projection);
+            }
+            return $projection;
         } finally {
             app()->instance('request',$original);Auth::shouldUse($default);
             if($previous) $guard->setUser($previous);else $guard->forgetUser();
             $factory->flushShared();$factory->share($shared);
         }
+    }
+    private function withoutBotPasswords(array $data): array {
+        unset($data['account_password']);
+        foreach($data as $key=>$value) if(is_array($value)) $data[$key]=$this->withoutBotPasswords($value);
+        return $data;
     }
 }

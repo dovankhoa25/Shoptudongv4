@@ -103,7 +103,7 @@ export default function BotPage() {
     const handleToggleStatus = (bot: IBot) => {
         router.patch(`/admin/bots/${bot.id}/toggle-status`, {}, {
             onSuccess: () => {
-                const status = !bot.status ? 'kích hoạt' : 'tạm dừng';
+                const status = !bot.status ? 'bật trên web' : 'tắt trên web';
                 toast.success(`Bot "${bot.name || bot.account_name}" đã được ${status}!`);
             },
             onError: () => {
@@ -142,7 +142,7 @@ export default function BotPage() {
                 break;
             case 'deactivate':
                 endpoint = '/admin/bots/bulk-deactivate';
-                successMessage = 'Đã tạm dừng';
+                successMessage = 'Đã tắt trên web';
                 break;
             case 'delete':
                 if (!confirm(`Bạn có chắc chắn muốn xóa ${selectedBots.length} bot đã chọn?`)) {
@@ -363,7 +363,7 @@ export default function BotPage() {
 
         {
             key: 'map_info',
-            title: 'Vị trí',
+            title: 'Điểm đứng cấu hình',
             width: 180,
             render: (mapInfo: any, record: IBot) => (
                 <div className="text-sm">
@@ -420,18 +420,18 @@ export default function BotPage() {
         },
         {
             key: 'status',
-            title: 'Trạng thái',
+            title: 'Bật trên web',
             width: 120,
             align: 'center',
             filters: [
-                { text: '✅ Hoạt động', value: true },
-                { text: '⏸️ Tạm dừng', value: false },
+                { text: '✅ Bật trên web', value: true },
+                { text: '⏸️ Tắt trên web', value: false },
             ],
             render: (status: boolean | null | undefined) => { // ✅ Handle all cases
                 const isActive = Boolean(status); // ✅ Safe conversion
                 const config = isActive
-                    ? { color: 'bg-green-100 text-green-800 border-green-300', text: 'Hoạt động', dot: 'bg-green-500' }
-                    : { color: 'bg-red-100 text-red-800 border-red-300', text: 'Tạm dừng', dot: 'bg-red-500' };
+                    ? { color: 'bg-green-100 text-green-800 border-green-300', text: 'ON', dot: 'bg-green-500' }
+                    : { color: 'bg-red-100 text-red-800 border-red-300', text: 'OFF', dot: 'bg-red-500' };
 
                 return (
                     <div className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border ${config.color}`}>
@@ -479,7 +479,7 @@ export default function BotPage() {
                         </Menu.Item>
 
                         <Menu.Item key="toggle" icon={<TrendingUp />} onClick={() => handleToggleStatus(record)}>
-                            {record.status ? 'Tạm dừng' : 'Kích hoạt'}
+                            {record.status ? 'Tắt trên web' : 'Bật trên web'}
                         </Menu.Item>
 
                         <Menu.Divider />
@@ -542,10 +542,10 @@ export default function BotPage() {
         {
             key: 'status',
             type: 'select' as const,
-            label: 'Trạng thái',
+            label: 'Bật trên web',
             options: [
-                { label: 'Hoạt động', value: '1' },
-                { label: 'Tạm dừng', value: '0' }
+                { label: 'Bật trên web', value: '1' },
+                { label: 'Tắt trên web', value: '0' }
             ],
             value: currentFilters.status?.toString() || ''
         },
@@ -578,7 +578,7 @@ export default function BotPage() {
                                 prefix={<Bot className="w-5 h-5 text-blue-500" />}
                             />
                             <div className="text-xs text-gray-500 mt-2">
-                                Hoạt động: {stats.active_bots}
+                                Bật trên web: {stats.active_bots}
                             </div>
                         </Card>
                     </Col>
@@ -652,13 +652,13 @@ export default function BotPage() {
                 customActions={
                     selectedBots.length > 0 ? {
                         bulkActivate: {
-                            label: 'Kích hoạt',
+                            label: 'Bật trên web',
                             icon: CheckCircle,
                             handler: () => handleBulkAction('activate'),
                             className: 'text-green-600 hover:text-green-800'
                         },
                         bulkDeactivate: {
-                            label: 'Tạm dừng',
+                            label: 'Tắt trên web',
                             icon: XCircle,
                             handler: () => handleBulkAction('deactivate'),
                             className: 'text-yellow-600 hover:text-yellow-800'
@@ -677,7 +677,7 @@ export default function BotPage() {
             <BotModal
                 open={modalOpen}
                 onClose={handleCloseModal}
-                bot={selectedBot}
+                bot={selectedBot ? bots.data.find(bot => bot.id === selectedBot.id) ?? selectedBot : null}
                 servers={servers}
                 logins={logins}
             />

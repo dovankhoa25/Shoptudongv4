@@ -23,6 +23,9 @@ class Views {
             return ['resources'=>['nro',$resource],'props'=>null];
         }
         $list=[
+            '/admin/bots'=>[['gold_bot'],['bots','stats']],
+            '/admin/gem-bots'=>[['gem_bot','gem_order'],['gemBots','stats']],
+            '/admin/gem-prices'=>[['gem_price'],['gemPrices','stats','servers']],
             '/admin/orders'=>[['gold_order','legacy_gold_order'],['orders','stats']],
             '/admin/imports'=>[['gold_import','legacy_gold_import'],['orders','stats']],
             '/admin/gem-orders'=>[['gem_order'],['orders','stats']],
@@ -39,6 +42,10 @@ class Views {
             '/admin/analytics'=>[['service_order','nick_order','random_order'],['analytics','availableDates']],
         ];
         if(isset($list[$path])) return ['resources'=>$list[$path][0],'props'=>$list[$path][1]];
+        if(preg_match('~^/admin/(bots|gem-bots)/(\d+)$~',$path,$m)) return [
+            'resources'=>$list['/admin/'.$m[1]][0],
+            'props'=>$m[1]==='bots' ? ['bot'] : ['gemBot','recentActivity'],
+        ];
         if(preg_match('~^(/admin/(orders|imports|gem-orders))/(\d+)$~',$path,$m)) return ['resources'=>$list[$m[1]][0],'props'=>$m[2]==='gem-orders' ? ['order','relatedOrders'] : ['order']];
         return null;
     }

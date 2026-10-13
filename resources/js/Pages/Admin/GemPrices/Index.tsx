@@ -193,11 +193,11 @@ export default function GemPricePage() {
                     <div className="flex items-center justify-center gap-1">
                         <Gem className="w-4 h-4 text-purple-500" />
                         <span className="text-lg font-semibold text-gray-800">
-                            {record.gems_per_10k} ngọc
+                            {Number(record.consignment_quote_per_10k?.gem_qty ?? Math.floor(record.gems_per_10k)).toLocaleString('vi-VN')} ngọc
                         </span>
                     </div>
                     <div className="text-xs text-gray-500">
-                        cho 10,000 VND
+                        Thực trừ 10.000đ
                     </div>
                 </div>
             )
@@ -210,12 +210,17 @@ export default function GemPricePage() {
             render: (_value: number, record: IGemPrice) => {
                 const followsConsignment = record.gift_ticket_multiplier == null;
                 const multiplier = Number(record.gift_ticket_multiplier ?? record.multiplier);
-                const gems = record.gift_ticket_gems_per_10k ?? multiplier * 10;
+                const tickets = record.gift_ticket_quote_per_10k?.ticket_qty ?? Math.floor(Math.round(multiplier * 100) / 100);
+                const gems = record.gift_ticket_quote_per_10k?.gem_qty ?? tickets * 10;
+                const charged = record.gift_ticket_quote_per_10k?.charged_amount ?? Math.ceil(tickets * 1000000 / Math.round(multiplier * 100));
 
                 return (
                     <div className="text-center">
                         <div className="font-semibold text-purple-700">
-                            {Number(gems).toLocaleString('vi-VN')} ngọc
+                            {tickets.toLocaleString('vi-VN')} vé · {Number(gems).toLocaleString('vi-VN')} ngọc
+                        </div>
+                        <div className="text-xs text-green-700">
+                            Thực trừ {charged.toLocaleString('vi-VN')}đ
                         </div>
                         <div className="text-xs text-gray-500">
                             {followsConsignment ? 'Theo đồ ký' : `Hệ số x${multiplier}`}

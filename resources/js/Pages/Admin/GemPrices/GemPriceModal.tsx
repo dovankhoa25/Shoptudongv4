@@ -320,7 +320,7 @@
 //     );
 // }
 // Admin/GemPrices/GemPriceModal.tsx - Gem Price Modal với Multiplier (Fixed)
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { router } from "@inertiajs/react";
 import { Modal, Form, InputNumber, Switch, Button, message, Select, Alert } from 'antd';
 import { SaveOutlined } from '@ant-design/icons';
@@ -348,9 +348,13 @@ export default function GemPriceModal({ open, onClose, gemPrice, servers }: GemP
     const [loading, setLoading] = useState(false);
     const [selectedServer, setSelectedServer] = useState<IServer | null>(null);
     const [testAmount, setTestAmount] = useState<number>(10000);
+    const initializedFor = useRef<string | null>(null);
 
     // Initialize form data
     useEffect(() => {
+        const formKey = open ? String(gemPrice?.id ?? 'new') : null;
+        if (initializedFor.current === formKey) return;
+        initializedFor.current = formKey;
         if (open) {
             // Reset form errors first
             form.resetFields();
@@ -362,7 +366,7 @@ export default function GemPriceModal({ open, onClose, gemPrice, servers }: GemP
 
                 form.setFieldsValue({
                     server_id: gemPrice.server.id,
-                    multiplier: gemPrice.multiplier,
+                    multiplier: Number(gemPrice.multiplier),
                     gift_ticket_multiplier: gemPrice.gift_ticket_multiplier == null
                         ? null : Number(gemPrice.gift_ticket_multiplier),
                     min_amount: gemPrice.min_amount ?? 10000,
@@ -441,15 +445,16 @@ export default function GemPriceModal({ open, onClose, gemPrice, servers }: GemP
     // Calculate gems based on current multiplier
     const calculateGems = (amount: number, multiplier: number, deliveryMethod: 'consignment' | 'gift_ticket' = 'consignment') => {
         const multiplierUnits = Math.round(multiplier * 100);
+        if (!Number.isFinite(amount) || amount <= 0 || !Number.isFinite(multiplierUnits) || multiplierUnits <= 0) return 0;
         const gems = (amount * multiplierUnits) / 100000;
-        return deliveryMethod === 'gift_ticket' ? Math.ceil(gems) : Math.floor(gems);
+        return deliveryMethod === 'gift_ticket' ? Math.floor((amount * multiplierUnits) / 1000000) * 10 : Math.floor(gems);
     };
 
     const currentMultiplier = Form.useWatch('multiplier', form) || 13;
     const configuredTicketMultiplier = Form.useWatch('gift_ticket_multiplier', form);
     const currentTicketMultiplier = configuredTicketMultiplier ?? currentMultiplier;
     const ticketGems = calculateGems(testAmount, currentTicketMultiplier, 'gift_ticket');
-    const wholeTickets = ticketGems % 10 === 0;
+    const ticketCharge = ticketGems > 0 ? Math.ceil((ticketGems / 10) * 1000000 / Math.round(currentTicketMultiplier * 100)) : 0;
 
     // Common multiplier presets
     const multiplierPresets = [
@@ -548,7 +553,7 @@ export default function GemPriceModal({ open, onClose, gemPrice, servers }: GemP
                         min={1}
                         max={100}
                         step={0.5}
-                        precision={1}
+                        precision={2}
                         addonBefore="x"
                     />
                 </Form.Item>
@@ -614,6 +619,7 @@ export default function GemPriceModal({ open, onClose, gemPrice, servers }: GemP
                                 style={{ width: '100%' }}
                                 size="large"
                                 min={1000}
+                                precision={0}
                                 step={1000}
                                 addonAfter="VND"
                             />
@@ -623,26 +629,28 @@ export default function GemPriceModal({ open, onClose, gemPrice, servers }: GemP
                             <div className="bg-white p-3 rounded-lg">
                                 <div className="text-sm text-gray-600">Đồ ký · x{currentMultiplier}</div>
                                 <div className="text-lg font-bold text-purple-600">
+                                    Thực nhận{' '}
                                     {calculateGems(testAmount, currentMultiplier).toLocaleString('vi-VN')} ngọc
                                 </div>
+                                <div className="text-xs text-gray-500">Thực trừ {testAmount.toLocaleString('vi-VN')}đ</div>
                             </div>
                             <div className="bg-white p-3 rounded-lg">
                                 <div className="text-sm text-gray-600">
                                     Vé · x{currentTicketMultiplier}{configuredTicketMultiplier == null ? ' (theo đồ ký)' : ''}
                                 </div>
                                 <div className="text-lg font-bold text-purple-600">
+                                    Thực nhận{' '}
                                     {ticketGems.toLocaleString('vi-VN')} ngọc
                                 </div>
-                                <div className={`text-xs ${wholeTickets ? 'text-gray-500' : 'text-amber-700'}`}>
-                                    {wholeTickets
-                                        ? `${(ticketGems / 10).toLocaleString('vi-VN')} vé · 1 vé = 10 ngọc`
-                                        : 'Chọn số tiền cho số ngọc là bội của 10 để mua vé.'}
+                                <div className="text-xs text-gray-500">
+                                    {(ticketGems / 10).toLocaleString('vi-VN')} vé · Thực trừ {ticketCharge.toLocaleString('vi-VN')}đ
                                 </div>
+                                <div className="text-xs text-gray-500">Dư {(testAmount - ticketCharge).toLocaleString('vi-VN')}đ không bị trừ</div>
                             </div>
                         </div>
 
                         <div className="text-xs text-gray-500">
-                            Ngọc = (số tiền ÷ 10.000) × hệ số × 10. Đồ ký làm tròn xuống; vé làm tròn lên và cần số ngọc là bội của 10.
+                            Ngọc = (số tiền ÷ 10.000) × hệ số × 10. Đồ ký làm tròn xuống; vé lấy số vé nguyên và chỉ trừ tiền tương ứng.
                         </div>
                     </div>
                 </div>

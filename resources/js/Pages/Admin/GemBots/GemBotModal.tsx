@@ -1,5 +1,5 @@
 // Admin/GemBots/GemBotModal.tsx - Gem Bot Modal Component
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { router } from "@inertiajs/react";
 import { Modal, Form, Input, InputNumber, Switch, Button, message, Select, Space } from 'antd';
 import { SaveOutlined, RobotOutlined, EyeInvisibleOutlined, EyeTwoTone, UserOutlined } from '@ant-design/icons';
@@ -33,9 +33,13 @@ interface FormData {
 export default function GemBotModal({ open, onClose, gemBot, servers, logins }: GemBotModalProps) {
     const [form] = Form.useForm<FormData>();
     const [loading, setLoading] = useState(false);
+    const initializedFor = useRef<string | null>(null);
 
     // Initialize form data
     useEffect(() => {
+        const formKey = open ? String(gemBot?.id ?? 'new') : null;
+        if (initializedFor.current === formKey) return;
+        initializedFor.current = formKey;
         if (open) {
             if (gemBot) {
                 form.setFieldsValue({
@@ -69,7 +73,7 @@ export default function GemBotModal({ open, onClose, gemBot, servers, logins }: 
             account_password: values.account_password?.trim() || undefined, // Only send if provided
             server_id: values.server_id,
             server_game_id: values.server_game_id,
-            gem_qty: values.gem_qty || 0,
+            ...(!gemBot ? { gem_qty: values.gem_qty || 0 } : {}),
             map_name: values.map_name?.trim() || null,
             map_id: values.map_id.trim(),
             area_number: values.area_number.trim(),
@@ -286,12 +290,23 @@ export default function GemBotModal({ open, onClose, gemBot, servers, logins }: 
                         </Select>
                     </Form.Item>
                 </div>
-                {/* Gem Quantity */}
+                {gemBot ? (
+                    <div className="mb-4 rounded-lg border border-purple-200 bg-purple-50 p-3 dark:border-purple-800 dark:bg-purple-950/20">
+                        <p className="mb-2 text-sm font-semibold text-purple-800 dark:text-purple-200">Tồn được tool đồng bộ</p>
+                        <div className="grid grid-cols-3 gap-2 text-sm">
+                            <div><p className="text-xs text-gray-500">Ngọc xanh</p><strong>{Number(gemBot.gem_qty || 0).toLocaleString('vi-VN')}</strong></div>
+                            <div><p className="text-xs text-gray-500">Vé ngọc</p><strong>{gemBot.gift_ticket_qty == null ? 'Chưa đồng bộ' : Number(gemBot.gift_ticket_qty).toLocaleString('vi-VN')}</strong></div>
+                            <div><p className="text-xs text-gray-500">Đồ ký giao dịch được</p><strong>{gemBot.consign_item_qty == null ? 'Chưa đồng bộ' : Number(gemBot.consign_item_qty).toLocaleString('vi-VN')}</strong></div>
+                        </div>
+                        {gemBot.gift_ticket_qty != null && <p className="mt-2 text-xs text-purple-700">Vé chưa giữ chỗ: {Number(gemBot.gift_unreserved_gems ?? 0).toLocaleString('vi-VN')} ngọc</p>}
+                        <p className="mt-2 text-xs text-gray-500">Lưu cấu hình giữ nguyên tồn trên web; tool cập nhật tồn sau khi xác nhận trong game.</p>
+                    </div>
+                ) : (
                 <Form.Item
                     label={
                         <span className="flex items-center gap-2">
                             <span className="text-purple-600">💎</span>
-                            Số lượng ngọc hiện có
+                            Ngọc xanh ban đầu
                         </span>
                     }
                     name="gem_qty"
@@ -311,9 +326,11 @@ export default function GemBotModal({ open, onClose, gemBot, servers, logins }: 
                         addonAfter="ngọc"
                     />
                 </Form.Item>
+                )}
 
                 <div className="bg-gray-50 p-4 rounded-lg mb-4">
-                    <h4 className="font-medium text-gray-700 mb-3">Thông tin vị trí trong game</h4>
+                    <h4 className="font-medium text-gray-700 mb-1">Điểm đứng được cấu hình</h4>
+                    <p className="mb-3 text-xs text-gray-500">Tool phải tới map, khu và tọa độ này. Vị trí thực tế hiển thị ở ô Hoạt động.</p>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {/* Map Name */}
                         <Form.Item
@@ -389,14 +406,14 @@ export default function GemBotModal({ open, onClose, gemBot, servers, logins }: 
 
                 {/* Status */}
                 <Form.Item
-                    label="Trạng thái hoạt động"
+                    label="Bật bot trên web"
                     name="status"
                     valuePropName="checked"
-                    help="Bot sẽ chỉ phục vụ khi ở trạng thái hoạt động"
+                    help="ON cho phép tool chạy bot. Hoạt động hiện tại được hiển thị riêng qua realtime."
                 >
                     <Switch
-                        checkedChildren="Hoạt động"
-                        unCheckedChildren="Tạm dừng"
+                        checkedChildren="ON"
+                        unCheckedChildren="OFF"
                         size="default"
                     />
                 </Form.Item>

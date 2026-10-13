@@ -1,10 +1,14 @@
 <?php
 use App\Http\Controllers\AppAuto\VersionThree\GemController;
 use App\Http\Controllers\AppAuto\VersionThree\GoldController;
+use App\Http\Controllers\AppAuto\VersionThree\HeartbeatController;
+use App\Http\Controllers\AppAuto\VersionThree\ActivityController;
 use App\Http\Middleware\VersionThree\TradingHmac;
 use Illuminate\Support\Facades\Route;
 Route::middleware([TradingHmac::class, 'throttle:3000,1'])->group(function (): void {
     Route::get('config', [GemController::class,'config']);
+    Route::post('heartbeat', HeartbeatController::class);
+    Route::post('activities', [ActivityController::class, 'batch']);
     Route::get('servers/login', [GemController::class,'servers']);
     Route::get('gem/bots', [GemController::class,'bots']);
     Route::put('gem/bots/{bot}', [GemController::class,'updateBot'])->whereNumber('bot');

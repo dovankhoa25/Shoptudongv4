@@ -10,6 +10,7 @@ use App\Models\Server;
 use App\Models\ServerGameLogin;
 use App\Services\BotHistoryService;
 use App\Services\InventoryMovementService;
+use App\Services\AdminLive\Updates;
 use App\Support\AdminTableSearch;
 use App\Support\ApiCache;
 use Illuminate\Http\Request;
@@ -201,8 +202,6 @@ class BotController extends Controller
             'type' => $validated['type'],
             'server_id' => $validated['server_id'],
             'server_game_id' => $validated['server_game_id'],
-            'gold_bar_qty' => $validated['gold_bar_qty'] ?? $bot->gold_bar_qty,
-            'gold_qty' => $validated['gold_qty'] ?? $bot->gold_qty,
             'map_name' => $validated['map_name'] ?? $bot->map_name,
             'map_id' => $validated['map_id'],
             'area_number' => $validated['area_number'],
@@ -214,6 +213,12 @@ class BotController extends Controller
 
         if ($request->filled('account_password')) {
             $updateData['account_password'] = $validated['account_password'];
+        }
+
+        foreach (['gold_bar_qty', 'gold_qty'] as $field) {
+            if (isset($validated[$field])) {
+                $updateData[$field] = $validated[$field];
+            }
         }
 
         DB::transaction(function () use ($bot, $updateData) {
@@ -419,13 +424,15 @@ class BotController extends Controller
             'bot_ids.*' => 'exists:bots,id',
         ]);
 
-        $updated = Bot::whereIn('id', $request->bot_ids)
+        $updated = Bot::whereIn('id', $request->bot_ids)->where('status', false)
             ->update([
                 'status' => true,
                 'updated_by' => 'web',
                 'updated_at' => now(),
             ]);
         ApiCache::clearGroups(['public:bots']);
+
+        if ($updated > 0) DB::afterCommit(fn () => app(Updates::class)->changed('gold_bot'));
 
         return back()->with('success', "Đã kích hoạt {$updated} bot!");
     }
@@ -440,13 +447,15 @@ class BotController extends Controller
             'bot_ids.*' => 'exists:bots,id',
         ]);
 
-        $updated = Bot::whereIn('id', $request->bot_ids)
+        $updated = Bot::whereIn('id', $request->bot_ids)->where('status', true)
             ->update([
                 'status' => false,
                 'updated_by' => 'web',
                 'updated_at' => now(),
             ]);
         ApiCache::clearGroups(['public:bots']);
+
+        if ($updated > 0) DB::afterCommit(fn () => app(Updates::class)->changed('gold_bot'));
 
         return back()->with('success', "Đã tạm dừng {$updated} bot!");
     }
@@ -461,9 +470,10 @@ class BotController extends Controller
             'bot_ids.*' => 'exists:bots,id',
         ]);
 
-        $deleted = Bot::whereIn('id', $request->bot_ids)->count();
-        Bot::whereIn('id', $request->bot_ids)->delete();
+        $deleted = Bot::whereIn('id', $request->bot_ids)->delete();
         ApiCache::clearGroups(['public:bots']);
+
+        if ($deleted > 0) DB::afterCommit(fn () => app(Updates::class)->changed('gold_bot'));
 
         return back()->with('success', "Đã xóa {$deleted} bot!");
     }

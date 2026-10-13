@@ -1,0 +1,70 @@
+{
+  "recorded_utc": "2026-10-13T22:35:12.4550012+00:00",
+  "base_url": "https://api.shophhp.net/app/v3/",
+  "diagnostic": "GET only; not a measurement of financial updates or game operations.",
+  "credential_source": ".env.example",
+  "clock_correction_seconds": -257,
+  "capabilities": {
+    "batch_heartbeat_supported": false,
+    "batch_activity_supported": false
+  },
+  "requests": [
+    {
+      "round": 1,
+      "route": "config",
+      "status": 401,
+      "duration_ms": 341.9,
+      "data_count": null,
+      "response_size": 49
+    },
+    {
+      "round": 1,
+      "route": "config",
+      "status": 200,
+      "duration_ms": 139.0,
+      "data_count": 5,
+      "response_size": 144
+    },
+    {
+      "round": 1,
+      "route": "gem/bots",
+      "status": 200,
+      "duration_ms": 194.9,
+      "data_count": 49,
+      "response_size": 26156
+    },
+    {
+      "round": 2,
+      "route": "config",
+      "status": 200,
+      "duration_ms": 135.7,
+      "data_count": 5,
+      "response_size": 144
+    },
+    {
+      "round": 2,
+      "route": "gem/bots",
+      "status": 200,
+      "duration_ms": 165.6,
+      "data_count": 49,
+      "response_size": 26156
+    },
+    {
+      "round": 3,
+      "route": "config",
+      "status": 200,
+      "duration_ms": 127.0,
+      "data_count": 5,
+      "response_size": 144
+    },
+    {
+      "round": 3,
+      "route": "gem/bots",
+      "status": 200,
+      "duration_ms": 158.9,
+      "data_count": 49,
+      "response_size": 26156
+    }
+  ],
+  "failure": null
+}

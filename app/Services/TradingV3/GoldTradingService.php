@@ -26,6 +26,41 @@ class GoldTradingService {
             ->when($botId!==null,fn($q)=>$q->where(fn($q)=>$q->where('meta->from_bot_id',$botId)->orWhere('meta->to_bot_id',$botId)))
             ->get();
     }
+    /** Read-only list projection; financial operations always query fresh reservations. */
+    public static function prefetchReadStock(\Illuminate\Support\Collection $bots): \Illuminate\Support\Collection {
+        if($bots->isEmpty()) return $bots;
+        $byId=$bots->keyBy('id');$ids=$byId->keys()->all();$stock=[];
+        foreach($byId as $id=>$bot) $stock[$id]=[
+            'available'=>['bars'=>(int)$bot->gold_bar_qty,'pure'=>(int)$bot->gold_qty],
+            'receive_room'=>self::BAR_CAPACITY-(int)$bot->gold_bar_qty,
+        ];
+        $orders=GoldTransaction::whereIn('bot_id',$ids)->where('status','processing')->whereIn('type',['order','import'])
+            ->get(['id','bot_id','type','gold_bar_qty','pure_gold_qty','delivery_data']);
+        foreach($orders as $order) {
+            $remaining=self::remaining($order);$id=(int)$order->bot_id;
+            if($order->type==='order') {
+                $stock[$id]['available']['bars']-=$remaining['bars'];
+                $stock[$id]['available']['pure']-=$remaining['pure'];
+            } else $stock[$id]['receive_room']-=$remaining['bars'];
+        }
+        $transfers=InventoryMovement::where('transaction_type','gold_transfer')->where('movement_type','reservation')
+            ->where('meta->status','claimed')
+            ->where(fn($q)=>$q->whereIn('meta->from_bot_id',$ids)->orWhereIn('meta->to_bot_id',$ids))->get(['meta']);
+        foreach($transfers as $transfer) {
+            $meta=$transfer->meta;$from=(int)$meta['from_bot_id'];$to=(int)$meta['to_bot_id'];
+            if(isset($stock[$from])) {
+                $stock[$from]['available']['bars']-=(int)$meta['bars_qty'];
+                $stock[$from]['available']['pure']-=(int)$meta['pure_gold_qty'];
+            }
+            if(isset($stock[$to])) $stock[$to]['receive_room']-=(int)$meta['bars_qty'];
+        }
+        foreach($bots as $bot) {
+            $read=$stock[$bot->id];$read['available']=array_map(fn($qty)=>max(0,$qty),$read['available']);
+            $read['receive_room']=max(0,$read['receive_room']);
+            $bot->setRelation('tradingV3ReadStock',$read);
+        }
+        return $bots;
+    }
     public static function available(Bot $bot,?int $exceptOrder=null,?string $exceptTransfer=null): array {
         $bars=(int)$bot->gold_bar_qty;$pure=(int)$bot->gold_qty;
         foreach(GoldTransaction::where('bot_id',$bot->id)->where('type','order')->where('status','processing')->get() as $o) {
@@ -67,7 +102,8 @@ class GoldTradingService {
         abort_unless($bot->v3_lease_until?->isFuture(),409,'Bot lease has expired.');
     }
     public function updateBot(int $id,array $d): Bot {
-        $bot=DB::transaction(function() use($id,$d) {
+        $visibilityChanged=$d['action']!=='lease';
+        $bot=DB::transaction(function() use($id,$d,&$visibilityChanged) {
             $bot=Bot::whereKey($id)->lockForUpdate()->firstOrFail();
             $orders=GoldTransaction::where('bot_id',$id)->where('status','processing')->get();
             $transfers=self::activeTransfers($id);
@@ -78,7 +114,9 @@ class GoldTradingService {
                     abort_unless($order->processing_version===3 && $order->processing_owner===$d['worker_id'],409,'An unfinished order retains its worker.');
                 }
                 foreach($transfers as $t) abort_unless(($t->meta['processing_owner']??null)===$d['worker_id'],409,'An unfinished transfer retains its worker.');
-                $bot->forceFill(['v3_worker_id'=>$d['worker_id'],'v3_lease_until'=>now()->addSeconds(config('trading_v3.lease_seconds'))])->save();
+                $leaseUntil=now()->addSeconds(config('trading_v3.lease_seconds'));
+                $visibilityChanged=!$bot->v3_worker_id || !$bot->v3_lease_until?->isFuture() || $leaseUntil->lt($bot->v3_lease_until);
+                $bot->forceFill(['v3_worker_id'=>$d['worker_id'],'v3_lease_until'=>$leaseUntil])->save();
             } else {
                 $this->assertOwner($bot,$d['worker_id']);
                 abort_if($transfers->isNotEmpty(),409,'Unfinished gold transfers must be reconciled first.');
@@ -93,7 +131,7 @@ class GoldTradingService {
             }
             return $bot->fresh(['server','loginServer']);
         },3);
-        ApiCache::clearGroups(['public:bots']);return $bot;
+        if($visibilityChanged) ApiCache::clearGroups(['public:bots']);return $bot;
     }
     public function updateOrder(int $id,array $d): GoldTransaction {
         $order=DB::transaction(function() use($id,$d) {

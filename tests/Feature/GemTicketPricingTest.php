@@ -50,7 +50,9 @@ class GemTicketPricingTest extends TestCase
         $user = $this->customer(5000000);
         $payload = $this->payload($server, ['delivery_method' => 'consignment', 'money_amount' => 10001]);
         $this->postJson('/api/gem/orders', $payload)->assertCreated()
-            ->assertJsonPath('data.gem_qty', 100)->assertJsonPath('data.multiplier', '10');
+            ->assertJsonPath('data.gem_qty', 100)->assertJsonPath('data.multiplier', '10')
+            ->assertJsonPath('data.requested_amount', 10001)->assertJsonPath('data.charged_amount', 10001)
+            ->assertJsonPath('data.unused_amount', 0)->assertJsonPath('data.ticket_qty', 0);
         $payload['character_name'] = 'buyer2';
         $payload['money_amount'] = 2000001;
         $this->postJson('/api/gem/orders', $payload)->assertCreated()
@@ -62,28 +64,96 @@ class GemTicketPricingTest extends TestCase
         $this->assertDatabaseCount('gem_transactions', 2);
     }
 
-    public function test_ticket_fractional_gems_keep_existing_upward_rounding(): void
+    public function test_ticket_fractional_gems_round_down_to_whole_tickets_and_charge_only_their_cost(): void
     {
         $server = $this->server();
         GemPrice::create(['server_id' => $server->id, 'multiplier' => 10, 'gift_ticket_multiplier' => 9.99, 'status' => true]);
         $this->bot($server, 1000, 100);
         $user = $this->customer();
         $this->postJson('/api/gem/orders', $this->payload($server, ['money_amount' => 10001]))
-            ->assertCreated()->assertJsonPath('data.gem_qty', 100)->assertJsonPath('data.multiplier', '9.99');
-        $this->assertSame(89999, (int) $user->fresh()->balance);
-        $this->assertSame(100, (int) GemTransaction::firstOrFail()->gem_qty);
+            ->assertCreated()->assertJsonPath('data.gem_qty', 90)->assertJsonPath('data.multiplier', '9.99')
+            ->assertJsonPath('data.ticket_qty', 9)->assertJsonPath('data.requested_amount', 10001)
+            ->assertJsonPath('data.charged_amount', 9010)->assertJsonPath('data.unused_amount', 991);
+        $this->assertSame(90990, (int) $user->fresh()->balance);
+        $this->assertSame(90, (int) GemTransaction::firstOrFail()->gem_qty);
+        $this->assertSame(9010, (int) GemTransaction::firstOrFail()->amount_vnd);
     }
 
-    public function test_ticket_rounding_must_be_multiple_of_ten_before_any_debit(): void
+    public function test_ticket_quote_debits_actual_amount_and_keeps_unused_money_in_balance_and_ledger(): void
     {
         $server = $this->server();
         GemPrice::create(['server_id' => $server->id, 'multiplier' => 10, 'gift_ticket_multiplier' => 12.35, 'status' => true]);
         $this->bot($server, 1000, 100);
         $user = $this->customer();
-        $this->postJson('/api/gem/orders', $this->payload($server))->assertUnprocessable();
-        $this->assertSame(100000, (int) $user->fresh()->balance);
+        $this->postJson('/api/gem/orders', $this->payload($server))->assertCreated()
+            ->assertJsonPath('data.requested_amount', 10000)->assertJsonPath('data.charged_amount', 9717)
+            ->assertJsonPath('data.unused_amount', 283)->assertJsonPath('data.ticket_qty', 12)
+            ->assertJsonPath('data.gem_qty', 120)->assertJsonPath('data.balance_after', 90283)
+            ->assertJsonPath('data.amount_vnd', '9717');
+        $this->assertSame(90283, (int) $user->fresh()->balance);
+        $order = GemTransaction::firstOrFail();
+        $this->assertSame(9717, (int) $order->amount_vnd);
+        $ledger = \App\Models\Transaction::where('related_id', (string) $order->id)->sole();
+        $this->assertSame(-9717, $ledger->amount);
+        $this->assertSame(100000, $ledger->balance_before);
+        $this->assertSame(90283, $ledger->balance_after);
+        $this->assertSame(10000, $ledger->metadata['requested_amount']);
+        $this->assertSame(9717, $ledger->metadata['charged_amount']);
+        $this->assertSame(283, $ledger->metadata['unused_amount']);
+        $this->assertSame(12, $ledger->metadata['ticket_qty']);
+        $this->assertSame(120, $ledger->metadata['gem_qty']);
+        $this->assertDatabaseCount('transactions', 1);
+    }
+
+    public function test_ticket_balance_only_needs_actual_charge_and_requested_minimum_is_still_checked(): void
+    {
+        $server = $this->server();
+        GemPrice::create(['server_id' => $server->id, 'multiplier' => 10, 'gift_ticket_multiplier' => 12.35, 'status' => true]);
+        $this->bot($server, 1000, 100);
+        $user = $this->customer(9717);
+        $this->postJson('/api/gem/orders', $this->payload($server, ['money_amount' => 9999]))
+            ->assertUnprocessable()->assertJsonValidationErrors('money_amount');
+        $this->assertSame(9717, (int) $user->fresh()->balance);
+        $this->postJson('/api/gem/orders', $this->payload($server))->assertCreated()
+            ->assertJsonPath('data.gem_qty', 120)->assertJsonPath('data.charged_amount', 9717)
+            ->assertJsonPath('data.balance_after', 0);
+        $this->assertSame(0, (int) $user->fresh()->balance);
+    }
+
+    public function test_ticket_insufficient_actual_balance_does_not_create_or_reserve_an_order(): void
+    {
+        $server = $this->server();
+        GemPrice::create(['server_id' => $server->id, 'multiplier' => 10, 'gift_ticket_multiplier' => 12.35, 'status' => true]);
+        $bot = $this->bot($server, 1000, 100);
+        $user = $this->customer(9716);
+        $this->postJson('/api/gem/orders', $this->payload($server))->assertStatus(400);
+        $this->assertSame(9716, (int) $user->fresh()->balance);
+        $this->assertSame(1000, \App\Services\TradingV3\GemStock::giftCapacity($bot->fresh()));
         $this->assertDatabaseCount('gem_transactions', 0);
         $this->assertDatabaseCount('transactions', 0);
+    }
+
+    public function test_ticket_refund_restores_actual_charge_once_after_price_changes(): void
+    {
+        $server = $this->server();
+        $price = GemPrice::create(['server_id' => $server->id, 'multiplier' => 10, 'gift_ticket_multiplier' => 12.35, 'status' => true]);
+        $this->bot($server, 1000, 100);
+        $user = $this->customer();
+        $this->postJson('/api/gem/orders', $this->payload($server))->assertCreated();
+        $order = GemTransaction::firstOrFail();
+        $price->update(['gift_ticket_multiplier' => 20]);
+        $this->admin();
+        $this->post('/admin/gem-orders/'.$order->id.'/refund', ['refund_reason' => 'test actual charge'])
+            ->assertRedirect()->assertSessionHasNoErrors();
+        $this->assertSame(100000, (int) $user->fresh()->balance);
+        $this->assertSame(9717, (int) $order->fresh()->amount_vnd);
+        $this->assertSame(120, (int) $order->fresh()->gem_qty);
+        $this->assertSame('12.35', $order->fresh()->price_at_transaction);
+        $this->assertDatabaseHas('transactions', ['user_id' => $user->id, 'type' => \App\Models\Transaction::TYPE_GEM_ORDER_REFUND, 'amount' => 9717]);
+        $this->post('/admin/gem-orders/'.$order->id.'/refund', ['refund_reason' => 'duplicate'])
+            ->assertRedirect()->assertSessionHasErrors('status');
+        $this->assertSame(100000, (int) $user->fresh()->balance);
+        $this->assertSame(1, \App\Models\Transaction::where('idempotency_key', 'gem-order-refund:'.$order->id)->count());
     }
 
     public function test_ticket_price_snapshot_retains_two_decimal_places(): void
@@ -202,7 +272,9 @@ class GemTicketPricingTest extends TestCase
         GemPrice::create(['server_id' => $server->id, 'multiplier' => 10, 'gift_ticket_multiplier' => 9.99, 'status' => true]);
         $this->admin();
         $payload = ['server_id' => $server->id, 'vnd_amount' => 10001, 'delivery_method' => 'gift_ticket'];
-        $this->postJson('/admin/gem-prices/api/calculate', $payload)->assertOk()->assertJsonPath('gems', 100)->assertJsonPath('multiplier', '9.99');
+        $this->postJson('/admin/gem-prices/api/calculate', $payload)->assertOk()->assertJsonPath('gems', 90)->assertJsonPath('multiplier', '9.99')
+            ->assertJsonPath('ticket_qty', 9)->assertJsonPath('requested_amount', 10001)
+            ->assertJsonPath('charged_amount', 9010)->assertJsonPath('unused_amount', 991);
         unset($payload['delivery_method']);
         $this->postJson('/admin/gem-prices/api/calculate', $payload)->assertOk()->assertJsonPath('gems', 100)->assertJsonPath('multiplier', '10.00');
     }
@@ -235,7 +307,7 @@ class GemTicketPricingTest extends TestCase
         Role::findOrCreate('super-admin', 'web');
         $user = User::factory()->create();
         $user->assignRole('super-admin');
-        $this->actingAs($user);
+        $this->actingAs($user, 'web');
     }
 
     private function payload(Server $server, array $overrides = []): array

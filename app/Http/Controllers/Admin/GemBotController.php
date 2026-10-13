@@ -157,6 +157,8 @@ class GemBotController extends Controller
      */
     public function edit(GemBot $gemBot)
     {
+        $gemBot->load('server');
+
         return Inertia::render('Admin/GemBots/Edit', [
             'gemBot' => new GemBotResource($gemBot),
             'servers' => Server::active()->get(['id', 'name']),
@@ -232,7 +234,6 @@ class GemBotController extends Controller
             'account_name' => $validated['account_name'],
             'server_id' => $validated['server_id'],
             'server_game_id' => $validated['server_game_id'],
-            'gem_qty' => $validated['gem_qty'] ?? $gemBot->gem_qty,
             'map_name' => $validated['map_name'] ?? $gemBot->map_name,
             'map_id' => $validated['map_id'],
             'area_number' => $validated['area_number'],
@@ -246,7 +247,12 @@ class GemBotController extends Controller
             $updateData['account_password'] = $validated['account_password'];
         }
 
+        if (isset($validated['gem_qty'])) {
+            $updateData['gem_qty'] = $validated['gem_qty'];
+        }
+
         DB::transaction(function () use ($gemBot, $updateData) {
+            $gemBot = GemBot::whereKey($gemBot->id)->lockForUpdate()->firstOrFail();
             $oldServerId = (int) $gemBot->server_id;
             $oldGemQty = (int) $gemBot->gem_qty;
             $oldData = $gemBot->only([

@@ -5,10 +5,11 @@ import type {PageProps} from '@/types';
 
 const roots=['/admin/orders','/admin/imports','/admin/gem-orders','/admin/services/orders','/admin/services/orders/receiver',
     '/admin/games/accounts/history','/admin/withdrawals','/admin/cards','/admin/deposits','/admin/carot-recharges',
-    '/admin/transactions','/admin/users','/admin/dashboard','/admin/analytics','/admin/nro-shop'];
+    '/admin/transactions','/admin/users','/admin/dashboard','/admin/analytics','/admin/nro-shop',
+    '/admin/bots','/admin/gem-bots','/admin/gem-prices'];
 export default function AdminRealtimeProvider({children}:{children:React.ReactNode}) {
     const {url,props}=usePage<PageProps>();const path=url.split('?')[0];
-    const eligible=roots.includes(path) || /^\/admin\/(orders|imports|gem-orders)\/\d+$/.test(path);
+    const eligible=roots.includes(path) || /^\/admin\/(orders|imports|gem-orders|bots|gem-bots)\/\d+$/.test(path);
     const defaultMode=path==='/admin/nro-shop' && (props.capabilities as {accounts?:boolean}|undefined)?.accounts===false?'summary':'page';
     const [selection,setSelection]=useState({path,mode:defaultMode});
     // Reset before committing a subscription for the next page, including browser Back.

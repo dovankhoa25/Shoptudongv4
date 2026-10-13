@@ -13,7 +13,6 @@ class BotResource extends JsonResource
             'id' => $this->id,
             'name' => $this->name,
             'account_name' => $this->account_name,
-            'account_password' => $this->account_password,
             'has_password' => !empty($this->account_password),
             'type' => $this->type, // Raw string: "selling_main,import_sub"
             'types' => $this->getTypesArray(), // Array: ['selling_main', 'import_sub']

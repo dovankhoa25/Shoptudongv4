@@ -17,9 +17,9 @@ class GemStock {
         return ['gems'=>max(0,(int)$bot->gem_qty-$gems),'tickets'=>max(0,(int)$bot->gift_ticket_qty-$tickets),
             'items'=>max(0,(int)$bot->consign_item_qty-$items)];
     }
-    public static function giftCapacity(GemBot $bot): int {
+    public static function giftCapacity(GemBot $bot, ?array $availableStock = null): int {
         if(!config('trading_v3.enabled')||!$bot->status||!$bot->v3_worker_id||!$bot->v3_lease_until?->isFuture()||$bot->gift_ticket_qty===null)return 0;
-        $a=self::available($bot);return min(intdiv($a['gems'],10),$a['tickets'])*10;
+        $a=$availableStock??self::available($bot);return min(intdiv($a['gems'],10),$a['tickets'])*10;
     }
     public static function reserveBot(int $server,int $gems): GemBot {
         abort_unless(config('trading_v3.enabled')&&$gems>0&&$gems%10===0,422,'Đơn vé cần số ngọc là bội của 10 và tool v3 đang bật.');
