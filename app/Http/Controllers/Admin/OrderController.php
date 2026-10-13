@@ -253,6 +253,9 @@ class OrderController extends Controller
     ): void {
         DB::transaction(function () use ($orderId, $newStatus, $cancelReason, $note, $refundAmount): void {
             $order = GoldTransaction::query()->lockForUpdate()->findOrFail($orderId);
+            if ((int) $order->processing_version === 3) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['status'=>'Tool v3 đang giữ biên nhận giao dịch; hãy để tool tự đối chiếu trước.']);
+            }
             abort_unless($order->type === GoldTransaction::TYPE_ORDER, 404);
 
             $allowedTransitions = [

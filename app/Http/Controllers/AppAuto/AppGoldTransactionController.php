@@ -17,6 +17,7 @@ class AppGoldTransactionController extends Controller
     public function index(Request $request)
     {
         $query = GoldTransaction::query()
+            ->where(fn ($q) => $q->whereNull('processing_version')->orWhere('processing_version', '!=', 3))
             ->where('updated_by', 'web')
             ->whereIn('status', ['pending', 'processing']);
 
@@ -138,6 +139,7 @@ class AppGoldTransactionController extends Controller
             $updatedTransaction = DB::transaction(function () use ($request, $id) {
                 // ✅ Lock thật sự bắt đầu tại đây
                 $goldTransaction = GoldTransaction::where('id', $id)->lockForUpdate()->firstOrFail();
+                abort_if((int) $goldTransaction->processing_version === 3, 409, 'This order requires tool v3.');
 
                 $currentStatus = $goldTransaction->status;
                 $newStatus = $request->status;
@@ -243,6 +245,7 @@ class AppGoldTransactionController extends Controller
                 'message' => 'Transaction updated successfully.',
             ]);
         } catch (\Throwable $e) {
+            if ($e instanceof \Symfony\Component\HttpKernel\Exception\HttpException) throw $e;
             return response()->json([
                 'success' => false,
                 'message' => $e->getMessage(),

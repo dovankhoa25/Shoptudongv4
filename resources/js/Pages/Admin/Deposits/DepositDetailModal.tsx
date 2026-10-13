@@ -51,6 +51,8 @@ export interface BankTopupItem {
     description: string | null;
     status: string;
     review_reason: string | null;
+    processed_by?: DepositUser | null;
+    processed_at?: string | null;
     created_at: string;
 }
 
@@ -99,6 +101,10 @@ export default function DepositDetailModal({ item, type, onClose }: Props) {
                     })() : (() => {
                         const bank = item as BankTopupItem;
                         return <>
+                            {bank.processed_by && <>
+                                <Detail label="Admin xử lý" value={bank.processed_by.username + ' (#' + bank.processed_by.id + ')'} />
+                                <Detail label="Xử lý lúc" value={bank.processed_at ? new Date(bank.processed_at).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' }) : '—'} />
+                            </>}
                             <Detail label="Ngân hàng" value={bank.gateway} />
                             <Detail label="Số tiền" value={formatCurrency(bank.amount)} />
                             <Detail label="Nguồn" value={['dvkpay', 'gpmpay'].includes(bank.provider) ? 'DVKPay' : bank.provider === 'sepay' ? 'SePay' : bank.provider} />

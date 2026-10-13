@@ -190,6 +190,9 @@ class ImportController extends Controller
     {
         DB::transaction(function () use ($orderId, $newStatus, $cancelReason, $note): void {
             $order = GoldTransaction::query()->lockForUpdate()->findOrFail($orderId);
+            if ((int) $order->processing_version === 3) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['status'=>'Tool v3 đang giữ biên nhận giao dịch; hãy để tool tự đối chiếu trước.']);
+            }
 
             if ($order->type !== GoldTransaction::TYPE_IMPORT) {
                 throw ValidationException::withMessages([

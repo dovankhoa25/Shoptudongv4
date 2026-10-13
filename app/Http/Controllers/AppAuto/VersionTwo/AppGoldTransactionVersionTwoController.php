@@ -22,6 +22,7 @@ class AppGoldTransactionVersionTwoController extends Controller
     public function index(Request $request)
     {
         $query = GoldTransaction::query()
+            ->where(fn ($q) => $q->whereNull('processing_version')->orWhere('processing_version', 2))
             ->where('updated_by', 'web')
             ->whereIn('status', ['pending', 'processing']);
 
@@ -175,6 +176,9 @@ class AppGoldTransactionVersionTwoController extends Controller
         try {
             $updatedTransaction = DB::transaction(function () use ($validated, $id) {
 
+                // Match v3 lock order: account before transaction, so legacy and v3 claims serialize.
+                $requestedBot = Bot::query()->whereKey($validated['bot_id'])->lockForUpdate()->firstOrFail();
+                abort_if(\App\Services\TradingV3\GoldTradingService::ownedByV3($requestedBot), 409, 'This bot is owned by tool v3.');
                 // 1) Lock transaction
                 $goldTransaction = GoldTransaction::query()
                     ->whereKey($id)
@@ -182,6 +186,9 @@ class AppGoldTransactionVersionTwoController extends Controller
                     ->firstOrFail();
 
                 $currentStatus = $goldTransaction->status;
+                abort_if((int) $goldTransaction->processing_version === 3, 409, 'This order requires tool v3.');
+                abort_unless((int) $requestedBot->server_id === (int) $goldTransaction->server_id, 422, 'Order and bot server_id differ.');
+                abort_if($goldTransaction->bot_id && (int) $goldTransaction->bot_id !== $requestedBot->id, 409, 'Order belongs to another bot.');
                 $newStatus = $validated['status'];
 
                 // Retry cùng trạng thái là idempotent. updated_by chỉ ghi nguồn cập nhật cuối,
@@ -217,6 +224,8 @@ class AppGoldTransactionVersionTwoController extends Controller
 
                 // 3) Update transaction trước
                 $goldTransaction->status = $newStatus;
+                $goldTransaction->processing_version ??= 2;
+                $goldTransaction->bot_id = $requestedBot->id;
                 $goldTransaction->updated_by = 'app';
                 $goldTransaction->last_synced_at = now();
 
@@ -358,6 +367,7 @@ class AppGoldTransactionVersionTwoController extends Controller
                 'gold_bar_qty' => (int) $validated['gold_bar_qty'],
             ]);
         } catch (\Throwable $e) {
+            if ($e instanceof \Symfony\Component\HttpKernel\Exception\HttpException) throw $e;
             return response()->json([
                 'success' => false,
                 'message' => $e->getMessage(),

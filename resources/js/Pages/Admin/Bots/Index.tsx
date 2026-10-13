@@ -18,6 +18,7 @@ import { IBot } from '@/InterFaces/bot';
 import { IServer } from '@/InterFaces/server';
 import { IServerGameLogin } from '@/InterFaces/servergamelogin';
 import BotHistoryQuickModal from './BotHistoryQuickModal';
+import TradingBotActivity from '@/Components/TradingBotActivity';
 
 interface BotFilters {
     search?: string;
@@ -439,6 +440,12 @@ export default function BotPage() {
                     </div>
                 );
             }
+        },
+        {
+            key: 'activity',
+            title: 'Hoạt động trực tiếp',
+            width: 270,
+            render: (_, record: IBot) => <TradingBotActivity botId={record.id} botType="bot" />,
         },
         {
             key: 'created_at',

@@ -23,12 +23,12 @@ class AppBotVersionTwoController extends Controller
     {
         $bots = Bot::query()
             ->when($request->filled('server_id'), fn($q) => $q->where('server_id', $request->server_id))
-            ->when($request->filled('type'), fn($q) => $q->where('type', $request->type))
+            ->when($request->filled('type'), fn($q) => $q->withRole($request->type))
             ->where('status', true)
             ->whereHas('server', function ($q) {
                 $q->where('status', true);
             })
-            ->get();
+            ->get()->reject(fn($bot)=>\App\Services\TradingV3\GoldTradingService::ownedByV3($bot))->values();
 
 
         return AppBotVersionTwoResource::collection($bots)
@@ -153,6 +153,7 @@ class AppBotVersionTwoController extends Controller
 
         $bot = DB::transaction(function () use ($id, $updateData, $validated) {
             $bot = Bot::query()->whereKey($id)->lockForUpdate()->firstOrFail();
+            abort_if(\App\Services\TradingV3\GoldTradingService::ownedByV3($bot), 409, 'This bot is owned by tool v3.');
 
             $oldData = $bot->only([
                 'name',

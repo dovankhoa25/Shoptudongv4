@@ -22,6 +22,8 @@ class GemTransactionResource extends JsonResource
             'character_name' => $this->character_name,
             'amount_vnd' => (int) $this->amount_vnd,
             'gem_qty' => (int) $this->gem_qty,
+            'delivery_method' => $this->delivery_method,
+            'bot_id' => $this->bot_id,
             'price_at_transaction' => $this->price_at_transaction,
             'status' => $this->status,
             'updated_by' => $this->updated_by,

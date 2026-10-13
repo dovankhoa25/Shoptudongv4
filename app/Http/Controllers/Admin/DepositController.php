@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Enums\Permission;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\Deposit\ResolveBankTopupRequest;
 use App\Http\Requests\Admin\Deposit\SaveCardTypeRequest;
 use App\Http\Resources\Admin\Deposit\AtmTopupResource;
 use App\Http\Resources\Admin\Deposit\CardResource;
@@ -11,10 +12,13 @@ use App\Http\Resources\Admin\Deposit\CardTypeResource;
 use App\Models\AtmTopup;
 use App\Models\Card;
 use App\Models\CardType;
+use App\Services\Deposit\ResolveBankTopupService;
+use App\Services\UserRealtimeNotifier;
 use App\Support\AdminTableSearch;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
@@ -39,7 +43,9 @@ class DepositController extends Controller
             'bank_start_date' => ['nullable', 'date_format:Y-m-d'],
             'bank_end_date' => ['nullable', 'date_format:Y-m-d'],
             'bank_all_dates' => ['nullable', 'boolean'],
-            'bank_status' => ['nullable', Rule::in([AtmTopup::STATUS_COMPLETED, AtmTopup::STATUS_NEEDS_REVIEW])],
+            'review_search' => ['nullable', 'string', 'max:191'],
+            'review_provider' => ['nullable', Rule::in(['sepay', 'dvkpay'])],
+            'review_gateway' => ['nullable', 'string', 'max:50'],
         ]);
 
         $cardSearch = trim((string) ($validated['card_search'] ?? ''));
@@ -58,7 +64,7 @@ class DepositController extends Controller
 
         // Both webhook providers store bank timestamps in the application timezone.
         // Use an exclusive next-day bound to include the entire end date.
-        $bankQuery = AtmTopup::query()
+        $bankQuery = AtmTopup::query()->where('status', AtmTopup::STATUS_COMPLETED)
             ->when(! $bankAllDates, fn ($query) => $query
                 ->where('transaction_at', '>=', CarbonImmutable::parse($bankStartDate, 'Asia/Ho_Chi_Minh')->startOfDay()->setTimezone(config('app.timezone')))
                 ->where('transaction_at', '<', CarbonImmutable::parse($bankEndDate, 'Asia/Ho_Chi_Minh')->addDay()->startOfDay()->setTimezone(config('app.timezone'))))
@@ -66,8 +72,16 @@ class DepositController extends Controller
                 AdminTableSearch::applyPreset($query, $bankSearch, 'bankTopups');
             })
             ->when($validated['bank_gateway'] ?? null, fn ($query, string $gateway) => $query->where('gateway', $gateway))
-            ->when($validated['bank_status'] ?? null, fn ($query, string $status) => $query->where('status', $status))
             ->when($validated['bank_provider'] ?? null, fn ($query, string $provider) => $query
+                ->whereIn('provider', $provider === 'dvkpay' ? ['dvkpay', 'gpmpay'] : ['sepay']));
+
+        $reviewSearch = trim((string) ($validated['review_search'] ?? ''));
+        $reviewQuery = AtmTopup::query()->where('status', AtmTopup::STATUS_NEEDS_REVIEW)
+            ->when($reviewSearch !== '', function ($query) use ($reviewSearch) {
+                AdminTableSearch::applyPreset($query, $reviewSearch, 'bankTopups');
+            })
+            ->when($validated['review_gateway'] ?? null, fn ($query, string $gateway) => $query->where('gateway', $gateway))
+            ->when($validated['review_provider'] ?? null, fn ($query, string $provider) => $query
                 ->whereIn('provider', $provider === 'dvkpay' ? ['dvkpay', 'gpmpay'] : ['sepay']));
 
         return Inertia::render('Admin/Deposits/Index', [
@@ -94,10 +108,16 @@ class DepositController extends Controller
             ),
             'bankTopups' => fn () => AtmTopupResource::collection(
                 (clone $bankQuery)
-                    ->with('user:id,username,email,deleted_at')
-                    ->orderByRaw('CASE WHEN status = ? THEN 0 ELSE 1 END', [AtmTopup::STATUS_NEEDS_REVIEW])
+                    ->with(['user:id,username,email,deleted_at', 'transaction.performer:id,username,deleted_at'])
                     ->latest('id')
                     ->paginate($this->perPage($request, 'bank_per_page'), ['*'], 'bank_page')
+                    ->withQueryString()
+            ),
+            'reviewTopups' => fn () => AtmTopupResource::collection(
+                (clone $reviewQuery)
+                    ->with('user:id,username,email,deleted_at')
+                    ->latest('id')
+                    ->paginate($this->perPage($request, 'review_per_page'), ['*'], 'review_page')
                     ->withQueryString()
             ),
             'filters' => [
@@ -113,7 +133,11 @@ class DepositController extends Controller
                     'start_date' => $bankStartDate,
                     'end_date' => $bankEndDate,
                     'all_dates' => (int) $bankAllDates,
-                    'status' => $validated['bank_status'] ?? null,
+                ],
+                'review' => [
+                    'search' => $validated['review_search'] ?? null,
+                    'provider' => $validated['review_provider'] ?? null,
+                    'gateway' => $validated['review_gateway'] ?? null,
                 ],
             ],
             'bankToday' => $today,
@@ -130,9 +154,37 @@ class DepositController extends Controller
                 'active_card_types' => CardType::query()->where('status', true)->count(),
             ],
             'can' => [
+                'resolve_bank_topups' => $request->user()->hasRole('super-admin')
+                    || $request->user()->can(Permission::UsersAdjustBalance->value),
                 'manage_card_types' => $request->user()->hasRole('super-admin')
                     || $request->user()->can(Permission::DepositsManageCardTypes->value),
             ],
+        ]);
+    }
+
+    public function resolveBankTopup(
+        ResolveBankTopupRequest $request,
+        AtmTopup $topup,
+        ResolveBankTopupService $resolver,
+        UserRealtimeNotifier $realtime,
+    ): JsonResponse {
+        $result = $resolver->resolve($topup, (int) $request->validated('user_id'), $request->user(), [
+            'ip_address' => $request->ip(),
+            'user_agent' => Str::limit((string) $request->userAgent(), 500, ''),
+        ]);
+        $resolved = $result['topup'];
+        $realtime->balanceChanged(
+            (int) $resolved->user_id,
+            (int) $resolved->amount,
+            $result['balance'],
+            'Đã xử lý nạp tiền #'.$resolved->id.': +'.number_format((int) $resolved->amount).' VNĐ.',
+        );
+
+        return response()->json([
+            'message' => 'Đã xử lý đơn nạp tiền và cộng tiền cho user.',
+            'balance' => $result['balance'],
+            'topup_id' => $resolved->id,
+            'user_id' => $resolved->user_id,
         ]);
     }
 

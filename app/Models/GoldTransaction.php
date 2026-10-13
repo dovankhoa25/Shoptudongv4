@@ -25,6 +25,7 @@ class GoldTransaction extends Model
     protected $guarded = [];
 
     protected $hidden = [
+        'processing_version', 'processing_owner', 'processing_token', 'character_id', 'delivery_phase', 'delivery_data', 'processing_started_at', 'completed_at',
         'cancel_requested_at',
         'refunded_at',
     ];
@@ -32,6 +33,8 @@ class GoldTransaction extends Model
     protected function casts(): array
     {
         return [
+            'processing_version' => 'integer', 'character_id' => 'integer', 'delivery_data' => 'array',
+            'processing_started_at' => 'datetime', 'completed_at' => 'datetime',
             'amount_vnd' => 'integer',
             'gold_qty' => 'integer',
             'gold_bar_qty' => 'integer',

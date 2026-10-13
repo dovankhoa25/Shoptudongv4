@@ -30,7 +30,7 @@ class BotController extends Controller
 
         // Filter by bot type
         if ($request->filled('type')) {
-            $query->where('type', $request->type);
+            $query->withRole($request->type);
         }
 
         // Filter by status
@@ -59,8 +59,8 @@ class BotController extends Controller
         $stats = [
             'total_bots' => Bot::count(),
             'active_bots' => Bot::where('status', true)->count(),
-            'selling_bots' => Bot::whereIn('type', ['selling_main', 'selling_sub'])->count(),
-            'import_bots' => Bot::whereIn('type', ['import_main', 'import_sub'])->count(),
+            'selling_bots' => Bot::where(fn($q)=>$q->withRole('selling_main')->orWhere(fn($q)=>$q->withRole('selling_sub')))->count(),
+            'import_bots' => Bot::where(fn($q)=>$q->withRole('import_main')->orWhere(fn($q)=>$q->withRole('import_sub')))->count(),
             'total_gold' => Bot::where('status', true)->sum('gold_qty'),
             'total_gold_bars' => Bot::where('status', true)->sum('gold_bar_qty'),
         ];
@@ -217,6 +217,15 @@ class BotController extends Controller
         }
 
         DB::transaction(function () use ($bot, $updateData) {
+            $bot = Bot::whereKey($bot->id)->lockForUpdate()->firstOrFail();
+            if (\App\Models\GoldTransaction::where('bot_id', $bot->id)->where('status', 'processing')->exists()
+                || \App\Services\TradingV3\GoldTradingService::activeTransfers($bot->id)->isNotEmpty()) {
+                foreach (['gold_qty','gold_bar_qty','server_id','server_game_id','account_name','account_password','type'] as $field) {
+                    if (array_key_exists($field, $updateData) && (string) $updateData[$field] !== (string) $bot->$field) {
+                        throw \Illuminate\Validation\ValidationException::withMessages([$field=>'Bot đang giữ giao dịch chưa đối chiếu; chưa thể thay đổi tồn, tài khoản, server hoặc vai trò.']);
+                    }
+                }
+            }
             $oldServerId = (int) $bot->server_id;
             $oldGold = (int) $bot->gold_qty;
             $oldBars = (int) $bot->gold_bar_qty;

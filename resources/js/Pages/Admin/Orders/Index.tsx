@@ -14,6 +14,7 @@ import { Tag, Badge, Statistic, Card, Row, Col, Button, Dropdown, Menu, Space } 
 import { useToast } from "@/Components/ToastProvider";
 import { useTableFilters } from "@/Hooks/useTableFilters";
 import { IGoldTransaction } from '@/InterFaces/goldtransaction';
+import GoldDeliveryProgress from '@/Components/GoldDeliveryProgress';
 import { IServer } from '@/InterFaces/server';
 import { IBot } from '@/InterFaces/bot';
 import RefundModal from './RefundModal';
@@ -335,6 +336,12 @@ export default function OrderPage() {
                     </div>
                 );
             }
+        },
+        {
+            key: 'delivery_phase',
+            title: 'Tiến độ giao dịch',
+            width: 210,
+            render: (_, record: IGoldTransaction) => <GoldDeliveryProgress order={record} />,
         },
         {
             key: 'created_at',

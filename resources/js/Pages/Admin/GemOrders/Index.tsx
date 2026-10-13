@@ -227,6 +227,10 @@ export default function GemOrderPage() {
             )
         },
         {
+            key: 'delivery_method', title: 'Cách giao', width: 150,
+            render: (method: string, record: IGemOrder) => <div className="text-xs"><div>{method === 'gift_ticket' ? 'Vé tặng ngọc' : 'Đồ ký gửi'}</div>{record.bot_id && <div className="text-slate-500">Bot #{record.bot_id} · Đã chi {record.bot_gem_spent_qty ?? 0} ngọc</div>}{record.processing_version === 3 && <div className="text-blue-600">Tool v3 · {record.delivery_phase}</div>}</div>,
+        },
+        {
             key: 'character_name',
             title: 'Nhân vật',
             width: 150,

@@ -8,6 +8,8 @@ use Illuminate\Database\Eloquent\Model;
 class Bot extends Model
 {
     use HasFactory;
+    protected $hidden = ['stock_version', 'v3_worker_id', 'v3_lease_until'];
+    protected $casts = ['stock_version'=>'integer', 'v3_lease_until'=>'datetime', 'gold_qty'=>'integer', 'gold_bar_qty'=>'integer', 'status'=>'boolean', 'last_synced_at'=>'datetime'];
 
     protected $fillable = [
         'name',
@@ -39,6 +41,11 @@ class Bot extends Model
         return $this->belongsTo(ServerGameLogin::class);
     }
 
+    public function loginServer()
+    {
+        return $this->belongsTo(ServerGameLogin::class, 'server_game_id');
+    }
+
     // 🔗 Bot có thể được gán cho nhiều Orders
     public function orders()
     {
@@ -61,4 +68,17 @@ class Bot extends Model
     {
         return $query->where('status', true);
     }
+
+    public function scopeWithRole($query, string $role)
+    {
+        $role = trim($role);
+        $escaped = str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $role);
+        return $query->where(function ($q) use ($role, $escaped) {
+            $q->whereRaw("REPLACE(type, ' ', '') = ?", [$role])
+                ->orWhereRaw("REPLACE(type, ' ', '') LIKE ? ESCAPE '!'", [$escaped.',%'])
+                ->orWhereRaw("REPLACE(type, ' ', '') LIKE ? ESCAPE '!'", ['%,'.$escaped])
+                ->orWhereRaw("REPLACE(type, ' ', '') LIKE ? ESCAPE '!'", ['%,'.$escaped.',%']);
+        });
+    }
+
 }

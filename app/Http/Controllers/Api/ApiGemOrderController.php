@@ -193,6 +193,7 @@ class ApiGemOrderController extends Controller
             'server_id' => 'required|exists:servers,id',
             'character_name' => 'required|string|min:3|max:191',
             'money_amount' => 'required|integer|min:1',
+            'delivery_method' => 'nullable|in:consignment,gift_ticket',
         ]);
 
         $user = $request->user();
@@ -257,15 +258,21 @@ class ApiGemOrderController extends Controller
         ]);
 
         // ✅ Tính ngọc
-        $multiplier = $gemPrice->multiplier;
+        $deliveryMethod = $validated['delivery_method'] ?? 'consignment';
+        $multiplier = $gemPrice->multiplierFor($deliveryMethod);
         $moneyAmount = $validated['money_amount'];
 
-        $baseAmount = bcdiv((string) $moneyAmount, '10000', 8);
-        $multipliedAmount = bcmul($baseAmount, (string) $multiplier, 8);
-        $gemQtyTotal = (int) ceil((float) bcmul($multipliedAmount, '10', 8));
+        $gemQtyTotal = $gemPrice->calculateOrderGems($moneyAmount, $deliveryMethod);
 
-        // ✅ Giới hạn 20,000 ngọc/lần
-        if ($gemQtyTotal > 20000) {
+        if ($deliveryMethod === 'gift_ticket' && ($gemQtyTotal <= 0 || $gemQtyTotal % 10 !== 0)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Mỗi vé tặng 10 ngọc. Vui lòng chọn số tiền nhận số ngọc là bội của 10.',
+            ], 422);
+        }
+
+        // Ký gửi giữ giới hạn cũ; vé giới hạn bởi tồn khả dụng của một bot.
+        if ($deliveryMethod === 'consignment' && $gemQtyTotal > 20000) {
             return response()->json([
                 'success' => false,
                 'message' => 'Bạn chỉ được mua tối đa 20,000 ngọc trong một lần giao dịch.',
@@ -326,6 +333,7 @@ class ApiGemOrderController extends Controller
                 ], 422);
             }
             // ✅ Trừ tiền user
+            $assignedBot=$deliveryMethod==='gift_ticket' ? \App\Services\TradingV3\GemStock::reserveBot((int)$validated['server_id'],$gemQtyTotal) : null;
             $affected = User::where('id', $user->id)
                 ->where('balance', '>=', $moneyAmount)
                 ->decrement('balance', $moneyAmount);
@@ -349,6 +357,8 @@ class ApiGemOrderController extends Controller
                 'character_name' => $characterName,
                 'amount_vnd' => $moneyAmount,
                 'gem_qty' => $gemQtyTotal,
+                'delivery_method' => $deliveryMethod,
+                'bot_id' => $assignedBot?->id,
                 'price_at_transaction' => $multiplier,
                 'status' => 'pending',
                 'updated_by' => 'web',
@@ -375,6 +385,7 @@ class ApiGemOrderController extends Controller
             );
 
             DB::commit();
+            \App\Support\ApiCache::clearGroups(['public:gembot']);
 
             return response()->json([
                 'success' => true,
@@ -385,6 +396,8 @@ class ApiGemOrderController extends Controller
                     'character_name' => $order->character_name,
                     'amount_vnd' => $order->amount_vnd,
                     'gem_qty' => $order->gem_qty,
+                    'delivery_method' => $order->delivery_method,
+                    'bot_id' => $order->bot_id,
                     'multiplier' => $order->price_at_transaction,
                     'status' => $order->status,
                     'created_at' => $order->created_at,
@@ -394,6 +407,7 @@ class ApiGemOrderController extends Controller
             ], 201);
         } catch (\Exception $e) {
             DB::rollBack();
+            if($e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface) return response()->json(['success'=>false,'message'=>$e->getMessage()],$e->getStatusCode());
 
             return response()->json([
                 'success' => false,

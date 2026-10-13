@@ -29,6 +29,7 @@ class ServerInfoResource extends JsonResource
 
             // Giá ngọc
             'gem_multiplier' => $currentGemPrice?->multiplier ?? null, // Hệ số giá ngọc
+            'gem_gift_ticket_multiplier' => $currentGemPrice ? (float) $currentGemPrice->multiplierFor('gift_ticket') : null,
             'gem_min_amount' => $currentGemPrice ? (int) $currentGemPrice->min_amount : null,
 
             // Số lượng ngọc available

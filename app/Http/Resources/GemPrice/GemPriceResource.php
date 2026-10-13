@@ -24,6 +24,8 @@ class GemPriceResource extends JsonResource
                 }),
             ],
             'multiplier' => $this->multiplier,
+            'gift_ticket_multiplier' => $this->gift_ticket_multiplier,
+            'gift_ticket_gems_per_10k' => (float) $this->resource->multiplierFor('gift_ticket') * 10,
             'min_amount' => (int) ($this->min_amount ?? 10000),
             'multiplier_display' => $this->multiplier_display, // x13, x13.5
             'gems_per_10k' => $this->gems_per_base, // 130, 135

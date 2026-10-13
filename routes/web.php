@@ -562,6 +562,12 @@ Route::prefix('admin')
             Route::get('/', 'index')
                 ->middleware(Permission::middleware(Permission::DepositsView))
                 ->name('index');
+            Route::post('/bank-topups/{topup}/resolve', 'resolveBankTopup')
+                ->middleware([
+                    Permission::middleware(Permission::DepositsView),
+                    Permission::middleware(Permission::UsersAdjustBalance),
+                ])
+                ->name('bank-topups.resolve');
             Route::post('/card-types', 'storeCardType')
                 ->middleware(Permission::middleware(Permission::DepositsManageCardTypes))
                 ->name('card-types.store');

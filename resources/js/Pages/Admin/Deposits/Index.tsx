@@ -6,6 +6,7 @@ import { Column, DataTable } from '@/Components/Table/DataTable';
 import { useTableFilters } from '@/Hooks/useTableFilters';
 import { formatCurrency } from '@/Utils/currencyHelper';
 import { PageProps, PaginatedData } from '@/types';
+import ResolveBankTopupModal from './ResolveBankTopupModal';
 import CardTypeModal, { CardTypeItem } from './CardTypeModal';
 import DepositDetailModal, { BankTopupItem, CardDepositItem, DepositUser } from './DepositDetailModal';
 
@@ -13,9 +14,11 @@ interface DepositsPageProps extends PageProps {
     cardTypes: { data: CardTypeItem[] };
     cards: PaginatedData<CardDepositItem>;
     bankTopups: PaginatedData<BankTopupItem>;
+    reviewTopups: PaginatedData<BankTopupItem>;
     filters: {
+        review: { search?: string; gateway?: string; provider?: string };
         card: { search?: string; status?: string; card_type_id?: number };
-        bank: { search?: string; gateway?: string; status?: string; provider?: string; start_date: string; end_date: string; all_dates: number };
+        bank: { search?: string; gateway?: string; provider?: string; start_date: string; end_date: string; all_dates: number };
     };
     gateways: string[];
     bankToday: string;
@@ -26,10 +29,10 @@ interface DepositsPageProps extends PageProps {
         pending_cards: number;
         active_card_types: number;
     };
-    can: { manage_card_types: boolean };
+    can: { manage_card_types: boolean; resolve_bank_topups: boolean };
 }
 
-type Tab = 'bank' | 'cards' | 'types';
+type Tab = 'bank' | 'review' | 'cards' | 'types';
 
 const STATUS_META: Record<string, { label: string; className: string }> = {
     needs_review: { label: 'Cần xử lý', className: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' },
@@ -59,8 +62,9 @@ const UserCell = ({ user }: { user: DepositUser | null }) => user ? (
 const formatDateTime = (value: string) => new Date(value).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
 
 export default function DepositsPage() {
-    const { cardTypes, cards, bankTopups, filters: initialFilters, gateways, bankToday, stats, can } = usePage<DepositsPageProps>().props;
+    const { cardTypes, cards, bankTopups, reviewTopups, filters: initialFilters, gateways, bankToday, stats, can } = usePage<DepositsPageProps>().props;
     const [activeTab, setActiveTab] = useState<Tab>('bank');
+    const [resolving, setResolving] = useState<BankTopupItem | null>(null);
     const [editingType, setEditingType] = useState<CardTypeItem | null | undefined>(undefined);
     const [detail, setDetail] = useState<{ type: 'card'; item: CardDepositItem } | { type: 'bank'; item: BankTopupItem } | null>(null);
 
@@ -80,6 +84,16 @@ export default function DepositsPage() {
         paramPrefix: 'bank_',
         preserveOtherParams: true,
         only: ['bankTopups', 'filters', 'stats', 'bankToday'],
+        debounceMs: 400,
+    });
+
+    const reviewTable = useTableFilters({
+        routeName: 'admin.deposits.index',
+        initialFilters: initialFilters.review,
+        initialData: reviewTopups,
+        paramPrefix: 'review_',
+        preserveOtherParams: true,
+        only: ['reviewTopups', 'filters', 'stats'],
         debounceMs: 400,
     });
 
@@ -192,7 +206,6 @@ export default function DepositsPage() {
         { key: 'user', title: 'Người dùng', width: 230, render: (user: DepositUser | null, bank: BankTopupItem) => !user && bank.status === 'needs_review' ? <span className="text-sm italic text-amber-600">Chưa xác định</span> : <UserCell user={user} /> },
         {
             key: 'status', title: 'Trạng thái', width: 260,
-            filters: [{ text: 'Cần xử lý', value: 'needs_review' }, { text: 'Hoàn tất', value: 'completed' }],
             render: (value: string, bank: BankTopupItem) => (
                 <div className="space-y-1">
                     <StatusBadge status={value} />
@@ -232,8 +245,22 @@ export default function DepositsPage() {
         { key: 'transaction_at', title: 'Thời gian', width: 180, render: (value: string) => <span className="text-sm text-slate-500">{formatDateTime(value)}</span> },
     ], [gateways]);
 
+    const reviewColumns: Column<BankTopupItem>[] = useMemo(() => can.resolve_bank_topups ? [
+        ...bankColumns,
+        {
+            key: 'resolve', title: 'Xử lý', width: 180,
+            render: (_: unknown, item: BankTopupItem) => (
+                <button type="button" onClick={() => setResolving(item)}
+                    className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
+                    Xử lý và cộng tiền
+                </button>
+            ),
+        },
+    ] : bankColumns, [bankColumns, can.resolve_bank_topups]);
+
     const tabs: { key: Tab; label: string; icon: typeof Landmark; count: number }[] = [
         { key: 'bank', label: 'Nạp ngân hàng', icon: Landmark, count: bankTopups.meta.total },
+        { key: 'review', label: 'Cần xử lý', icon: Clock3, count: stats.pending_bank_topups },
         { key: 'cards', label: 'Nạp thẻ', icon: CreditCard, count: cards.meta.total },
         { key: 'types', label: 'Loại thẻ', icon: Settings2, count: cardTypes.data.length },
     ];
@@ -301,18 +328,15 @@ export default function DepositsPage() {
                     </form>
                     {stats.pending_bank_topups > 0 && (
                         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
-                            <p><strong>{stats.pending_bank_topups.toLocaleString('vi-VN')} giao dịch cần xử lý (tất cả ngày).</strong> Các giao dịch này chưa cộng tiền; xem nội dung và lý do bên dưới.</p>
-                            <button type="button" className="font-semibold underline" onClick={() => {
-                                bankTable.handleSearch('');
-                                bankTable.setColumnFilters({ start_date: bankToday, end_date: bankToday, all_dates: 1, status: 'needs_review' });
-                            }}>Xem toàn bộ cần xử lý</button>
+                            <p><strong>{stats.pending_bank_topups.toLocaleString('vi-VN')} giao dịch cần xử lý (tất cả ngày).</strong> Các giao dịch này chưa cộng tiền; mở tab Cần xử lý để kiểm tra và chọn user nhận tiền.</p>
+                            <button type="button" className="font-semibold underline" onClick={() => setActiveTab('review')}>Mở tab Cần xử lý</button>
                         </div>
                     )}
                     <DataTable<BankTopupItem>
                         storageKey="admin-bank-topups-table" density="compact" rowKey="id" selectable={false} striped stickyHeader
                         data={bankTopups.data} columns={bankColumns} loading={bankTable.loading}
                         searchValue={bankTable.filters.search} searchPreset="bankTopups" searchPlaceholder="Tìm user, ID giao dịch, mã thanh toán hoặc tham chiếu..."
-                        title="Lịch sử nạp ngân hàng" description={`${bankTopups.meta.total.toLocaleString('vi-VN')} giao dịch · ${bankPeriod}`}
+                        title="Nạp ngân hàng đã hoàn tất" description={`${bankTopups.meta.total.toLocaleString('vi-VN')} giao dịch · ${bankPeriod}`}
                         onView={item => setDetail({ type: 'bank', item })} onSearch={bankTable.handleSearch}
                         onReset={bankTable.handleResetFilters} onFiltersChange={values => bankTable.setColumnFilters(previous => ({
                             ...values,
@@ -323,6 +347,19 @@ export default function DepositsPage() {
                         pagination={{ current: bankTopups.meta.current_page, pageSize: bankTopups.meta.per_page, total: bankTopups.meta.total, showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], onChange: bankTable.handlePageChange }}
                     />
                 </div>
+            )}
+
+            {activeTab === 'review' && (
+                <DataTable<BankTopupItem>
+                    storageKey="admin-bank-review-topups-table" density="compact" rowKey="id" selectable={false} striped stickyHeader
+                    data={reviewTopups.data} columns={reviewColumns} loading={reviewTable.loading}
+                    searchValue={reviewTable.filters.search} searchPreset="bankTopups" searchPlaceholder="Tìm ID giao dịch, nội dung hoặc mã tham chiếu..."
+                    title="Giao dịch ngân hàng cần xử lý" description="Tất cả ngày · chưa cộng tiền cho user"
+                    onView={item => setDetail({ type: 'bank', item })} onSearch={reviewTable.handleSearch}
+                    onReset={reviewTable.handleResetFilters} onFiltersChange={reviewTable.setColumnFilters}
+
+                    pagination={{ current: reviewTopups.meta.current_page, pageSize: reviewTopups.meta.per_page, total: reviewTopups.meta.total, showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], onChange: reviewTable.handlePageChange }}
+                />
             )}
 
             {activeTab === 'cards' && (
@@ -355,6 +392,11 @@ export default function DepositsPage() {
                     onSaved={() => router.reload({ only: ['cardTypes', 'stats'] })}
                 />
             )}
+            {resolving && <ResolveBankTopupModal
+                topup={resolving}
+                onClose={() => setResolving(null)}
+                onResolved={() => router.reload({ only: ['bankTopups', 'reviewTopups', 'stats'] })}
+            />}
             {detail && <DepositDetailModal type={detail.type} item={detail.item} onClose={() => setDetail(null)} />}
         </div>
     );

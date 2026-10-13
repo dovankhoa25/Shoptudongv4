@@ -10,6 +10,12 @@ export interface IGemOrder {
         name: string;
     };
     character_name: string;
+    delivery_method?: 'consignment' | 'gift_ticket';
+    bot_id?: number | null;
+    processing_version?: number | null;
+    delivery_phase?: string | null;
+    bot_gem_spent_qty?: number;
+    tickets_used_qty?: number;
     amount_vnd: number;
     amount_vnd_formatted: string;
     gem_qty: number;

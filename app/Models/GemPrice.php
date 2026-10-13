@@ -14,12 +14,14 @@ class GemPrice extends Model
     protected $fillable = [
         'server_id',
         'multiplier',
+        'gift_ticket_multiplier',
         'min_amount',
         'status'
     ];
 
     protected $casts = [
         'multiplier' => 'decimal:2',
+        'gift_ticket_multiplier' => 'decimal:2',
         'min_amount' => 'integer',
         'status' => 'boolean'
     ];
@@ -59,19 +61,37 @@ class GemPrice extends Model
     /**
      * Calculate gems from VND amount
      */
-    public function calculateGems($vndAmount)
+    public function multiplierFor(string $deliveryMethod = 'consignment'): string
     {
-        // Số ngọc = (Số tiền / 10,000) * multiplier * 10
-        return floor(($vndAmount / self::BASE_PRICE) * $this->multiplier * 10);
+        return (string) ($deliveryMethod === 'gift_ticket'
+            ? ($this->gift_ticket_multiplier ?? $this->multiplier)
+            : $this->multiplier);
+    }
+
+    public function calculateGems($vndAmount, string $deliveryMethod = 'consignment')
+    {
+        return $this->calculateOrderGems($vndAmount, $deliveryMethod);
+    }
+
+    /** Keep checkout and calculator consistent, with consignment rounded down. */
+    public function calculateOrderGems($vndAmount, string $deliveryMethod = 'consignment'): int
+    {
+        $baseAmount = bcdiv((string) $vndAmount, (string) self::BASE_PRICE, 8);
+        $multipliedAmount = bcmul($baseAmount, $this->multiplierFor($deliveryMethod), 8);
+        $gems = bcmul($multipliedAmount, '10', 8);
+
+        return $deliveryMethod === 'gift_ticket'
+            ? (int) ceil((float) $gems)
+            : (int) bcdiv($gems, '1', 0);
     }
 
     /**
      * Calculate VND from gems amount
      */
-    public function calculateVnd($gemsAmount)
+    public function calculateVnd($gemsAmount, string $deliveryMethod = 'consignment')
     {
         // Số tiền = (Số ngọc / (multiplier * 10)) * 10,000
-        return ceil(($gemsAmount / ($this->multiplier * 10)) * self::BASE_PRICE);
+        return ceil(($gemsAmount / ($this->multiplierFor($deliveryMethod) * 10)) * self::BASE_PRICE);
     }
 
     /**

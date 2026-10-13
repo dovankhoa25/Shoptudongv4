@@ -13,6 +13,8 @@ class ApiGemPriceResource extends JsonResource
             'id'                        => $this->id,
             'server_id'           => $this->server_id,
             'multiplier'    => $this->multiplier,
+            'gift_ticket_multiplier' => $this->gift_ticket_multiplier,
+            'gift_ticket_gems_per_10k' => (float) $this->resource->multiplierFor('gift_ticket') * 10,
             'min_amount' => (int) ($this->min_amount ?? 10000),
             'status'                    => $this->status,
             'created_at'                => $this->created_at,

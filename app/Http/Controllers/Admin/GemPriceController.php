@@ -71,6 +71,7 @@ class GemPriceController extends Controller
         $validated = $request->validate([
             'server_id' => 'required|exists:servers,id',
             'multiplier' => 'required|numeric|min:1|max:100',
+            'gift_ticket_multiplier' => 'nullable|numeric|decimal:0,2|min:1|max:100',
             'min_amount' => 'sometimes|required|integer|min:1',
             'status' => 'required|boolean',
         ]);
@@ -99,6 +100,7 @@ class GemPriceController extends Controller
         $validated = $request->validate([
             'server_id' => 'required|exists:servers,id',
             'multiplier' => 'required|numeric|min:1|max:100',
+            'gift_ticket_multiplier' => 'nullable|numeric|decimal:0,2|min:1|max:100',
             'min_amount' => 'sometimes|required|integer|min:1',
             'status' => 'required|boolean',
         ]);
@@ -173,10 +175,15 @@ class GemPriceController extends Controller
             'updates' => 'required|array',
             'updates.*.server_id' => 'required|exists:servers,id',
             'updates.*.multiplier' => 'required|numeric|min:1|max:100',
+            'updates.*.gift_ticket_multiplier' => 'nullable|numeric|decimal:0,2|min:1|max:100',
         ]);
 
         foreach ($validated['updates'] as $update) {
-            $minimumAmount = GemPrice::getCurrentMultiplier($update['server_id'])?->min_amount ?? 10000;
+            $currentPrice = GemPrice::getCurrentMultiplier($update['server_id']);
+            $minimumAmount = $currentPrice?->min_amount ?? 10000;
+            $ticketMultiplier = array_key_exists('gift_ticket_multiplier', $update)
+                ? $update['gift_ticket_multiplier']
+                : $currentPrice?->gift_ticket_multiplier;
             // Deactivate old prices
             GemPrice::where('server_id', $update['server_id'])
                 ->where('status', true)
@@ -186,6 +193,7 @@ class GemPriceController extends Controller
             GemPrice::create([
                 'server_id' => $update['server_id'],
                 'multiplier' => $update['multiplier'],
+                'gift_ticket_multiplier' => $ticketMultiplier,
                 'min_amount' => $minimumAmount,
                 'status' => true,
             ]);
@@ -213,6 +221,8 @@ class GemPriceController extends Controller
                     'server_id' => $server->id,
                     'server_name' => $server->name,
                     'multiplier' => $gemPrice->multiplier ?? null,
+                    'gift_ticket_multiplier' => $gemPrice?->gift_ticket_multiplier,
+                    'gift_ticket_gems_per_10k' => $gemPrice ? (float) $gemPrice->multiplierFor('gift_ticket') * 10 : 0,
                     'multiplier_display' => $gemPrice ? $gemPrice->multiplier_display : 'Chưa cài đặt',
                     'gems_per_10k' => $gemPrice ? $gemPrice->gems_per_base : 0,
                     'last_updated' => $gemPrice->updated_at ?? null,
@@ -230,6 +240,7 @@ class GemPriceController extends Controller
         $validated = $request->validate([
             'server_id' => 'required|exists:servers,id',
             'vnd_amount' => 'required|integer|min:1',
+            'delivery_method' => 'nullable|in:consignment,gift_ticket',
         ]);
 
         $gemPrice = GemPrice::getCurrentMultiplier($validated['server_id']);
@@ -242,13 +253,18 @@ class GemPriceController extends Controller
 
         $request->validate(['vnd_amount' => ['required', 'integer', 'min:'.($gemPrice->min_amount ?? 10000)]]);
 
-        $gems = $gemPrice->calculateGems($validated['vnd_amount']);
+        $deliveryMethod = $validated['delivery_method'] ?? 'consignment';
+        $multiplier = $gemPrice->multiplierFor($deliveryMethod);
+        $gems = $gemPrice->calculateGems($validated['vnd_amount'], $deliveryMethod);
 
         return response()->json([
             'vnd_amount' => $validated['vnd_amount'],
             'gems' => $gems,
-            'multiplier' => $gemPrice->multiplier,
-            'multiplier_display' => $gemPrice->multiplier_display,
+            'multiplier' => $multiplier,
+            'multiplier_display' => $deliveryMethod === 'consignment'
+                ? $gemPrice->multiplier_display
+                : 'x'.number_format((float) $multiplier, 2),
+            'delivery_method' => $deliveryMethod,
         ]);
     }
 }

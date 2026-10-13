@@ -129,6 +129,7 @@ class GemOrderController extends Controller
 
         $result = DB::transaction(function () use ($order, $validated): array {
             $lockedOrder = GemTransaction::query()->lockForUpdate()->findOrFail($order->id);
+            if($lockedOrder->processing_version===3) throw ValidationException::withMessages(['status'=>'Đơn đang thuộc tool v3. Đối soát journal và biên nhận trước khi hoàn tiền.']);
 
             if (! in_array($lockedOrder->status, [
                 GemTransaction::STATUS_PENDING,
@@ -395,6 +396,7 @@ class GemOrderController extends Controller
         ?string $note,
         string $action,
     ): GemTransaction {
+        if($order->processing_version===3) throw ValidationException::withMessages(['status'=>'Đơn đang thuộc tool v3. Cần đối soát biên nhận trước khi đổi trạng thái thủ công.']);
         if (! $this->canTransitionStatus($order, $targetStatus)) {
             throw ValidationException::withMessages([
                 'status' => "Không thể chuyển trạng thái từ {$order->status} sang {$targetStatus}.",

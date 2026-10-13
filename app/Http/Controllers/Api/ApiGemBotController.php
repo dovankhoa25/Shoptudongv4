@@ -25,7 +25,7 @@ class ApiGemBotController extends Controller
             $bots = GemBot::query()
                 ->where('server_id', $serverId)
                 ->where('status', true)
-                ->get(['id', 'name', 'server_id', 'map_name', 'map_id', 'area_number', 'coordinates', 'status']);
+                ->get(['id', 'name', 'server_id', 'map_name', 'map_id', 'area_number', 'coordinates', 'status', 'gem_qty', 'gift_ticket_qty', 'consign_item_qty', 'v3_worker_id', 'v3_lease_until']);
 
             return [
                 'success' => true,

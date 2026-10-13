@@ -29,6 +29,8 @@ class GemBotResource extends JsonResource
             }),
             'server_game_id' => $this->server_game_id,
             'gem_qty' => $this->gem_qty,
+            'gift_ticket_qty' => $this->gift_ticket_qty,
+            'consign_item_qty' => $this->consign_item_qty,
             'gem_qty_formatted' => number_format($this->gem_qty),
             'map_info' => [
                 'map_name' => $this->map_name,

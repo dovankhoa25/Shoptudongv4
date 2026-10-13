@@ -17,6 +17,7 @@ import { IGemBot } from '@/InterFaces/gembot';
 import { IServer } from '@/InterFaces/server';
 import { IServerGameLogin } from '@/InterFaces/servergamelogin';
 import GemBotHistoryQuickModal from './GemBotHistoryQuickModal';
+import TradingBotActivity from '@/Components/TradingBotActivity';
 
 interface GemBotFilters {
     search?: string;
@@ -256,6 +257,18 @@ export default function GemBotPage() {
                     )} */}
                 </div>
             )
+        },
+        {
+            key: 'gift_ticket_qty', title: 'Vé ngọc', width: 100, align: 'right',
+            render: (qty: number | null) => qty == null ? 'Chưa đồng bộ' : qty.toLocaleString('vi-VN'),
+        },
+        {
+            key: 'consign_item_qty', title: 'Đồ ký gửi', width: 110, align: 'right',
+            render: (qty: number | null) => qty == null ? 'Chưa đồng bộ' : qty.toLocaleString('vi-VN'),
+        },
+        {
+            key: 'activity', title: 'Hoạt động', width: 230,
+            render: (_: unknown, record: IGemBot) => <TradingBotActivity botId={record.id} />,
         },
         {
             key: 'updated_by',

@@ -11,8 +11,8 @@ use Illuminate\Validation\ValidationException;
 
 class BankTopupCreditor
 {
-    /** The caller must own a newly created topup and hold the user's row lock. */
-    public function credit(AtmTopup $topup, User $user): int
+    /** The caller must hold the user's lock and exclusively own the uncredited topup. */
+    public function credit(AtmTopup $topup, User $user, ?User $actor = null, ?string $description = null, array $metadata = []): int
     {
         if (DB::transactionLevel() === 0) {
             throw new \LogicException('Bank topups must be credited inside a database transaction.');
@@ -30,14 +30,14 @@ class BankTopupCreditor
         $balanceAfter = $balanceBefore + $amount;
         $user->forceFill(['balance' => $balanceAfter])->save();
 
-        Transaction::query()->create([
+        Transaction::withoutUserOwnedScope()->create([
             'user_id' => $user->id,
-            'performed_by' => null,
+            'performed_by' => $actor?->id,
             'type' => Transaction::TYPE_BANK_DEPOSIT,
             'amount' => $amount,
             'balance_before' => $balanceBefore,
             'balance_after' => $balanceAfter,
-            'description' => 'Nạp tiền qua '.$topup->gateway.' - atm #'.$topup->provider_transaction_id.'.',
+            'description' => $description ?? 'Nạp tiền qua '.$topup->gateway.' - atm #'.$topup->provider_transaction_id.'.',
             'related_type' => AtmTopup::class,
             'related_id' => (string) $topup->id,
             // The source label can change; the existing payment identity must remain stable.
@@ -46,6 +46,7 @@ class BankTopupCreditor
                 'gateway' => $topup->gateway,
                 'reference_code' => $topup->reference_code,
                 'payment_code' => $topup->payment_code,
+                ...$metadata,
             ],
         ]);
 

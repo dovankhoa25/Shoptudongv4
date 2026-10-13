@@ -338,6 +338,7 @@ interface GemPriceModalProps {
 interface FormData {
     server_id: number;
     multiplier: number;
+    gift_ticket_multiplier: number | null;
     min_amount: number;
     status: boolean;
 }
@@ -362,6 +363,8 @@ export default function GemPriceModal({ open, onClose, gemPrice, servers }: GemP
                 form.setFieldsValue({
                     server_id: gemPrice.server.id,
                     multiplier: gemPrice.multiplier,
+                    gift_ticket_multiplier: gemPrice.gift_ticket_multiplier == null
+                        ? null : Number(gemPrice.gift_ticket_multiplier),
                     min_amount: gemPrice.min_amount ?? 10000,
                     status: gemPrice.status,
                 });
@@ -370,6 +373,7 @@ export default function GemPriceModal({ open, onClose, gemPrice, servers }: GemP
                 form.setFieldsValue({
                     status: true,
                     multiplier: 13, // Default x13
+                    gift_ticket_multiplier: null,
                     min_amount: 10000,
                 });
             }
@@ -382,6 +386,7 @@ export default function GemPriceModal({ open, onClose, gemPrice, servers }: GemP
         const submitData = {
             server_id: values.server_id,
             multiplier: values.multiplier,
+            gift_ticket_multiplier: values.gift_ticket_multiplier ?? null,
             min_amount: values.min_amount,
             status: values.status,
         };
@@ -434,11 +439,17 @@ export default function GemPriceModal({ open, onClose, gemPrice, servers }: GemP
     };
 
     // Calculate gems based on current multiplier
-    const calculateGems = (amount: number, multiplier: number) => {
-        return Math.floor((amount / 10000) * multiplier * 10);
+    const calculateGems = (amount: number, multiplier: number, deliveryMethod: 'consignment' | 'gift_ticket' = 'consignment') => {
+        const multiplierUnits = Math.round(multiplier * 100);
+        const gems = (amount * multiplierUnits) / 100000;
+        return deliveryMethod === 'gift_ticket' ? Math.ceil(gems) : Math.floor(gems);
     };
 
     const currentMultiplier = Form.useWatch('multiplier', form) || 13;
+    const configuredTicketMultiplier = Form.useWatch('gift_ticket_multiplier', form);
+    const currentTicketMultiplier = configuredTicketMultiplier ?? currentMultiplier;
+    const ticketGems = calculateGems(testAmount, currentTicketMultiplier, 'gift_ticket');
+    const wholeTickets = ticketGems % 10 === 0;
 
     // Common multiplier presets
     const multiplierPresets = [
@@ -513,7 +524,7 @@ export default function GemPriceModal({ open, onClose, gemPrice, servers }: GemP
                     label={
                         <span className="flex items-center gap-2">
                             <Hash className="w-4 h-4 text-purple-600" />
-                            Hệ số nhân (Multiplier)
+                            Hệ số ngọc bằng đồ ký
                         </span>
                     }
                     name="multiplier"
@@ -559,11 +570,37 @@ export default function GemPriceModal({ open, onClose, gemPrice, servers }: GemP
                     </div>
                 </div>
 
+                <Form.Item
+                    label="Hệ số ngọc bằng vé"
+                    name="gift_ticket_multiplier"
+                    extra="Để trống để dùng giá đồ ký. Hệ số càng cao, khách nhận càng nhiều ngọc với cùng số tiền."
+                    rules={[{
+                        validator: (_, value) => {
+                            if (value === null || value === undefined) return Promise.resolve();
+                            if (!Number.isFinite(value) || value < 1 || value > 100) {
+                                return Promise.reject(new Error('Hệ số vé phải từ 1 đến 100.'));
+                            }
+                            return Promise.resolve();
+                        }
+                    }]}
+                >
+                    <InputNumber
+                        placeholder={`Theo đồ ký: x${currentMultiplier}`}
+                        size="large"
+                        style={{ width: '100%' }}
+                        min={1}
+                        max={100}
+                        step={0.5}
+                        precision={2}
+                        addonBefore="x"
+                    />
+                </Form.Item>
+
                 {/* Live Calculator */}
                 <div className="bg-gradient-to-r from-purple-50 to-pink-50 p-4 rounded-lg mb-4 border border-purple-200">
                     <h4 className="font-medium text-purple-700 mb-3 flex items-center gap-2">
                         <Calculator className="w-4 h-4" />
-                        Máy tính ngọc (Hệ số x{currentMultiplier})
+                        Xem trước số ngọc
                     </h4>
 
                     <div className="space-y-3">
@@ -582,17 +619,30 @@ export default function GemPriceModal({ open, onClose, gemPrice, servers }: GemP
                             />
                         </div>
 
-                        <div className="bg-white p-3 rounded-lg">
-                            <div className="flex justify-between items-center">
-                                <span className="text-gray-600">Số ngọc nhận được:</span>
-                                <span className="text-2xl font-bold text-purple-600">
-                                    {calculateGems(testAmount, currentMultiplier).toLocaleString()} ngọc
-                                </span>
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                            <div className="bg-white p-3 rounded-lg">
+                                <div className="text-sm text-gray-600">Đồ ký · x{currentMultiplier}</div>
+                                <div className="text-lg font-bold text-purple-600">
+                                    {calculateGems(testAmount, currentMultiplier).toLocaleString('vi-VN')} ngọc
+                                </div>
+                            </div>
+                            <div className="bg-white p-3 rounded-lg">
+                                <div className="text-sm text-gray-600">
+                                    Vé · x{currentTicketMultiplier}{configuredTicketMultiplier == null ? ' (theo đồ ký)' : ''}
+                                </div>
+                                <div className="text-lg font-bold text-purple-600">
+                                    {ticketGems.toLocaleString('vi-VN')} ngọc
+                                </div>
+                                <div className={`text-xs ${wholeTickets ? 'text-gray-500' : 'text-amber-700'}`}>
+                                    {wholeTickets
+                                        ? `${(ticketGems / 10).toLocaleString('vi-VN')} vé · 1 vé = 10 ngọc`
+                                        : 'Chọn số tiền cho số ngọc là bội của 10 để mua vé.'}
+                                </div>
                             </div>
                         </div>
 
                         <div className="text-xs text-gray-500">
-                            Công thức: ({testAmount.toLocaleString()} / 10,000) × {currentMultiplier} × 10 = {calculateGems(testAmount, currentMultiplier).toLocaleString()} ngọc
+                            Ngọc = (số tiền ÷ 10.000) × hệ số × 10. Đồ ký làm tròn xuống; vé làm tròn lên và cần số ngọc là bội của 10.
                         </div>
                     </div>
                 </div>

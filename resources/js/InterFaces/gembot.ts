@@ -10,6 +10,8 @@ export interface IGemBot {
         name: string;
     };
     gem_qty: number;
+    gift_ticket_qty?: number | null;
+    consign_item_qty?: number | null;
     server_game_id: number;
     gem_qty_formatted: string;
     map_info: {

@@ -170,7 +170,7 @@ export default function GemPricePage() {
         },
         {
             key: 'multiplier_display',
-            title: 'Hệ số',
+            title: 'Hệ số đồ ký',
             width: 120,
             align: 'center',
             sortable: true,
@@ -185,7 +185,7 @@ export default function GemPricePage() {
         },
         {
             key: 'gems_per_10k_formatted',
-            title: 'Ngọc/10k VND',
+            title: 'Đồ ký/10.000đ',
             width: 160,
             align: 'center',
             render: (gemsFormatted: string, record: IGemPrice) => (
@@ -201,6 +201,28 @@ export default function GemPricePage() {
                     </div>
                 </div>
             )
+        },
+        {
+            key: 'gift_ticket_gems_per_10k',
+            title: 'Vé/10.000đ',
+            width: 180,
+            align: 'center',
+            render: (_value: number, record: IGemPrice) => {
+                const followsConsignment = record.gift_ticket_multiplier == null;
+                const multiplier = Number(record.gift_ticket_multiplier ?? record.multiplier);
+                const gems = record.gift_ticket_gems_per_10k ?? multiplier * 10;
+
+                return (
+                    <div className="text-center">
+                        <div className="font-semibold text-purple-700">
+                            {Number(gems).toLocaleString('vi-VN')} ngọc
+                        </div>
+                        <div className="text-xs text-gray-500">
+                            {followsConsignment ? 'Theo đồ ký' : `Hệ số x${multiplier}`}
+                        </div>
+                    </div>
+                );
+            }
         },
         {
             key: 'status_label',
@@ -319,7 +341,7 @@ export default function GemPricePage() {
                                 )}
                             </h1>
                             <p className="text-sm text-gray-600">
-                                Thiết lập hệ số nhân giá ngọc cho các server (10k VND = hệ số x 10 ngọc)
+                                Giá đồ ký và vé theo server · 10.000đ = hệ số × 10 ngọc; vé để trống dùng giá đồ ký.
                             </p>
                         </div>
                     </div>

@@ -34,6 +34,12 @@ class GemOrderResource extends JsonResource
                 }),
             ],
             'character_name' => $this->character_name,
+            'delivery_method' => $this->delivery_method,
+            'bot_id' => $this->bot_id,
+            'processing_version' => $this->processing_version,
+            'delivery_phase' => $this->delivery_phase,
+            'bot_gem_spent_qty' => $this->bot_gem_spent_qty,
+            'tickets_used_qty' => $this->tickets_used_qty,
             'amount_vnd' => $this->amount_vnd,
             'amount_vnd_formatted' => number_format($this->amount_vnd, 0, ',', '.').' VND',
             'gem_qty' => $this->gem_qty,
@@ -44,11 +50,13 @@ class GemOrderResource extends JsonResource
             'status_label' => $this->getStatusLabel(),
             'status_color' => $this->getStatusColor(),
             'can_refund' => in_array($this->status, ['pending', 'processing'], true)
+                && $this->processing_version !== 3
                 && $this->refunded_at === null
                 && (int) $this->amount_vnd > 0,
-            'can_complete' => $this->status === 'processing',
-            'can_cancel' => in_array($this->status, ['pending', 'processing']),
+            'can_complete' => $this->status === 'processing' && $this->processing_version !== 3,
+            'can_cancel' => in_array($this->status, ['pending', 'processing']) && $this->processing_version !== 3,
             'can_update_status' => $this->refunded_at === null
+                && $this->processing_version !== 3
                 && in_array($this->status, ['pending', 'processing', 'cancelled']),
             'is_timeout_cancellation' => $this->status === 'cancelled'
                 && $this->cancel_requested_at !== null

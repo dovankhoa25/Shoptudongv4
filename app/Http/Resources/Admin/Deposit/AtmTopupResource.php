@@ -31,6 +31,12 @@ class AtmTopupResource extends JsonResource
             'description' => $this->description,
             'status' => $this->status,
             'review_reason' => $this->review_reason,
+            'processed_by' => $this->whenLoaded('transaction', fn () => $this->transaction?->performer ? [
+                'id' => $this->transaction->performer->id,
+                'username' => $this->transaction->performer->username,
+            ] : null),
+            'processed_at' => $this->whenLoaded('transaction', fn () => $this->transaction?->performed_by
+                ? $this->transaction->created_at?->toISOString() : null),
             'created_at' => $this->created_at?->toISOString(),
         ];
     }

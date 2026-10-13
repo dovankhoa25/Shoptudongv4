@@ -16,12 +16,12 @@ class AppBotController extends Controller
     {
         $bots = Bot::query()
             ->when($request->filled('server_id'), fn($q) => $q->where('server_id', $request->server_id))
-            ->when($request->filled('type'), fn($q) => $q->where('type', $request->type))
+            ->when($request->filled('type'), fn($q) => $q->withRole($request->type))
             ->where('status', true) // bot status
             ->whereHas('server', function ($q) {
                 $q->where('status', true); // server status
             })
-            ->get();
+            ->get()->reject(fn($bot)=>\App\Services\TradingV3\GoldTradingService::ownedByV3($bot))->values();
 
         return response()->json([
             'success' => true,
@@ -35,7 +35,9 @@ class AppBotController extends Controller
 
     public function update(Request $request, $id)
     {
-        $bot = Bot::findOrFail($id);
+        return \Illuminate\Support\Facades\DB::transaction(function () use ($request, $id) {
+        $bot = Bot::whereKey($id)->lockForUpdate()->firstOrFail();
+        abort_if(\App\Services\TradingV3\GoldTradingService::ownedByV3($bot), 409, 'This bot is owned by tool v3.');
 
         // if ($bot->updated_by !== 'web') {
         //     return response()->json([
@@ -69,5 +71,6 @@ class AppBotController extends Controller
             'message' => 'Bot updated successfully',
             'data'    => $bot->fresh(), // Lấy lại bản mới từ DB
         ]);
+        });
     }
 }

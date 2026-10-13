@@ -24,6 +24,8 @@ export interface IGoldTransaction {
     gold_bar_qty_formatted: string;
     pure_gold_qty: number;
     pure_gold_qty_formatted: string;
+    delivery_phase?: string | null;
+    delivery_data?: { progress?: { bars?: number; pure?: number }; remaining?: { bars?: number; pure?: number } } | null;
     price_at_transaction: number;
     price_formatted: string;
     status: 'pending' | 'processing' | 'completed' | 'cancelled' | 'failed';

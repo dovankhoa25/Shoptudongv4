@@ -27,7 +27,7 @@ class BotController extends Controller
             $request->validate(['server_id' => 'exists:servers,id']);
             $bots = Bot::query()
             ->where('server_id', $request->server_id)
-            ->where('type', $request->type)
+            ->withRole($request->type)
             ->where('status', true)
             ->get(['id', 'name', 'server_id', 'type', 'map_name', 'map_id', 'area_number', 'status']);
 

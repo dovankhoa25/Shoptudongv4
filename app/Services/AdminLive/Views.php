@@ -31,7 +31,7 @@ class Views {
             '/admin/games/accounts/history'=>[['nick_order'],['orders','stats']],
             '/admin/withdrawals'=>[['withdrawal'],['withdrawals','stats']],
             '/admin/cards'=>[['card_recharge'],['cards']],
-            '/admin/deposits'=>[['card_recharge','bank_deposit'],['cards','bankTopups','stats','cardTypes','gateways']],
+            '/admin/deposits'=>[['card_recharge','bank_deposit'],['cards','bankTopups','reviewTopups','stats','cardTypes','gateways']],
             '/admin/carot-recharges'=>[['carot_recharge'],['recharges','stats','statistics']],
             '/admin/transactions'=>[['balance_transaction','bank_deposit'],['transactions']],
             '/admin/users'=>[['balance_transaction','user'],['users']],
