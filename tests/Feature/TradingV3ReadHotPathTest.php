@@ -116,7 +116,7 @@ class TradingV3ReadHotPathTest extends TestCase
             ->assertJsonPath('data.0.id', $second->id)->assertJsonPath('data.0.available', ['bars' => 7, 'pure' => 80]);
     }
 
-    public function test_public_ticket_capacity_cache_expires_with_the_nearest_lease(): void
+    public function test_public_ticket_capacity_depends_on_stock_and_status_not_presence_expiry(): void
     {
         $this->travelTo(now()->startOfSecond());
         $create = fn(string $name, int $seconds) => GemBot::create(['name' => $name, 'account_name' => $name, 'account_password' => 'dummy',
@@ -127,7 +127,7 @@ class TradingV3ReadHotPathTest extends TestCase
         $url = '/api/gem/bots?server_id='.$this->server->id;
         $this->getJson($url)->assertOk()->assertJsonPath('data.0.gift_available_gems', 100)->assertJsonPath('data.1.gift_available_gems', 100);
         $this->travel(91)->seconds();
-        $this->getJson($url)->assertOk()->assertJsonPath('data.0.gift_available_gems', 0)->assertJsonPath('data.1.gift_available_gems', 100);
+        $this->getJson($url)->assertOk()->assertJsonPath('data.0.gift_available_gems', 100)->assertJsonPath('data.1.gift_available_gems', 100);
         $this->travelBack();
     }
 }

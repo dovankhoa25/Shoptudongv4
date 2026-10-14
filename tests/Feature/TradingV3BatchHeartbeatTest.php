@@ -82,7 +82,7 @@ class TradingV3BatchHeartbeatTest extends TestCase
         $this->assertDatabaseCount('inventory_movements', 0);
     }
 
-    public function test_partial_rejections_do_not_extend_disabled_other_owner_or_missing_bot(): void
+    public function test_presence_accepts_old_worker_metadata_and_rejects_disabled_or_missing_bot(): void
     {
         $allowed = $this->bot(); $off = $this->bot(true, false); $taken = $this->bot(); $serverOff = $this->bot();
         $disabledServer = Server::create(['name' => 'disabled', 'status' => false]);
@@ -91,14 +91,13 @@ class TradingV3BatchHeartbeatTest extends TestCase
         $until = $taken->v3_lease_until->toIso8601String();
         $this->heartbeat([$serverOff->id, $taken->id, $off->id, $allowed->id, 999999])->assertOk()
             ->assertJsonPath('gem_bots.0.code', 'renewed')->assertJsonPath('gem_bots.1.code', 'disabled')
-            ->assertJsonPath('gem_bots.2.code', 'owned_elsewhere')->assertJsonPath('gem_bots.3.code', 'server_disabled')
+            ->assertJsonPath('gem_bots.2.code', 'renewed')->assertJsonPath('gem_bots.3.code', 'server_disabled')
             ->assertJsonPath('gem_bots.4.code', 'not_found');
         $this->assertNull($off->refresh()->v3_worker_id); $this->assertNull($serverOff->refresh()->v3_worker_id);
-        $this->assertSame($this->other, $taken->refresh()->v3_worker_id);
-        $this->assertSame($until, $taken->v3_lease_until->toIso8601String());
+        $this->assertSame($this->worker, $taken->refresh()->v3_worker_id);
     }
 
-    public function test_expired_lease_does_not_allow_takeover_of_unfinished_orders_or_gold_transfers(): void
+    public function test_presence_does_not_modify_or_block_unfinished_orders_and_gold_transfers(): void
     {
         $legacy = $this->bot(); $gem = $this->bot(); $gold = $this->bot(false); $transferred = $this->bot(false);
         $this->order($legacy, null, null); $this->order($gem, 3, $this->other); $this->order($gold, 3, $this->other);
@@ -107,21 +106,23 @@ class TradingV3BatchHeartbeatTest extends TestCase
             'transaction_type' => 'gold_transfer', 'idempotency_key' => 'batch-transfer-test', 'source' => 'app', 'occurred_at' => now(),
             'meta' => ['status' => 'claimed', 'from_bot_id' => $transferred->id, 'to_bot_id' => $gold->id, 'processing_owner' => $this->other]]);
         $this->heartbeat([$legacy->id, $gem->id], [$gold->id, $transferred->id])->assertOk()
-            ->assertJsonPath('gem_bots.0.code', 'legacy_order')->assertJsonPath('gem_bots.1.code', 'unfinished_order')
-            ->assertJsonPath('gold_bots.0.code', 'unfinished_order')->assertJsonPath('gold_bots.1.code', 'unfinished_transfer');
-        $this->assertNull($gem->refresh()->v3_worker_id); $this->assertNull($transferred->refresh()->v3_worker_id);
+            ->assertJsonPath('gem_bots.0.code', 'renewed')->assertJsonPath('gem_bots.1.code', 'renewed')
+            ->assertJsonPath('gold_bots.0.code', 'renewed')->assertJsonPath('gold_bots.1.code', 'renewed');
+        $this->assertSame($this->worker,$gem->refresh()->v3_worker_id); $this->assertSame($this->worker,$transferred->refresh()->v3_worker_id);
+        $this->assertSame($this->other,GoldTransaction::where('bot_id',$gold->id)->first()->processing_owner);
         $this->assertDatabaseCount('inventory_movements', 1);
     }
 
-    public function test_same_owner_can_resume_expired_lease_and_other_worker_cannot_take_it_after_batch_commit(): void
+    public function test_presence_from_a_new_run_is_not_a_financial_order_takeover(): void
     {
         $gem = $this->bot(); $gold = $this->bot(false);
         $this->order($gem, 3, $this->worker); $this->order($gold, 3, $this->worker);
         foreach ([$gem, $gold] as $bot) $bot->forceFill(['v3_worker_id' => $this->worker, 'v3_lease_until' => now()->subSeconds(10)])->save();
         $this->heartbeat([$gem->id], [$gold->id])->assertOk()->assertJsonPath('gem_bots.0.granted', true)->assertJsonPath('gold_bots.0.granted', true);
         $this->heartbeat([$gem->id], [$gold->id], 150, $this->other)->assertOk()
-            ->assertJsonPath('gem_bots.0.code', 'owned_elsewhere')->assertJsonPath('gold_bots.0.code', 'owned_elsewhere');
-        $this->assertSame($this->worker, $gem->refresh()->v3_worker_id);
+            ->assertJsonPath('gem_bots.0.code', 'renewed')->assertJsonPath('gold_bots.0.code', 'renewed');
+        $this->assertSame($this->other, $gem->refresh()->v3_worker_id);
+        $this->assertSame($this->worker,GoldTransaction::where('bot_id',$gold->id)->first()->processing_owner);
     }
 
     public function test_batch_uses_constant_query_count_and_one_bulk_write_per_bot_table(): void
@@ -154,9 +155,11 @@ class TradingV3BatchHeartbeatTest extends TestCase
         foreach ([['gem', $gem], ['gold', $gold]] as [$type, $bot]) {
             $this->signed("/app/v3/{$type}/bots/{$bot->id}", ['worker_id' => $this->worker, 'action' => 'lease'], 'PUT')->assertOk();
         }
-        // Falling back to the old 90s endpoint shortens a batch lease and must retire its cached positive capacity.
+        // Old gold lease requests are compatibility reads, while the old gem endpoint
+        // may still adjust legacy metadata. Neither one gates current financial work.
         foreach ($groups as $group) {
-            $this->assertNotSame($generations[$group], Cache::get(ApiCache::key('generation', $group)));
+            if ($group === 'public:bots') $this->assertSame($generations[$group], Cache::get(ApiCache::key('generation', $group)));
+            else $this->assertNotSame($generations[$group], Cache::get(ApiCache::key('generation', $group)));
             $generations[$group] = Cache::get(ApiCache::key('generation', $group));
         }
         foreach ([['gem', $gem], ['gold', $gold]] as [$type, $bot]) {
@@ -181,7 +184,7 @@ class TradingV3BatchHeartbeatTest extends TestCase
             // Rebuild now using the short lease, then expire it before the old 120s card would expire.
             $this->getJson($url)->assertOk()->assertJsonPath('data.0.gift_available_gems', 100);
             $this->travel(91)->seconds();
-            $this->getJson($url)->assertOk()->assertJsonPath('data.0.gift_available_gems', 0);
+            $this->getJson($url)->assertOk()->assertJsonPath('data.0.gift_available_gems', 100);
             $this->travelBack();
             $gem->delete();
         }

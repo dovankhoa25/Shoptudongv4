@@ -221,7 +221,7 @@ class GoldTradingApiTest extends TestCase
         ])->assertCreated()
             ->assertJsonPath('success', true)
             ->assertJsonPath('data.server_id', $server->id)
-            ->assertJsonPath('data.gem_qty', 5);
+            ->assertJsonPath('data.gem_qty', 4);
 
         $order = GemTransaction::query()->where('user_id', $user->id)->sole();
         $this->assertSame(97000, (int) $user->refresh()->balance);

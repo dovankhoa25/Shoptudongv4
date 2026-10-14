@@ -66,14 +66,13 @@ class GemOrderResource extends JsonResource
             'status' => $this->status,
             'status_label' => $this->getStatusLabel(),
             'status_color' => $this->getStatusColor(),
-            'can_refund' => in_array($this->status, ['pending', 'processing'], true)
-                && $this->processing_version !== 3
+            'can_refund' => $this->status === 'pending'
                 && $this->refunded_at === null
                 && (int) $this->amount_vnd > 0,
-            'can_complete' => $this->status === 'processing' && $this->processing_version !== 3,
-            'can_cancel' => in_array($this->status, ['pending', 'processing']) && $this->processing_version !== 3,
+            'can_complete' => $this->status === 'processing' && !$this->processing_token && empty($this->delivery_data['claim']),
+            'can_cancel' => $this->status === 'pending' || ($this->status === 'processing' && !$this->processing_token && empty($this->delivery_data['claim'])),
             'can_update_status' => $this->refunded_at === null
-                && $this->processing_version !== 3
+                && !($this->status === 'processing' && ($this->processing_token || !empty($this->delivery_data['claim'])))
                 && in_array($this->status, ['pending', 'processing', 'cancelled']),
             'is_timeout_cancellation' => $this->status === 'cancelled'
                 && $this->cancel_requested_at !== null

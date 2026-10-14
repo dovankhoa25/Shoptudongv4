@@ -19,12 +19,8 @@ class ApiGemBotController extends Controller
 
         $serverId = (int) $request->server_id;
         $cacheKey = ApiCache::key('gembot', 'server', $serverId, 'active');
-        // A cached positive ticket capacity must expire with its earliest lease, even when
-        // same-owner renewals deliberately avoid invalidating otherwise unchanged cards.
-        $leaseUntil = GemBot::query()->where('server_id', $serverId)->where('status', true)
-            ->whereNotNull('v3_worker_id')->whereNotNull('gift_ticket_qty')
-            ->where('v3_lease_until', '>', now())->min('v3_lease_until');
-        $ttl = $leaseUntil ? min(120, max(1, \Illuminate\Support\Carbon::parse($leaseUntil)->getTimestamp() - now()->getTimestamp())) : 120;
+        // Availability follows admin status and acknowledged stock, not a worker lease.
+        $ttl = 120;
 
         return ApiCache::rememberJson('public:gembot', $cacheKey, $ttl, function () use ($serverId, $request) {
             $request->validate(['server_id' => 'exists:servers,id']);

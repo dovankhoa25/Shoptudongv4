@@ -21,8 +21,8 @@ class ActivityController extends Controller
         foreach ($data['activities'] as $activity) {
             $type = $activity['bot_type']; $id = (int) $activity['bot_id']; $bot = $bots[$type][$id] ?? null;
             $labels = TradingActivityPublisher::labels($type);
-            if (!$bot || $bot->v3_worker_id !== $data['worker_id'] || !isset($labels[$activity['code']])) {
-                $rejected[] = ['bot_type' => $type, 'bot_id' => $id, 'reason' => !$bot ? 'not_found' : ($bot->v3_worker_id !== $data['worker_id'] ? 'not_owner' : 'invalid_code')];
+            if (!$bot || !isset($labels[$activity['code']])) {
+                $rejected[] = ['bot_type' => $type, 'bot_id' => $id, 'reason' => !$bot ? 'not_found' : 'invalid_code'];
                 continue;
             }
             $accepted[$type.':'.$id] = [...$activity, 'bot_id' => $id, 'server_id' => (int) $bot->server_id,

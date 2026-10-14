@@ -74,7 +74,7 @@ class TradingV3ActivityQueueTest extends TestCase
         $this->assertDatabaseCount('inventory_movements', 0); $this->assertDatabaseCount('transactions', 0);
     }
 
-    public function test_batch_rejects_unowned_missing_or_wrong_module_codes_without_harming_valid_frames(): void
+    public function test_batch_accepts_presence_from_old_worker_and_rejects_missing_or_wrong_module_codes(): void
     {
         $own = $this->bot(); $other = $this->bot('bot');
         $other->forceFill(['v3_worker_id' => (string) Str::uuid()])->save();
@@ -83,11 +83,10 @@ class TradingV3ActivityQueueTest extends TestCase
             ['bot_type' => 'bot', 'bot_id' => $other->id, 'code' => 'ready'],
             ['bot_type' => 'gem_bot', 'bot_id' => $own->id + 999999, 'code' => 'ready'],
             ['bot_type' => 'gem_bot', 'bot_id' => $own->id, 'code' => 'refilling'],
-        ])->assertOk()->assertJsonPath('accepted_count', 1)->assertJsonCount(3, 'rejected')
-            ->assertJsonPath('rejected.0.reason', 'not_owner')->assertJsonPath('rejected.1.reason', 'not_found')
-            ->assertJsonPath('rejected.2.reason', 'invalid_code');
+        ])->assertOk()->assertJsonPath('accepted_count', 2)->assertJsonCount(2, 'rejected')
+            ->assertJsonPath('rejected.0.reason', 'not_found')->assertJsonPath('rejected.1.reason', 'invalid_code');
         $this->runQueuedTradingActivities();
-        Event::assertDispatchedTimes(TradingBotActivity::class, 1);
+        Event::assertDispatchedTimes(TradingBotActivity::class, 2);
         Event::assertDispatched(TradingBotActivity::class, fn($event) => $event->activity['code'] === 'gifting');
         $this->batch([['bot_type' => 'gem_bot', 'bot_id' => $own->id, 'code' => 'ready', 'customer_message' => 'private']])->assertUnprocessable();
     }

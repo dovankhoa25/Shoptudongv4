@@ -6,10 +6,11 @@ class GoldOrderUpdateRequest extends FormRequest {
     public function rules(): array {
         $rules = [
             'worker_id'=>['required','uuid'], 'bot_id'=>['required','integer','min:1'],
-            'action'=>['required','in:claim,phase,receipt'], 'processing_token'=>['required_unless:action,claim','uuid'],
+            'action'=>['required','in:claim,phase,receipt,refund_pending,release_unstarted'], 'processing_token'=>['required_if:action,phase,receipt,release_unstarted','nullable','uuid'],
             'character_id'=>['nullable','integer','min:1'],
             'phase'=>['required_if:action,phase','string','in:waiting_customer,waiting_stock,trading,syncing,reconciling,waiting_login'],
             'step_id'=>['required_unless:action,claim','uuid'],
+            'timeout_seconds'=>['required_if:action,refund_pending','integer','between:1,86400'],
             'bars_qty'=>['required_if:action,receipt','integer','between:0,999'],
             'pure_gold_qty'=>['required_if:action,receipt','integer','between:0,2147483647'],
             'completed'=>['required_if:action,receipt','boolean'],
@@ -18,10 +19,11 @@ class GoldOrderUpdateRequest extends FormRequest {
             'bot_snapshot.gold_qty'=>['required_if:action,receipt','integer','min:0','max:9000000000000000'],
             'bot_snapshot.gold_bar_qty'=>['required_if:action,receipt','integer','between:0,999'],
             'bot_snapshot.name'=>['nullable','string','max:191'],
-            'evidence'=>['required_if:action,receipt','array:kind,confirmed,intent,fresh_login'],
+            'evidence'=>['required_if:action,receipt,release_unstarted','array:kind,confirmed,intent,fresh_login,no_effect'],
             'evidence.fresh_login'=>['nullable','boolean'],
             'evidence.kind'=>['required_if:action,receipt','in:sale,import'],
-            'evidence.confirmed'=>['exclude_unless:action,receipt','required','accepted'],
+            'evidence.confirmed'=>['exclude_unless:action,receipt,release_unstarted','required','accepted'],
+            'evidence.no_effect'=>['exclude_unless:action,release_unstarted','required','accepted'],
             'evidence.intent'=>['nullable','array'],
             'delivery_data'=>['prohibited'],
         ];

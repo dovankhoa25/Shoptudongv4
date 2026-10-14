@@ -107,7 +107,7 @@ class AppTradingWorkflowTest extends TestCase
             'id' => $order->id,
             'status' => GoldTransaction::STATUS_PROCESSING,
             'updated_by' => 'app',
-            'bot_id' => null,
+            'bot_id' => $bot->id,
         ]);
 
         $this->putJson(
@@ -123,7 +123,7 @@ class AppTradingWorkflowTest extends TestCase
             'id' => $order->id,
             'status' => GoldTransaction::STATUS_COMPLETED,
             'updated_by' => 'app',
-            'bot_id' => null,
+            'bot_id' => $bot->id,
         ]);
         $this->assertSame(800000000, (int) $bot->refresh()->gold_qty);
         $this->assertSame(18, (int) $bot->gold_bar_qty);

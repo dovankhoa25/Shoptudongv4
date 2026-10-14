@@ -122,7 +122,7 @@ class GemOrderWorkflowTest extends TestCase
     }
 
     #[DataProvider('refundableStatuses')]
-    public function test_admin_can_refund_pending_or_processing_gem_order_only_once(string $status): void
+    public function test_admin_refunds_pending_once_and_does_not_refund_processing(string $status): void
     {
         Role::findOrCreate('super-admin', 'web');
         $admin = User::factory()->create();
@@ -138,14 +138,20 @@ class GemOrderWorkflowTest extends TestCase
             ->get("/admin/gem-orders/{$order->id}")
             ->assertOk();
 
-        $this->actingAs($admin)
+        $refund = $this->actingAs($admin)
             ->from("/admin/gem-orders/{$order->id}")
             ->post("/admin/gem-orders/{$order->id}/refund", [
                 'refund_reason' => 'Admin đã kiểm tra và xác nhận hoàn',
                 'refund_amount' => 10000,
-            ])
-            ->assertRedirect("/admin/gem-orders/{$order->id}")
-            ->assertSessionHasNoErrors();
+            ])->assertRedirect("/admin/gem-orders/{$order->id}");
+        if ($status === 'processing') {
+            $refund->assertSessionHasErrors('status');
+            $this->assertSame('processing', $order->fresh()->status);
+            $this->assertNull($order->fresh()->refunded_at);
+            $this->assertSame(50000, (int) $customer->fresh()->balance);
+            return;
+        }
+        $refund->assertSessionHasNoErrors();
 
         $order->refresh();
         $this->assertSame(GemTransaction::STATUS_REFUNDED, $order->status);

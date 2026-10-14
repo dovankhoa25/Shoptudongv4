@@ -95,7 +95,7 @@ class TradingV3Test extends TestCase {
         $other=$this->bot();$this->lease($other);
         $this->callSigned('PUT',"/app/v3/gem-transactions/{$o->id}",['worker_id'=>$this->worker,'bot_id'=>$other->id,'action'=>'claim'])->assertUnprocessable();
         $this->claim($b,$o);
-        $this->callSigned('PUT',"/app/v3/gem/bots/{$b->id}",['worker_id'=>'00000000-0000-4000-8000-000000000002','action'=>'lease'])->assertConflict();
+        $this->callSigned('PUT',"/app/v3/gem/bots/{$b->id}",['worker_id'=>'00000000-0000-4000-8000-000000000002','action'=>'lease'])->assertOk();
     }
     public function test_public_ticket_order_reserves_stock_and_rejections_do_not_debit(): void {
         $b=$this->bot();$this->lease($b);
@@ -118,15 +118,19 @@ class TradingV3Test extends TestCase {
         $this->assertSame(80000,(int)$user->fresh()->balance);
         $this->assertSame(60,\App\Services\TradingV3\GemStock::giftCapacity($b->fresh()));
     }
-    public function test_v2_can_resume_an_idle_released_bot_but_cannot_touch_v3_work(): void {
+    public function test_v2_can_use_idle_bot_despite_old_lease_but_cannot_touch_an_unfinished_checkpoint(): void {
         $b=$this->bot();$this->lease($b);$o=$this->order($b,'consignment');
         $headers=['X-APP-KEY'=>'legacy-test'];
+        $this->getJson('/app/v2/gem/bots',$headers)->assertOk()->assertJsonCount(1,'data');
+        $this->putJson('/app/v2/gem/bots/'.$b->id,['gem_qty'=>100],$headers)->assertOk();
+        $token=$this->claim($b,$o);
+        $this->assertNotEmpty($token);
         $this->getJson('/app/v2/gem/bots',$headers)->assertOk()->assertJsonCount(0,'data');
         $this->putJson('/app/v2/gem/bots/'.$b->id,['gem_qty'=>1],$headers)->assertConflict();
+        $this->putJson('/app/v2/gem-transactions/'.$o->id,['status'=>'processing','bot_id'=>$b->id],$headers)->assertConflict();
         $this->callSigned('PUT',"/app/v3/gem/bots/{$b->id}",['worker_id'=>$this->worker,'action'=>'release'])->assertOk();
-        $this->getJson('/app/v2/gem/bots',$headers)->assertOk()->assertJsonCount(1,'data');
-        $this->putJson('/app/v2/gem-transactions/'.$o->id,['status'=>'processing','bot_id'=>$b->id],$headers)->assertOk()->assertJsonMissingPath('data.processing_owner')->assertJsonMissingPath('data.delivery_data');
-        $this->callSigned('PUT',"/app/v3/gem/bots/{$b->id}",['worker_id'=>$this->worker,'action'=>'lease'])->assertConflict();
+        $this->assertSame($token,$o->fresh()->processing_token);
+        $this->getJson('/app/v2/gem/bots',$headers)->assertOk()->assertJsonCount(0,'data');
     }
     public function test_claim_terms_and_phase_receipts_cannot_be_overwritten(): void {
         $b=$this->bot();$this->lease($b);$o=$this->order($b);$token=$this->claim($b,$o);

@@ -12,20 +12,15 @@ class GemTradingService {
             $bot=GemBot::whereKey($id)->lockForUpdate()->firstOrFail();
             if($d['action']==='lease') {
                 abort_unless($bot->status && $bot->server?->status,409,'Bot or server is disabled.');
-                abort_if($bot->v3_worker_id && $bot->v3_worker_id!==$d['worker_id'] && $bot->v3_lease_until?->isFuture(),409,'Bot is leased to another worker.');
-                abort_if(GemTransaction::where('bot_id',$id)->where('status','processing')->where(fn($q)=>$q->whereNull('processing_version')->orWhere('processing_version',2))->exists(),409,'Tool v2 has an unfinished order on this bot.');
-                abort_if(GemTransaction::where('bot_id',$id)->where('status','processing')
-                    ->whereNotNull('processing_owner')->where('processing_owner','!=',$d['worker_id'])->exists(),409,'Another worker has an unfinished order.');
                 $leaseUntil=now()->addSeconds(config('trading_v3.lease_seconds'));
                 $visibilityChanged=!$bot->v3_worker_id || !$bot->v3_lease_until?->isFuture() || $leaseUntil->lt($bot->v3_lease_until);
                 $bot->forceFill(['v3_worker_id'=>$d['worker_id'],'v3_lease_until'=>$leaseUntil])->save();
             } else {
-                $this->assertOwner($bot,$d['worker_id']);
                 if($d['action']==='release') {
-                    abort_if(GemTransaction::where('bot_id',$id)->where('status','processing')->exists(),409,'Unfinished orders must retain their owner.');
                     $bot->forceFill(['v3_worker_id'=>null,'v3_lease_until'=>null])->save();
                 } else {
-                    abort_if(GemTransaction::where('bot_id',$id)->where('status','processing')->exists(),409,'Stock correction waits until orders are reconciled.');
+                    abort_if(GemTransaction::where('bot_id',$id)->where('status','processing')->whereNotNull('processing_token')
+                        ->whereNotIn('delivery_phase',['waiting_customer','waiting_consignment','waiting_login','ready'])->exists(),409,'Stock correction waits until active receipts are reconciled.');
                     $this->applySnapshot($bot,$d,'sync_correction',null,null);
                 }
             }
@@ -33,9 +28,6 @@ class GemTradingService {
         },3);
         if($visibilityChanged) ApiCache::clearGroups(['public:gembot','public:server-prices']);
         return $bot;
-    }
-    private function assertOwner(GemBot $bot,string $worker): void {
-        abort_unless($bot->v3_worker_id===$worker,409,'Bot belongs to another worker.');
     }
     public function updateOrder(int $id,array $d): GemTransaction {
         $order=DB::transaction(function() use($id,$d) {
@@ -45,22 +37,45 @@ class GemTradingService {
             // A committed update may be ACKed after the bot was released or taken over.
             // This path never changes bot/order/stock, and authenticates the original order owner and frozen body.
             if($d['action']!=='claim' && isset($d['step_id'])) {
-                $suffix=$d['action']==='receipt'?'receipt':'phase';
+                $suffix=$d['action'];
                 $previous=InventoryMovement::where('idempotency_key',"trading-v3:gem:{$id}:{$d['step_id']}:{$suffix}")->first();
                 if($previous) {
-                    abort_unless($order->processing_version===3 && $order->processing_owner===$d['worker_id'] && (int)$order->bot_id===$bot->id
-                        && hash_equals((string)$order->processing_token,$d['processing_token']),409,'Original order owner does not match.');
+                    abort_unless((int)$previous->bot_id===$bot->id,409,'Acknowledged bot differs from original.');
                     abort_unless(hash_equals((string)($previous->meta['payload_hash']??''),$this->digest($d)),409,'Acknowledged body differs from original.');
                     return $order;
                 }
             }
-            $this->assertOwner($bot,$d['worker_id']);
             abort_unless((int)$bot->server_id===(int)$order->server_id,422,'Order and bot server_id differ.');
-            if($d['action']==='claim') {
-                if($order->processing_version===3 && $order->processing_owner===$d['worker_id'] && (int)$order->bot_id===$bot->id) return $order;
-                abort_unless($bot->status && $bot->server?->status && $bot->v3_lease_until?->isFuture(),409,'Bot is not available.');
-                abort_unless($order->status==='pending' && $order->processing_version===null,409,'Order was already claimed or is terminal.');
+            if(in_array($d['action'],['timeout','refund','refund_pending'],true)) {
                 abort_if($order->bot_id && (int)$order->bot_id!==$bot->id,409,'Order is assigned to another bot.');
+                $timeouts=app(OrderTimeoutService::class);
+                if($d['action']==='refund_pending') {
+                    if(in_array($order->status,['completed','refunded'],true))return $order;
+                    abort_unless($order->status==='pending',409,'Only pending orders can be refunded by the tool.');
+                    abort_unless($timeouts->refundPendingLocked($order,$d['timeout_seconds']),409,'Pending refund deadline has not elapsed or delivery is already started.');
+                    $this->workflow($bot,$order,$d);
+                    return $order;
+                } elseif($d['action']==='timeout') {
+                    if(in_array($order->status,['completed','cancelled','refunded'],true))return $order;
+                    abort_unless($order->status==='pending',409,'Only pending orders can time out.');
+                    abort_unless($timeouts->cancelLocked($order,$d['timeout_minutes'],'gem',$d['refund_grace_minutes']??null),409,'Pending timeout has not elapsed.');
+                } else {
+                    if($order->status==='refunded')return $order;
+                    abort_unless($order->status==='cancelled'&&$order->cancel_requested_at,409,'Only timeout-cancelled orders can be refunded.');
+                }
+                $timeouts->refundLocked($order,'gem');
+                if($d['action']==='refund')abort_unless($order->refunded_at!==null,409,'Refund grace period has not elapsed.');
+                $this->workflow($bot,$order,$d);
+                return $order;
+            }
+            if($d['action']==='claim') {
+                if(!in_array($order->status,['pending','processing'],true))return $order;
+                abort_if($order->bot_id && (int)$order->bot_id!==$bot->id,409,'Order is assigned to another bot.');
+                if($order->status==='processing') {
+                    abort_unless($order->processing_token && !empty($order->delivery_data['claim']),409,'legacy_checkpoint_missing: this order needs its original delivery checkpoint.');
+                    return $order;
+                }
+                abort_unless($bot->status && $bot->server?->status,409,'Bot is not available.');
                 $available=GemStock::available($bot,$order->id);
                 abort_unless($available['gems'] >= $order->gem_qty,409,'Gem inventory is reserved for other orders.');
                 if($order->delivery_method==='gift_ticket') {
@@ -68,20 +83,39 @@ class GemTradingService {
                     abort_unless($bot->gift_ticket_qty!==null && $available['tickets'] >= $order->gem_qty/10,409,'Insufficient verified ticket stock.');
                 } else abort_unless($available['items']>0,409,'Insufficient consignment stock.');
                 $order->forceFill(['bot_id'=>$bot->id,'status'=>'processing','processing_version'=>3,
-                    'delivery_data'=>['claim'=>['character_name'=>$order->character_name,'gem_qty'=>(int)$order->gem_qty,'delivery_method'=>$order->delivery_method]],
+                    'delivery_data'=>array_replace($order->delivery_data??[],['claim'=>['character_name'=>$order->character_name,'gem_qty'=>(int)$order->gem_qty,'delivery_method'=>$order->delivery_method]]),
                     'processing_owner'=>$d['worker_id'],'processing_token'=>(string)Str::uuid(),
                     'delivery_phase'=>'waiting_customer','processing_started_at'=>now(),'updated_by'=>'app'])->save();
                 return $order;
             }
-            abort_unless($order->processing_version===3 && $order->processing_owner===$d['worker_id']
-                && (int)$order->bot_id===$bot->id && hash_equals((string)$order->processing_token,$d['processing_token']),409,'Order processing owner does not match.');
+            abort_unless((int)$order->bot_id===$bot->id && $order->processing_token
+                && hash_equals((string)$order->processing_token,(string)$d['processing_token']),409,'Order processing token or bot differs.');
             $claim=$order->delivery_data['claim']??[];
             abort_unless(($claim['character_name']??null)===$order->character_name && ($claim['gem_qty']??null)===(int)$order->gem_qty
                 && ($claim['delivery_method']??null)===$order->delivery_method,409,'Order terms changed after claim; reconciliation is required.');
+            if($d['action']==='release_unstarted') {
+                $allowedPhases=$order->delivery_method==='gift_ticket'?['waiting_customer','gifting']:['waiting_customer','giving_item'];
+                abort_unless($order->status==='processing'&&in_array($order->delivery_method,['consignment','gift_ticket'],true)
+                    && in_array($order->delivery_phase,$allowedPhases,true)
+                    && !$order->bot_gem_spent_qty&&!$order->delivered_gem_qty&&!$order->tickets_used_qty
+                    && empty($order->delivery_data['delivery_item']['verified'])&&!empty($d['evidence']['no_effect']),409,'Only a confirmed unapplied pre-delivery action can return to pending.');
+                abort_if(InventoryMovement::where('transaction_type','gem_transaction')->where('transaction_id',$id)
+                    ->where('asset_type','gem')->whereNotNull('idempotency_key')->exists(),409,'An acknowledged receipt must not be released.');
+                $data=$order->delivery_data??[];
+                $data['released_claim']=['token'=>$order->processing_token,'step_id'=>$d['step_id'],'released_at'=>now()->toIso8601String()];
+                unset($data['claim'],$data['delivery_item'],$data['listing_id']);
+                $order->forceFill(['status'=>'pending','processing_owner'=>null,'processing_token'=>null,'character_id'=>null,
+                    'delivery_phase'=>null,'processing_started_at'=>null,'delivery_data'=>$data])->save();
+                $this->workflow($bot,$order,$d);
+                return $order;
+            }
             if($d['action']==='phase') {
                 $phaseKey=isset($d['step_id']) ? "trading-v3:gem:{$id}:{$d['step_id']}:phase" : null;
-                abort_unless($order->status==='processing',409,'Order is terminal.');
+                if($order->status!=='processing')return $order;
                 abort_if(!empty($d['delivery_data']['delivery_item']['verified']),422,'Equipment is verified only by a confirmed trade receipt.');
+                $previousPlan=$order->delivery_data['delivery_item']??null;
+                $newPlan=$d['delivery_data']['delivery_item']??null;
+                abort_if($previousPlan && $newPlan && $previousPlan!==$newPlan,409,'The frozen equipment plan cannot be replaced.');
                 if(isset($d['character_id'])) {
                     abort_if($order->character_id && (int)$order->character_id!==$d['character_id'],409,'Recipient ID changed.');
                     $order->character_id=$d['character_id'];
@@ -98,12 +132,17 @@ class GemTradingService {
             $key="trading-v3:gem:{$id}:{$d['step_id']}:receipt";
             $digest=$this->digest($d);
             abort_unless($order->status==='processing',409,'Order is terminal.');
-            abort_unless($order->character_id && (!isset($d['character_id']) || $d['character_id']===$order->character_id),422,'A verified recipient ID is required.');
             $spent=$d['gem_spent_qty'];$received=$d['delivered_gem_qty'];$tickets=$d['tickets_used_qty'];
             abort_if($order->bot_gem_spent_qty+$spent>$order->gem_qty,422,'Receipt exceeds order quantity.');
             if($order->delivery_method==='gift_ticket') {
                 abort_unless($d['evidence']['kind']==='gift' && $spent>0 && $spent%10===0 && $received===$spent && $tickets===intdiv($spent,10),422,'Ticket receipt quantities do not match.');
+                if(isset($d['evidence']['recipient_name'])||!$order->character_id) {
+                    abort_unless(($d['evidence']['recipient_name']??null)===$claim['character_name']
+                        && ($d['evidence']['gift_gem_qty']??null)===$spent && ($d['evidence']['gift_ticket_qty']??null)===$tickets,
+                        422,'Fresh gift confirmation must identify the frozen recipient and quantities.');
+                } else abort_unless(!isset($d['character_id'])||$d['character_id']===$order->character_id,422,'Gift recipient ID changed.');
             } else {
+                abort_unless($order->character_id && (!isset($d['character_id']) || $d['character_id']===$order->character_id),422,'A verified recipient ID is required.');
                 abort_unless(in_array($d['evidence']['kind'],['trade','consignment'],true) && $tickets===0,422,'Consignment evidence does not match method.');
                 if($d['evidence']['kind']==='trade') {
                     abort_unless($spent===0 && $received===0 && !$d['completed'],422,'Trade only delivers equipment.');
@@ -133,6 +172,12 @@ class GemTradingService {
         },3);
         ApiCache::clearGroups(['public:gembot']);
         return $order->fresh();
+    }
+    private function workflow(GemBot $bot,GemTransaction $order,array $d): void {
+        InventoryMovement::create(['server_id'=>$bot->server_id,'bot_id'=>$bot->id,'bot_type'=>'gem_bot','asset_type'=>'workflow',
+            'movement_type'=>'phase','quantity_delta'=>0,'balance_before'=>0,'balance_after'=>0,'transaction_id'=>$order->id,
+            'transaction_type'=>'gem_transaction','idempotency_key'=>"trading-v3:gem:{$order->id}:{$d['step_id']}:{$d['action']}",
+            'source'=>'app','meta'=>['payload_hash'=>$this->digest($d),'action'=>$d['action']],'occurred_at'=>now()]);
     }
     private function applySnapshot(GemBot $bot,array $s,string $reason,?GemTransaction $order,?string $receiptKey,array $meta=[]): void {
         abort_unless((int)$s['stock_version']>(int)$bot->stock_version,409,'Stock snapshot is stale.');

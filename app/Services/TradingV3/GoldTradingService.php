@@ -85,21 +85,13 @@ class GoldTradingService {
         return max(0,$room);
     }
     public static function ownedByV3(Bot $bot): bool {
-        return ($bot->v3_worker_id && $bot->v3_lease_until?->isFuture())
-            || GoldTransaction::where('bot_id',$bot->id)->where('processing_version',3)->where('status','processing')->exists()
+        return GoldTransaction::where('bot_id',$bot->id)->whereNotNull('processing_token')->where('status','processing')->exists()
             || self::activeTransfers($bot->id)->isNotEmpty();
-    }
-    private function assertOwner(Bot $bot,string $worker): void {
-        abort_unless($bot->v3_worker_id===$worker,409,'Bot belongs to another worker.');
     }
     private function assertEnabled(Bot $bot): void {
         abort_unless($bot->status && $bot->server?->status,409,'Bot or server is disabled.');
         $login=$bot->loginServer;
         abort_unless($login && trim((string)$login->ip)!=='' && (int)$login->port>0 && (int)$login->port<=65535,409,'A valid database login endpoint is required.');
-    }
-    private function assertFinancialLease(Bot $bot,string $worker): void {
-        $this->assertOwner($bot,$worker);$this->assertEnabled($bot);
-        abort_unless($bot->v3_lease_until?->isFuture(),409,'Bot lease has expired.');
     }
     public function updateBot(int $id,array $d): Bot {
         $visibilityChanged=$d['action']!=='lease';
@@ -108,23 +100,15 @@ class GoldTradingService {
             $orders=GoldTransaction::where('bot_id',$id)->where('status','processing')->get();
             $transfers=self::activeTransfers($id);
             if($d['action']==='lease') {
+                // Kept as a compatibility endpoint; account login and financial work do not need a lease.
                 $this->assertEnabled($bot);
-                abort_if($bot->v3_worker_id && $bot->v3_worker_id!==$d['worker_id'] && $bot->v3_lease_until?->isFuture(),409,'Bot is leased to another worker.');
-                foreach($orders as $order) {
-                    abort_unless($order->processing_version===3 && $order->processing_owner===$d['worker_id'],409,'An unfinished order retains its worker.');
-                }
-                foreach($transfers as $t) abort_unless(($t->meta['processing_owner']??null)===$d['worker_id'],409,'An unfinished transfer retains its worker.');
-                $leaseUntil=now()->addSeconds(config('trading_v3.lease_seconds'));
-                $visibilityChanged=!$bot->v3_worker_id || !$bot->v3_lease_until?->isFuture() || $leaseUntil->lt($bot->v3_lease_until);
-                $bot->forceFill(['v3_worker_id'=>$d['worker_id'],'v3_lease_until'=>$leaseUntil])->save();
             } else {
-                $this->assertOwner($bot,$d['worker_id']);
                 abort_if($transfers->isNotEmpty(),409,'Unfinished gold transfers must be reconciled first.');
                 if($d['action']==='release') {
-                    abort_if($orders->isNotEmpty(),409,'Unfinished orders must retain their worker.');
+                    abort_if($orders->isNotEmpty(),409,'Unfinished orders must retain their checkpoints.');
                     $bot->forceFill(['v3_worker_id'=>null,'v3_lease_until'=>null])->save();
                 } else {
-                    foreach($orders as $order) abort_unless($order->processing_version===3 && $order->processing_owner===$d['worker_id']
+                    foreach($orders as $order) abort_unless($this->hasCheckpoint($order)
                         && $order->delivery_phase==='waiting_stock',409,'Stock correction requires a settled waiting-stock boundary.');
                     $this->applySnapshot($bot,$d,'sync_correction',null,null);
                 }
@@ -138,20 +122,35 @@ class GoldTradingService {
             // Transfers and order writes always lock accounts in ascending ID order before workflow rows.
             $bot=Bot::whereKey($d['bot_id'])->lockForUpdate()->firstOrFail();
             $order=GoldTransaction::whereKey($id)->lockForUpdate()->firstOrFail();
-            $suffix=$d['action']==='receipt'?'receipt':'phase';
+            $suffix=match($d['action']){'receipt'=>'receipt','refund_pending'=>'refund_pending','release_unstarted'=>'release_unstarted',default=>'phase'};
             $key=isset($d['step_id']) ? "trading-v3:gold:{$id}:{$d['step_id']}:{$suffix}" : null;
             if($d['action']!=='claim' && $key && ($prior=InventoryMovement::where('idempotency_key',$key)->first())) {
-                $this->assertOrderOwner($order,$bot,$d);
+                if(in_array($d['action'],['refund_pending','release_unstarted'],true))abort_unless((int)$prior->bot_id===$bot->id,409,'Acknowledged bot differs from original.');
+                else $this->assertOrderCheckpoint($order,$bot,$d);
                 abort_unless(hash_equals((string)($prior->meta['payload_hash']??''),$this->digest($d)),409,'Acknowledged body differs from original.');
                 return $order;
             }
-            $this->assertOwner($bot,$d['worker_id']);
             abort_unless((int)$bot->server_id===(int)$order->server_id,422,'Order and bot server_id differ.');
-            if($d['action']==='claim') {
-                if($order->processing_version===3 && $order->processing_owner===$d['worker_id'] && (int)$order->bot_id===$bot->id) return $order;
-                $this->assertFinancialLease($bot,$d['worker_id']);
-                abort_unless($order->status==='pending' && $order->processing_version===null,409,'Order is already claimed or terminal.');
+            if($d['action']==='refund_pending') {
+                abort_unless($order->type===GoldTransaction::TYPE_ORDER,422,'Only pending gold purchase orders can be refunded by the tool.');
                 abort_if($order->bot_id && (int)$order->bot_id!==$bot->id,409,'Order is assigned to another bot.');
+                if(!$order->bot_id)abort_unless(in_array('selling_main',self::types($bot),true),422,'An unassigned gold purchase order requires a selling bot.');
+                if($order->refunded_at!==null)return $order;
+                abort_unless($order->status==='pending',409,'Only pending gold purchase orders can be refunded by the tool.');
+                abort_if(InventoryMovement::where('transaction_type','gold_transaction')->where('transaction_id',$id)
+                    ->where('asset_type','pure_gold')->whereNotNull('idempotency_key')->exists(),409,'An acknowledged gold delivery cannot be refunded.');
+                abort_unless(app(OrderTimeoutService::class)->refundPendingLocked($order,$d['timeout_seconds'],'gold'),409,'Pending refund deadline has not elapsed or delivery is already started.');
+                $this->workflow($bot,$key,'phase',$id,'gold_transaction',['payload_hash'=>$this->digest($d),'action'=>'refund_pending']);
+                return $order;
+            }
+            if($d['action']==='claim') {
+                if(!in_array($order->status,['pending','processing'],true))return $order;
+                abort_if($order->bot_id && (int)$order->bot_id!==$bot->id,409,'Order is assigned to another bot.');
+                if($order->status==='processing') {
+                    abort_unless($this->hasCheckpoint($order),409,'legacy_checkpoint_missing: this order needs its original delivery checkpoint.');
+                    return $order;
+                }
+                $this->assertEnabled($bot);
                 $role=$order->type==='order'?'selling_main':'import_main';
                 abort_unless(in_array($role,self::types($bot),true) && in_array($order->type,['order','import'],true),422,'Bot role does not match order direction.');
                 abort_if(GoldTransaction::where('bot_id',$bot->id)->where('status','processing')->where('id','!=',$id)->exists()
@@ -168,16 +167,38 @@ class GoldTradingService {
                     'delivery_data'=>['claim'=>$terms,'progress'=>['bars'=>0,'pure'=>0]],'processing_started_at'=>now(),'updated_by'=>'app'])->save();
                 return $order;
             }
-            $this->assertOrderOwner($order,$bot,$d);
+            $this->assertOrderCheckpoint($order,$bot,$d);
             abort_unless(($order->delivery_data['claim']??null)===$this->terms($order),409,'Order terms changed after claim.');
+            if($d['action']==='phase'&&$order->status!=='processing')return $order;
             abort_unless($order->status==='processing',409,'Order is terminal.');
+            if($d['action']==='release_unstarted') {
+                $progress=$order->delivery_data['progress']??[];
+                abort_unless(in_array($order->type,[GoldTransaction::TYPE_ORDER,GoldTransaction::TYPE_IMPORT],true)
+                    && in_array($order->delivery_phase,['waiting_customer','trading','waiting_login'],true)
+                    && !(int)($progress['bars']??0) && !(int)($progress['pure']??0)
+                    && empty($order->delivery_data['last_step_id']) && !empty($d['evidence']['no_effect']),409,'Only a confirmed unapplied pre-delivery action can return to pending.');
+                abort_if(self::activeTransfers($bot->id)->isNotEmpty(),409,'Unfinished gold transfers must be reconciled first.');
+                abort_if(InventoryMovement::where('transaction_type','gold_transaction')->where('transaction_id',$id)
+                    ->where('asset_type','pure_gold')->whereNotNull('idempotency_key')->exists(),409,'An acknowledged receipt must not be released.');
+                $data=$order->delivery_data??[];
+                $data['released_claim']=['token'=>$order->processing_token,'step_id'=>$d['step_id'],'released_at'=>now()->toIso8601String()];
+                unset($data['claim']);
+                $order->forceFill(['status'=>'pending','processing_owner'=>null,'processing_token'=>null,'character_id'=>null,
+                    'delivery_phase'=>null,'processing_started_at'=>null,'delivery_data'=>$data])->save();
+                $this->workflow($bot,$key,'phase',$id,'gold_transaction',['payload_hash'=>$this->digest($d),'action'=>'release_unstarted']);
+                return $order;
+            }
             if(isset($d['character_id'])) {
                 abort_if($order->character_id && (int)$order->character_id!==$d['character_id'],409,'Customer character ID changed.');
                 $order->character_id=$d['character_id'];
             }
             if($d['action']==='phase') {
                 abort_if(self::activeTransfers($bot->id)->isNotEmpty(),409,'A reserved transfer must be settled first.');
-                if(in_array($d['phase'],['trading','waiting_customer'],true)) $this->assertFinancialLease($bot,$d['worker_id']);
+                if(in_array($d['phase'],['trading','waiting_customer'],true)) {
+                    $this->assertEnabled($bot);
+                    $role=$order->type==='order'?'selling_main':'import_main';
+                    abort_unless(in_array($role,self::types($bot),true) && in_array($order->type,['order','import'],true),422,'Bot role does not match order direction.');
+                }
                 $order->delivery_phase=$d['phase'];$order->save();
                 $this->workflow($bot,$key,'phase',$id,'gold_transaction',['payload_hash'=>$this->digest($d)]);
                 return $order;
@@ -214,9 +235,12 @@ class GoldTradingService {
             'bars'=>(int)$o->gold_bar_qty,'pure'=>(int)$o->pure_gold_qty,'gold_qty'=>(int)$o->gold_qty,
             'amount_vnd'=>(int)$o->amount_vnd,'price_at_transaction'=>(int)$o->price_at_transaction];
     }
-    private function assertOrderOwner(GoldTransaction $o,Bot $b,array $d): void {
-        abort_unless($o->processing_version===3 && $o->processing_owner===$d['worker_id'] && (int)$o->bot_id===$b->id
-            && hash_equals((string)$o->processing_token,(string)$d['processing_token']),409,'Original order worker or token differs.');
+    private function hasCheckpoint(GoldTransaction $o): bool {
+        return (bool)$o->processing_token && ($o->delivery_data['claim']??null)===$this->terms($o);
+    }
+    private function assertOrderCheckpoint(GoldTransaction $o,Bot $b,array $d): void {
+        abort_unless($this->hasCheckpoint($o) && (int)$o->bot_id===$b->id
+            && hash_equals((string)$o->processing_token,(string)$d['processing_token']),409,'Original order bot, checkpoint or token differs.');
     }
     private function creditImport(GoldTransaction $order): void {
         $key='gold-import-credit:'.$order->id;
@@ -229,7 +253,7 @@ class GoldTradingService {
             metadata:['source'=>'trading_v3','gold_transaction_id'=>$order->id]);
     }
     public function transferList(string $worker): array {
-        return self::activeTransfers()->filter(fn($m)=>($m->meta['processing_owner']??null)===$worker)->map(fn($m)=>$m->meta)->values()->all();
+        return self::activeTransfers()->map(fn($m)=>$m->meta)->values()->all();
     }
     public function updateTransfer(string $id,array $d): array {
         $d['pure_gold_qty']??=0;
@@ -240,10 +264,10 @@ class GoldTradingService {
             $from=$locked[$d['from_bot_id']];$to=$locked[$d['to_bot_id']];
             $key='trading-v3:gold-transfer:'.$id;
             $row=InventoryMovement::where('idempotency_key',$key)->lockForUpdate()->first();
-            $terms=['id'=>$id,'processing_owner'=>$d['worker_id'],'from_bot_id'=>$from->id,'to_bot_id'=>$to->id,
+            $terms=['id'=>$id,'from_bot_id'=>$from->id,'to_bot_id'=>$to->id,
                 'server_id'=>(int)$from->server_id,'bars_qty'=>(int)$d['bars_qty'],'pure_gold_qty'=>(int)$d['pure_gold_qty']];
             if($row) {
-                foreach($terms as $field=>$value) abort_unless(($row->meta[$field]??null)===$value,409,'Transfer UUID was already used for different terms.');
+                foreach($terms as $field=>$value)abort_unless(($row->meta[$field]??null)===$value,409,'Transfer UUID was already used for different terms.');
                 if($d['action']==='claim') return $row->meta;
                 abort_unless(hash_equals((string)$row->meta['processing_token'],(string)$d['processing_token']),409,'Transfer token differs.');
                 if(($row->meta['status']??null)!=='claimed') {
@@ -253,7 +277,7 @@ class GoldTradingService {
                 }
             } else abort_unless($d['action']==='claim',404,'Transfer reservation was not found.');
             if($d['action']==='claim') {
-                $this->assertFinancialLease($from,$d['worker_id']);$this->assertFinancialLease($to,$d['worker_id']);
+                $this->assertEnabled($from);$this->assertEnabled($to);
                 abort_unless((int)$from->server_id===(int)$to->server_id,422,'Transfer business servers differ.');
                 $storage=in_array('import_main',self::types($from),true) && self::auxiliary($to);
                 $refill=self::auxiliary($from) && in_array('selling_main',self::types($to),true);
@@ -262,13 +286,12 @@ class GoldTradingService {
                 $a=self::available($from,null,$id);
                 abort_unless(($terms['bars_qty']>0 || $terms['pure_gold_qty']>0) && $a['bars']>=$terms['bars_qty'] && $a['pure']>=$terms['pure_gold_qty'],409,'Transfer source has insufficient unreserved stock.');
                 abort_unless(self::receiveRoom($to,null,$id)>=$terms['bars_qty'],409,'Transfer receiver lacks reserved account room.');
-                $meta=[...$terms,'processing_token'=>(string)Str::uuid(),'status'=>'claimed','direction'=>$storage?'storage':'refill',
+                $meta=[...$terms,'processing_owner'=>$d['worker_id'],'processing_token'=>(string)Str::uuid(),'status'=>'claimed','direction'=>$storage?'storage':'refill',
                     'from_before'=>['gold_qty'=>(int)$from->gold_qty,'gold_bar_qty'=>(int)$from->gold_bar_qty,'stock_version'=>(int)$from->stock_version],
                     'to_before'=>['gold_qty'=>(int)$to->gold_qty,'gold_bar_qty'=>(int)$to->gold_bar_qty,'stock_version'=>(int)$to->stock_version],
                     'created_at'=>now()->toIso8601String()];
                 $this->workflow($from,$key,'reservation',null,'gold_transfer',$meta);return $meta;
             }
-            $this->assertOwner($from,$d['worker_id']);$this->assertOwner($to,$d['worker_id']);
             $meta=$row->meta;
             if($d['action']==='cancel') {
                 abort_unless($d['evidence']['unchanged']??false,422,'Cancellation requires a confirmed unchanged game state.');
@@ -295,7 +318,7 @@ class GoldTradingService {
     private function assertTransferBoundary(Bot $bot): void {
         abort_if(self::activeTransfers($bot->id)->isNotEmpty(),409,'Bot already has a reserved transfer.');
         foreach(GoldTransaction::where('bot_id',$bot->id)->where('status','processing')->get() as $order)
-            abort_unless($order->processing_version===3 && $order->delivery_phase==='waiting_stock',409,'Order must wait for stock before an internal transfer.');
+            abort_unless($this->hasCheckpoint($order) && $order->delivery_phase==='waiting_stock',409,'Order must wait for stock before an internal transfer.');
     }
     private function applySnapshot(Bot $bot,array $s,string $reason,?GoldTransaction $order,?string $key,array $meta=[]): void {
         abort_unless((int)$s['stock_version']>(int)$bot->stock_version,409,'Stock snapshot is stale.');

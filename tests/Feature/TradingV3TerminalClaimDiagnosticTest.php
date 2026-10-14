@@ -9,12 +9,12 @@ use Illuminate\Support\Facades\Event;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 use Tests\TestCase;
 
-/** Diagnostic only: the same owner can currently re-claim a completed order, then gets phase 409. */
+/** Cached claims and obsolete phases acknowledge terminal state without reopening work. */
 class TradingV3TerminalClaimDiagnosticTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_same_owner_terminal_claim_is_read_only_but_next_phase_is_rejected(): void
+    public function test_terminal_claim_and_obsolete_phase_are_read_only_acknowledgements(): void
     {
         Event::fake();
         $worker = '00000000-0000-4000-8000-000000000091';
@@ -43,16 +43,11 @@ class TradingV3TerminalClaimDiagnosticTest extends TestCase
         $this->assertSame('completed', $response->status);
         $this->assertSame($token, $response->processing_token);
 
-        try {
-            $service->updateOrder($order->id, [
+        $phase = $service->updateOrder($order->id, [
                 'worker_id' => $worker, 'bot_id' => $bot->id, 'action' => 'phase', 'processing_token' => $token,
                 'step_id' => '00000000-0000-4000-8000-000000000093', 'phase' => 'waiting_customer', 'character_id' => 1234,
             ]);
-            $this->fail('A new phase must not change a completed order.');
-        } catch (HttpException $exception) {
-            $this->assertSame(409, $exception->getStatusCode());
-            $this->assertSame('Order is terminal.', $exception->getMessage());
-        }
+        $this->assertSame('completed', $phase->status);
         $this->assertSame($beforeBot, $bot->fresh()->getAttributes());
         $this->assertSame($beforeOrder, $order->fresh()->getAttributes());
         $this->assertSame(0, InventoryMovement::count());

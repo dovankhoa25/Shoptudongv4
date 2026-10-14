@@ -13,6 +13,7 @@ class GoldOrderResource extends JsonResource {
             'status'=>$this->status,'delivery_phase'=>$this->delivery_phase,'processing_version'=>$this->processing_version,
             'processing_owner'=>$this->processing_owner,'processing_token'=>$this->processing_token,'delivery_data'=>$data,
             'remaining'=>GoldTradingService::remaining($this->resource),'created_at'=>$this->created_at,'completed_at'=>$this->completed_at,
+            'cancel_requested_at'=>$this->cancel_requested_at,'refunded_at'=>$this->refunded_at,
         ];
     }
 }

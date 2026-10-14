@@ -17,16 +17,13 @@ class GoldController extends Controller {
         return (new GoldBotResource($service->updateBot($bot->id,$r->validated())))->additional(['success'=>true]);
     }
     public function orders(Request $r) {
-        $r->validate(['worker_id'=>['required','uuid'],'server_id'=>['nullable','integer','min:1']]);
+        $r->validate(['worker_id'=>['nullable','uuid'],'server_id'=>['nullable','integer','min:1']]);
         $orders=GoldTransaction::whereIn('status',['pending','processing'])
-            ->where(fn($q)=>$q->where(fn($q)=>$q->where('status','pending')->whereNull('processing_version'))
-                ->orWhere(fn($q)=>$q->where('processing_version',3)->where('processing_owner',$r->worker_id)))
             ->when($r->filled('server_id'),fn($q)=>$q->where('server_id',$r->integer('server_id')))->orderBy('id')->get();
         return GoldOrderResource::collection($orders)->additional(['success'=>true]);
     }
     public function order(Request $r,GoldTransaction $order) {
-        $r->validate(['worker_id'=>['required','uuid']]);
-        abort_unless($order->processing_owner===$r->worker_id,403,'Order belongs to another worker.');
+        $r->validate(['worker_id'=>['nullable','uuid']]);
         return (new GoldOrderResource($order))->additional(['success'=>true]);
     }
     public function updateOrder(GoldOrderUpdateRequest $r,GoldTransaction $order,GoldTradingService $service) {
@@ -40,13 +37,13 @@ class GoldController extends Controller {
         return response()->json(['success'=>true,'ack_id'=>$r->input('step_id'),'data'=>$service->updateTransfer($transfer,$r->validated())]);
     }
     public function activity(GoldActivityRequest $r,Bot $bot) {
-        $data=$r->validated();abort_unless($bot->v3_worker_id===$data['worker_id'],409,'Bot belongs to another worker.');
+        $data=$r->validated();
         $orderId=$data['order_id']??null;$notice=$data['customer_message']??null;
         if($orderId && $notice) {
             $order=GoldTransaction::findOrFail($orderId);
-            $unclaimed=$order->status==='pending' && $order->processing_version===null && $order->processing_owner===null
+            $unclaimed=$order->status==='pending'
                 && ($order->bot_id===null || (int)$order->bot_id===(int)$bot->id);
-            $owned=(int)$order->bot_id===(int)$bot->id && $order->processing_owner===$data['worker_id'];
+            $owned=(int)$order->bot_id===(int)$bot->id;
             abort_unless((int)$order->server_id===(int)$bot->server_id && ($unclaimed || $owned),422,
                 'Customer notice does not belong to this bot order.');
         }
