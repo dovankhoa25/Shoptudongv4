@@ -1,0 +1,64 @@
+{
+    "isolated": true,
+    "redis_pid": 29596,
+    "port": 64455,
+    "database": 7,
+    "other_database": 8,
+    "prefix_verified": true,
+    "cases": [
+        {
+            "case": "real_oom_lrem_zrem_del_outside_multi",
+            "result": "PASS",
+            "byte_exact_removal": true,
+            "unknown_payload_preserved": true
+        },
+        {
+            "case": "default_read_only",
+            "result": "PASS",
+            "target_keys": 4,
+            "target_jobs": 3,
+            "unchanged": true,
+            "command": {
+                "code": 0,
+                "output": "+-------------------+------------+\r\n| Thông số          | Giá trị    |\r\n+-------------------+------------+\r\n| used_memory_human | 731.52K    |\r\n| used_memory       | 749080     |\r\n| maxmemory_human   | 0B         |\r\n| maxmemory         | 0          |\r\n| maxmemory_policy  | noeviction |\r\n+-------------------+------------+\r\n+-----------------------------+----------+\r\n| Queue trading-activity-live | Số lượng |\r\n+-----------------------------+----------+\r\n| pending                     | 1        |\r\n| reserved                    | 1        |\r\n| delayed                     | 1        |\r\n| notify                      | 1        |\r\n+-----------------------------+----------+\r\nChỉ đọc. Chỉ dùng --clear-backlog sau khi backend đã chuyển hoạt động sang after_response."
+            }
+        }
+    ],
+    "success": false,
+    "attempted_oom_diagnostic": {
+        "code": 0,
+        "output": "+-------------------+------------+\r\n| Thông số          | Giá trị    |\r\n+-------------------+------------+\r\n| used_memory_human | 731.77K    |\r\n| used_memory       | 749336     |\r\n| maxmemory_human   | 1B         |\r\n| maxmemory         | 1          |\r\n| maxmemory_policy  | noeviction |\r\n+-------------------+------------+\r\n+-----------------------------+----------+\r\n| Queue trading-activity-live | Số lượng |\r\n+-----------------------------+----------+\r\n| pending                     | 1        |\r\n| reserved                    | 1        |\r\n| delayed                     | 1        |\r\n| notify                      | 1        |\r\n+-----------------------------+----------+\r\nChỉ đọc. Chỉ dùng --clear-backlog sau khi backend đã chuyển hoạt động sang after_response."
+    },
+    "attempted_oom_cleanup": {
+        "code": 1,
+        "output": "+-------------------+------------+\r\n| Thông số          | Giá trị    |\r\n+-------------------+------------+\r\n| used_memory_human | 731.77K    |\r\n| used_memory       | 749336     |\r\n| maxmemory_human   | 1B         |\r\n| maxmemory         | 1          |\r\n| maxmemory_policy  | noeviction |\r\n+-------------------+------------+\r\n+-----------------------------+----------+\r\n| Queue trading-activity-live | Số lượng |\r\n+-----------------------------+----------+\r\n| pending                     | 1        |\r\n| reserved                    | 1        |\r\n| delayed                     | 1        |\r\n| notify                      | 1        |\r\n+-----------------------------+----------+\r\nKhông đọc\/xử lý được Redis (ServerException). Không in thông tin kết nối hoặc mật khẩu."
+    },
+    "remaining_queue_keys": [
+        1,
+        1,
+        1,
+        1
+    ],
+    "protocol_probe": [
+        {
+            "operation": "watch",
+            "ok": true,
+            "result_type": "Predis\\Response\\Status"
+        },
+        {
+            "operation": "multi",
+            "ok": true,
+            "result_type": "Predis\\Response\\Status"
+        },
+        {
+            "operation": "del",
+            "ok": false,
+            "class": "Predis\\Response\\ServerException",
+            "error": "OOM"
+        }
+    ],
+    "failure": {
+        "class": "RuntimeException",
+        "message": "Cleanup command failed against real Redis under OOM."
+    }
+}

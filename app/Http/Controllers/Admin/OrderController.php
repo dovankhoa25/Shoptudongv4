@@ -113,7 +113,7 @@ class OrderController extends Controller
         return Inertia::render('Admin/Orders/Index', [
             'orders' => GoldTransactionResource::collection($orders),
             'servers' => Server::active()->get(['id', 'name']),
-            'bots' => Bot::active()->get(['id', 'name']),
+            'bots' => Bot::active()->withoutChecker()->get(['id', 'name']),
             'filters' => $request->only(['server_id', 'bot_id', 'status', 'search', 'date_from', 'date_to', 'sort_by', 'sort_order']),
             'stats' => $stats,
         ]);
@@ -253,7 +253,7 @@ class OrderController extends Controller
     ): void {
         DB::transaction(function () use ($orderId, $newStatus, $cancelReason, $note, $refundAmount): void {
             $order = GoldTransaction::query()->lockForUpdate()->findOrFail($orderId);
-            if ((int) $order->processing_version === 3) {
+            if ($order->hasDeliveryCheckpoint()) {
                 throw \Illuminate\Validation\ValidationException::withMessages(['status'=>'Tool v3 đang giữ biên nhận giao dịch; hãy để tool tự đối chiếu trước.']);
             }
             abort_unless($order->type === GoldTransaction::TYPE_ORDER, 404);

@@ -1,0 +1,26 @@
+REDIS HOẠT ĐỘNG TOOL V3 - KIỂM CHỨNG 15/10/2026
+
+PASS: 10 PHPUnit tests / 94 assertions, SQLite RAM + cache array, không dùng database production.
+PASS: Redis 5.0.14.1 thật, instance mới bind 127.0.0.1/cổng ngẫu nhiên; save/appendonly tắt; xác minh PID trước thao tác.
+
+Kết quả thật (results.json trong activity-redis-live-20261015-023312-ad45ff81)
+- maxmemory=1: SET bị server từ chối OOM; lệnh chỉ đọc không thay đổi dữ liệu.
+- LREM/ZREM theo đúng byte payload và DEL ngoài MULTI vẫn thực hiện được dưới OOM; payload khác được giữ.
+- Dọn pending/reserved/delayed đúng class PublishTradingBotActivities, ba job và notify: bốn key queue riêng biến mất.
+- Queue tài chính khác, cache/session khác và sentinel database khác được giữ nguyên.
+- Có job FinancialReceiptJob trong queue riêng: từ chối dọn, toàn bộ key không đổi.
+- --clear-tool-cache dùng đúng Redis prefix + cache prefix trên DB cache riêng: xóa hai key hoạt động bot và đúng key trading-v3:gem-timeout-policy cũ.
+- Giữ nonce HMAC TTL190, session, key activity:order không thuộc loại bot cho phép và mọi queue khi chỉ dọn cache.
+- Chỉ dừng đúng PID Redis con do test tạo. Không kết nối hoặc thay đổi Redis đang chạy/production, không thay đổi .env.
+
+Lý do thay cách dọn
+- Test thật trước đó chứng minh WATCH/MULTI thành công nhưng DEL bên trong MULTI bị Redis5 từ chối OOM.
+- Bản mới đọc/kiểm tra trước, rồi đọc lại từng trang nhỏ và LREM/ZREM chính xác payload, không MULTI/Lua/FLUSH.
+- Job bị thay bằng nội dung khác sau lần đọc không bị xóa vì lệnh chỉ khớp đúng byte; nếu còn queue thay đổi thì giữ notify và báo cần chạy lại.
+
+Lệnh vận hành (sau cập nhật backend, nạp lại config và dừng producer/worker cũ của queue này)
+php artisan trading:activity-redis
+php artisan trading:activity-redis --clear-backlog --clear-tool-cache
+Nếu cache Redis cũ dùng store riêng: thêm --cache-store=<tên store Redis trong config cache>.
+
+Giới hạn: xác minh Redis local với Predis và prefix/DB thật; nhánh PhpRedis được đọc từ Laravel và dùng raw SCAN/prefix tương ứng, chưa chạy extension PhpRedis thật trong fixture này. Không chứng minh cấu hình/quyền Redis trên hosting.

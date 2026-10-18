@@ -44,12 +44,12 @@ class AdminGemV3ResourceTest extends TestCase
     public function test_admin_order_exposes_confirmed_receipts_without_private_processing_data(): void
     {
         $order = new GemTransaction([
-            'delivery_method' => 'gift_ticket', 'processing_version' => 3,
-            'processing_owner' => 'test-worker-private', 'processing_token' => 'test-token-private',
+            'delivery_method' => 'gift_ticket',
             'delivery_phase' => 'gifting', 'amount_vnd' => 9717, 'gem_qty' => 120,
             'price_at_transaction' => '12.35', 'bot_gem_spent_qty' => 20, 'delivered_gem_qty' => 20,
             'tickets_used_qty' => 2, 'status' => 'processing',
-            'delivery_data' => ['private_intent' => ['secret' => 'should-not-be-rendered']],
+            'delivery_data' => ['claim'=>['character_name'=>'private-recipient','gem_qty'=>120,'delivery_method'=>'gift_ticket'],
+                'private_intent' => ['secret' => 'should-not-be-rendered']],
         ]);
         $data = (new GemOrderResource($order))->resolve();
 
@@ -59,6 +59,7 @@ class AdminGemV3ResourceTest extends TestCase
         $this->assertSame('9.717 VND', $data['amount_vnd_formatted']);
         $this->assertSame(20, $data['delivered_gem_qty']);
         $this->assertSame(2, $data['tickets_used_qty']);
+        $this->assertTrue($data['has_delivery_checkpoint']);
         $this->assertArrayNotHasKey('processing_token', $data);
         $this->assertArrayNotHasKey('processing_owner', $data);
         $this->assertArrayNotHasKey('delivery_data', $data);

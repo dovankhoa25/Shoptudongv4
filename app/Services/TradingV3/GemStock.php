@@ -2,9 +2,9 @@
 namespace App\Services\TradingV3;
 use App\Models\{GemBot,GemTransaction};
 class GemStock {
-    public static function ownedByV3(GemBot $bot): bool {
+    public static function hasActiveDelivery(GemBot $bot): bool {
         return GemTransaction::where('bot_id',$bot->id)->where('status','processing')
-            ->where(fn($q)=>$q->where('processing_version',3)->orWhereNotNull('processing_token'))->exists();
+            ->whereNotNull('delivery_data->claim')->exists();
     }
     public static function available(GemBot $bot,?int $excludeOrder=null): array {
         $orders=GemTransaction::where('bot_id',$bot->id)->whereIn('status',['pending','processing'])

@@ -5,7 +5,7 @@ class GoldBotUpdateRequest extends FormRequest {
     public function authorize(): bool { return true; }
     public function rules(): array {
         $rules = [
-            'worker_id'=>['required','uuid'], 'action'=>['required','in:lease,stock,release'],
+            'worker_id'=>['sometimes','nullable','uuid'], 'action'=>['required','in:lease,stock,release'],
             'stock_version'=>['required_if:action,stock','integer','min:1'],
             'gold_qty'=>['required_if:action,stock','integer','min:0','max:9000000000000000'],
             'gold_bar_qty'=>['required_if:action,stock','integer','between:0,999'],

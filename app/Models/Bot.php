@@ -8,8 +8,8 @@ use Illuminate\Database\Eloquent\Model;
 class Bot extends Model
 {
     use HasFactory;
-    protected $hidden = ['stock_version', 'v3_worker_id', 'v3_lease_until'];
-    protected $casts = ['stock_version'=>'integer', 'v3_lease_until'=>'datetime', 'gold_qty'=>'integer', 'gold_bar_qty'=>'integer', 'status'=>'boolean', 'last_synced_at'=>'datetime'];
+    protected $hidden = ['stock_version'];
+    protected $casts = ['stock_version'=>'integer', 'gold_qty'=>'integer', 'gold_bar_qty'=>'integer', 'status'=>'boolean', 'last_synced_at'=>'datetime'];
 
     protected $fillable = [
         'name',
@@ -79,6 +79,20 @@ class Bot extends Model
                 ->orWhereRaw("REPLACE(type, ' ', '') LIKE ? ESCAPE '!'", ['%,'.$escaped])
                 ->orWhereRaw("REPLACE(type, ' ', '') LIKE ? ESCAPE '!'", ['%,'.$escaped.',%']);
         });
+    }
+
+    public function isChecker(): bool
+    {
+        return in_array('checker', array_map('trim', explode(',', strtolower((string) $this->type))), true);
+    }
+
+    public function scopeWithoutChecker($query)
+    {
+        // Protect public/financial selection even if a mixed role was imported directly.
+        return $query->whereRaw("LOWER(REPLACE(type, ' ', '')) != ?", ['checker'])
+            ->whereRaw("LOWER(REPLACE(type, ' ', '')) NOT LIKE ?", ['checker,%'])
+            ->whereRaw("LOWER(REPLACE(type, ' ', '')) NOT LIKE ?", ['%,checker'])
+            ->whereRaw("LOWER(REPLACE(type, ' ', '')) NOT LIKE ?", ['%,checker,%']);
     }
 
 }

@@ -13,7 +13,7 @@ export interface IGemOrder {
     delivery_method?: 'consignment' | 'gift_ticket';
     delivery_method_label?: string;
     bot_id?: number | null;
-    processing_version?: number | null;
+    has_delivery_checkpoint?: boolean;
     delivery_phase?: string | null;
     delivery_phase_label?: string | null;
     bot_gem_spent_qty?: number;

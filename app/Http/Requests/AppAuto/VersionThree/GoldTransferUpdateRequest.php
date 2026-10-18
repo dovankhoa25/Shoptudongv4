@@ -5,10 +5,10 @@ class GoldTransferUpdateRequest extends FormRequest {
     public function authorize(): bool { return true; }
     public function rules(): array {
         $rules = [
-            'worker_id'=>['required','uuid'], 'action'=>['required','in:claim,receipt,cancel'],
+            'worker_id'=>['sometimes','nullable','uuid'], 'action'=>['required','in:claim,receipt,cancel'],
             'from_bot_id'=>['required','integer','min:1'], 'to_bot_id'=>['required','integer','min:1','different:from_bot_id'],
             'bars_qty'=>['required','integer','between:0,999'], 'pure_gold_qty'=>['sometimes','integer','between:0,2147483647'],
-            'processing_token'=>['required_unless:action,claim','uuid'], 'step_id'=>['required_unless:action,claim','uuid'],
+            'processing_token'=>['sometimes','nullable','uuid'], 'step_id'=>['required_unless:action,claim','uuid'],
             'evidence'=>['required_unless:action,claim','array:kind,confirmed,unchanged,intent,fresh_login'],
             'evidence.fresh_login'=>['nullable','boolean'],
             'evidence.kind'=>['sometimes','in:transfer'],

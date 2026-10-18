@@ -1,0 +1,10 @@
+PHPUnit 11.5.56 by Sebastian Bergmann and contributors.
+
+Runtime:       PHP 8.3.30
+Configuration: D:\Job nro\web game v3\wegamenew-backend\phpunit.xml
+
+......                                                              6 / 6 (100%)
+
+Time: 00:01.697, Memory: 72.00 MB
+
+OK (6 tests, 89 assertions)

@@ -15,8 +15,7 @@ class GemBotResource extends JsonResource {
             'map_name'=>$this->map_name, 'map_id'=>(int)$this->map_id, 'area_number'=>(int)$this->area_number, 'coordinates'=>$this->coordinates,
             'gem_qty'=>(int)$this->gem_qty, 'gift_ticket_qty'=>$this->gift_ticket_qty,
             'consign_item_qty'=>$this->consign_item_qty, 'stock_version'=>(int)$this->stock_version,
-            'last_synced_at'=>$this->last_synced_at, 'v3_worker_id'=>$this->v3_worker_id,
-            'v3_lease_until'=>$this->v3_lease_until,
+            'last_synced_at'=>$this->last_synced_at,
         ];
     }
 }

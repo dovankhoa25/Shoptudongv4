@@ -79,6 +79,7 @@ class BotResource extends JsonResource
             'import_main' => 'Nhập chính',
             'import_sub' => 'Nhập phụ',
             'auto_sell_bar' => 'bán thỏi',
+            'checker' => 'Kiểm tra bot',
         ];
 
         $types = $this->getTypesArray();

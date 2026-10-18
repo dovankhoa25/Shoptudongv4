@@ -136,10 +136,8 @@ class AdminTradingBotLiveTest extends TestCase
         $gem = $this->bot(true);
         $views = [$this->subscribe('/admin/bots'), $this->subscribe('/admin/gem-bots')];
         Event::fake([AdminViewPatched::class]);
-        app(GoldTradingService::class)->updateBot($gold->id, ['worker_id' => $this->worker, 'action' => 'lease']);
-        app(GemTradingService::class)->updateBot($gem->id, ['worker_id' => $this->worker, 'action' => 'lease']);
-        app(GoldTradingService::class)->updateBot($gold->id, ['worker_id' => $this->worker, 'action' => 'stock', 'stock_version' => 1, 'gold_qty' => 0, 'gold_bar_qty' => 8]);
-        app(GemTradingService::class)->updateBot($gem->id, ['worker_id' => $this->worker, 'action' => 'stock', 'stock_version' => 1, 'gem_qty' => 90, 'gift_ticket_qty' => 9, 'consign_item_qty' => 2]);
+        app(GoldTradingService::class)->updateBot($gold->id, ['action' => 'stock', 'stock_version' => 1, 'gold_qty' => 0, 'gold_bar_qty' => 8]);
+        app(GemTradingService::class)->updateBot($gem->id, ['action' => 'stock', 'stock_version' => 1, 'gem_qty' => 90, 'gift_ticket_qty' => 9, 'consign_item_qty' => 2]);
         app(Updates::class)->flush();
         $this->assertSame(8, $this->state($views[0])['bots']['data'][0]['gold_bar_qty']);
         $this->assertSame(90, $this->state($views[1])['gemBots']['data'][0]['gem_qty']);
@@ -162,18 +160,18 @@ class AdminTradingBotLiveTest extends TestCase
         foreach ([false, true] as $gem) {
             $bot = $this->bot($gem);
             $service = app($gem ? GemTradingService::class : GoldTradingService::class);
-            $service->updateBot($bot->id, ['worker_id' => $this->worker, 'action' => 'lease']);
             $common = ['user_id' => User::factory()->create()->id, 'server_id' => $this->server->id, 'character_name' => 'lezit1',
                 'amount_vnd' => 10000, 'price_at_transaction' => 20, 'status' => 'pending', 'updated_by' => 'web'];
             $order = $gem ? GemTransaction::create([...$common, 'gem_qty' => 20, 'delivery_method' => 'gift_ticket'])
                 : GoldTransaction::create([...$common, 'type' => 'order', 'gold_qty' => 74000000, 'gold_bar_qty' => 2, 'pure_gold_qty' => 0]);
-            $token = $service->updateOrder($order->id, ['worker_id' => $this->worker, 'bot_id' => $bot->id, 'action' => 'claim'])->processing_token;
-            $service->updateOrder($order->id, ['worker_id' => $this->worker, 'bot_id' => $bot->id, 'action' => 'phase',
-                'processing_token' => $token, 'character_id' => 1234, 'step_id' => (string) Str::uuid(), 'phase' => $gem ? 'gifting' : 'trading']);
+            $claimed = $service->updateOrder($order->id, ['bot_id' => $bot->id, 'action' => 'claim']);
+            $this->assertTrue($claimed->hasDeliveryCheckpoint());
+            $service->updateOrder($order->id, ['bot_id' => $bot->id, 'action' => 'phase',
+                'character_id' => 1234, 'step_id' => (string) Str::uuid(), 'phase' => $gem ? 'gifting' : 'trading']);
             $botView = $this->subscribe($gem ? '/admin/gem-bots' : '/admin/bots');
             $orderView = $this->subscribe(($gem ? '/admin/gem-orders/' : '/admin/orders/').$order->id);
             Event::fake([AdminViewPatched::class]);
-            $receipt = ['worker_id' => $this->worker, 'bot_id' => $bot->id, 'action' => 'receipt', 'processing_token' => $token,
+            $receipt = ['bot_id' => $bot->id, 'action' => 'receipt',
                 'character_id' => 1234, 'step_id' => (string) Str::uuid(), 'completed' => true];
             $receipt += $gem ? ['gem_spent_qty' => 20, 'delivered_gem_qty' => 20, 'tickets_used_qty' => 2,
                 'bot_snapshot' => ['stock_version' => 1, 'gem_qty' => 80, 'gift_ticket_qty' => 8, 'consign_item_qty' => 3], 'evidence' => ['kind' => 'gift', 'confirmed' => true]]

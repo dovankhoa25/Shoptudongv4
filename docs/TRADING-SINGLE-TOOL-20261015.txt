@@ -1,0 +1,37 @@
+TRADING SINGLE TOOL — 15/10/2026
+
+Phạm vi
+- Xóa 10 cột quyền chạy/worker/token trong bots, gem_bots, gem_transactions, gold_transactions.
+- Giữ stock_version, tiến độ tài sản, delivery_data, người nhận và lịch sử receipt.
+- API trả full bot, pending/processing; không phân chia worker/phiên bản.
+- action=start cập nhật processing trước thao tác game để cron không hoàn nhầm.
+- Token/worker cũ vẫn được nhận như field tương thích của body outbox đã lưu, không kiểm tra quyền.
+- Sửa so sánh checkpoint/plan không phụ thuộc thứ tự key JSON trên MySQL.
+- Activity tiếp tục gửi Ably sau response, không queue/cache trạng thái; không đưa Redis activity backlog trở lại.
+
+Triển khai cùng QLTK mới
+1. Sao lưu DB; dừng tool trong lượt cập nhật backend + migration. Giữ journal/outbox và data/settings.json.
+2. Đưa source PHP, migration và public/build của bản này lên hosting; không thay .env đang dùng.
+3. Chạy:
+   php artisan migrate --force
+   php artisan config:cache
+   php artisan route:cache
+4. Nếu có worker dài hạn cho các việc khác: php artisan queue:restart. Activity bot không cần worker.
+5. Mở QLTK mới. Setting LẤY BOT / ĐƠN • GIÂY mặc định 5, cho phép 1..3600, đổi khi đang chạy được.
+6. Giữ HMAC, feature flag và Ably hiện tại. Không thêm biến môi trường bắt buộc. Cron gold:cancel-stale giữ nguyên.
+
+Migration: 2026_10_15_000001_simplify_single_tool_trading_state
+- Bot/gem_bot xóa v3_worker_id, v3_lease_until.
+- Hai bảng đơn xóa processing_version, processing_owner, processing_token.
+- Đổi index pending sang server_id,status; guard DDL cho lần chạy lại sau lỗi giữa chừng.
+- Rollback phục hồi cấu trúc nullable, không phục hồi metadata quyền cũ. Không sửa/xóa lịch sử tài chính.
+- Backend cũ từng SELECT/UPDATE cột đã bỏ không dùng được sau migration. API v1/v2 trong source mới đã sửa tương thích.
+
+Kiểm chứng
+- PHP 8.3.30, SQLite trong RAM: 215 tests / 2242 assertions PASS.
+- Bộ test gồm schema up/down chạy lại, giữ delivery_data/history, start không token/worker, refund/cron, frozen receipt ACK, bot stock, legacy/admin và cache OOM fallback.
+- Admin npm run build (TypeScript + Vite): PASS; có cảnh báo chunk bundle lớn, không có lỗi build.
+- PHP production thay đổi qua syntax check. Không chạy migration hoặc thay DB/.env trên hosting trong lượt phát triển này.
+- Không xác nhận MySQL concurrency, Ably production hoặc giao dịch game thật bằng các test local này.
+
+Xem docs/trading-v3.md cho contract và luồng chi tiết. Bot kiểm tra hiện diện mới chưa được triển khai trong bản tổ chức lại này.

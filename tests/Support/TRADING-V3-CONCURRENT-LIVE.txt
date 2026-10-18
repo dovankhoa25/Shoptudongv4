@@ -1,0 +1,69 @@
+Explicit local live fixtures (2026-10-17)
+
+Use only the separately authorized SV6/SV11 test accounts. These modes use a new
+temporary SQLite database and a loopback PHP server. Never point them at production.
+Keep old reports and journals. A STOP is not permission to create a replacement batch.
+
+SV6: Run-TradingV3Timing.ps1 -Methods concurrent_receipt
+Required existing arguments: -BotUsername, -BotPassword, -CustomersCredentialPath,
+-ReportDirectory. Use -MaximumSeconds 900 and -ToolDLL pointing at a copied complete
+GemV3.TimingProbe/bin/Release/net8.0 directory so other builds cannot replace it.
+
+CustomersCredentialPath is an ephemeral JSON array of objects with username and
+password fields; one to six authorized accounts, in preferred login order. The probe
+deletes this file before logging in; runner cleanup also removes it. Do not put it in
+the report directory, repository, or a command transcript. No credentials are needed
+in a persistent settings file. The first two eligible distinct customers are used.
+
+The backend creates one atomic batch: two consignment orders of 30 gems and one gift
+order of 10 gems (70 gems and 1 ticket maximum). If only one customer is usable, the
+batch is 30+10 and the report explicitly limits listing-fairness coverage. Both customers
+receive their exact items before either listing is posted. The first successful gift
+receipt response is held locally for 15s, after PHP finished it. A later order must send
+its trade-final during that hold. The report checks one financial receipt per order,
+exact final asset deltas, one bot TCP session, and clean journal/stock-refresh state.
+
+Preflight: add -Preflight to the same runner with fake credentials. It launches only
+PHP/SQLite, checks the atomic 70-gem batch and duplicate 409, and never runs the game.
+
+Resume of the specific 20261017-background-concurrent partial run: add
+-ResumeConcurrent -Methods concurrent_receipt and reuse its original -ReportDirectory.
+Supply the same original bot and both original customer credentials and a newly copied
+probe build. The runner archives prior reports and journal under resume-history, then
+restores the sanitized original SQLite at its original loopback port with the original
+worker/journal. It creates no new orders. The completed gift10 and verified handover2
+are skipped. Handover3 requires fresh no-effect reconciliation, unchanged exact item
+counts, and no prior opened panel/final; only then may a fresh sequential invitation
+be sent. One additional invitation is allowed only after another proven pre-open
+no-effect timeout. Existing exact30 listings are reused; uncertain missing items stop.
+Remaining budget is60 gems/0 tickets. Original delayed-ACK proof stays in the report;
+the resumed TCP session is reported separately, never as one session for the whole batch.
+-ResumeConcurrent -Preflight restores/checks only the local fixture, without game login.
+
+Offline transport check (no credentials, sockets, or game): set the process environment
+NRO_TRADING_V3_TIMING_METHODS=receipt_transport_test, execute GemV3.TimingProbe.dll,
+then restore/remove that environment variable. Both a before-send/precommit hold and
+an after-commit response hold must allow another API request and dispatch receipt once.
+This checks the injection itself; actor concurrency is covered by its separate tests
+and the authorized live concurrent_receipt mode.
+
+SV11: Run-TradingV3Gold.ps1 -ImportCancel
+Use existing arguments -SellingUsername, -ImportUsername, -AuxUsername,
+-DisabledUsername, -CustomerUsername, -TestPassword, -ReportDirectory, -Tool.
+Tool must point at a copied complete managed NroTradingV3 build. Do not combine this
+mode with TcpFault, PresenceFault, or ResumeCollect. Add -Preflight with fake accounts
+for a PHP/SQLite-only fixture check.
+
+The new fixture keeps seller and disabled actor offline. Importer must have 0 bars,
+the empty customer 0, auxiliary 999. Two import orders are created atomically. The empty
+customer opens then cancels without locking/final; backend must return the first order
+to pending, with no inventory receipt or wallet credit, and release the actor journal.
+The auxiliary is the second customer and gives exactly 1 bar to the same importer TCP.
+The second order must complete with one receipt and one 10000 credit in the local wallet.
+The observed auxiliary 998 stock is published to the isolated API; its manual session
+is closed before the existing coordinator logs it in to restore 999 (importer returns 0).
+
+Reports: native NroTradingV3/live-results/<new-folder>/concurrent-results.json and
+NroTradingV3/gold-live-results/<new-folder>/gold-import-cancel-results.json, plus
+original journal, sanitized DB, and redacted logs. No live run is started by a build,
+selftest, normal QLTK invocation, or preflight.

@@ -99,7 +99,7 @@ class AdminBotConfigInventoryTest extends TestCase
         $this->assertSame(1, InventoryMovement::where('movement_type', 'manual_adjustment')->count());
     }
 
-    public function test_admin_unreserved_capacity_is_independent_of_lease_and_public_capacity_keeps_lease_gate(): void
+    public function test_admin_and_public_capacity_use_stock_reservations_and_web_status_without_permission_metadata(): void
     {
         config(['trading_v3.enabled' => true]);
         $bot = $this->createBot(true);
@@ -110,18 +110,18 @@ class AdminBotConfigInventoryTest extends TestCase
         $adminData = (new GemBotResource($bot))->resolve();
         $this->assertSame(10, $adminData['gift_ticket_qty']);
         $this->assertSame(70, $adminData['gift_unreserved_gems']);
-        $this->assertSame(0, $adminData['gift_available_gems']);
-        $this->assertSame(0, (new ApiGemBotResource($bot))->resolve()['gift_available_gems']);
+        $this->assertSame(70, $adminData['gift_available_gems']);
+        $this->assertSame(70, (new ApiGemBotResource($bot))->resolve()['gift_available_gems']);
 
-        $bot->forceFill(['v3_worker_id' => '00000000-0000-4000-8000-000000000902', 'v3_lease_until' => now()->addMinutes(2)])->save();
+        $bot->update(['status'=>false]);
         DB::enableQueryLog();
         DB::flushQueryLog();
         $adminData = (new GemBotResource($bot))->resolve();
         $queries = DB::getQueryLog();
         DB::disableQueryLog();
         $this->assertSame(70, $adminData['gift_unreserved_gems']);
-        $this->assertSame(70, $adminData['gift_available_gems']);
+        $this->assertSame(0, $adminData['gift_available_gems']);
         $this->assertCount(1, $queries);
-        $this->assertSame(70, (new ApiGemBotResource($bot))->resolve()['gift_available_gems']);
+        $this->assertSame(0, (new ApiGemBotResource($bot))->resolve()['gift_available_gems']);
     }
 }

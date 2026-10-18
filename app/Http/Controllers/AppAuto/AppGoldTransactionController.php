@@ -17,7 +17,7 @@ class AppGoldTransactionController extends Controller
     public function index(Request $request)
     {
         $query = GoldTransaction::query()
-            ->where(fn ($q) => $q->whereNull('processing_version')->orWhere('processing_version', '!=', 3))
+            ->withoutDeliveryCheckpoint()
             ->where('updated_by', 'web')
             ->whereIn('status', ['pending', 'processing']);
 
@@ -139,7 +139,7 @@ class AppGoldTransactionController extends Controller
             $updatedTransaction = DB::transaction(function () use ($request, $id) {
                 // ✅ Lock thật sự bắt đầu tại đây
                 $goldTransaction = GoldTransaction::where('id', $id)->lockForUpdate()->firstOrFail();
-                abort_if((int) $goldTransaction->processing_version === 3, 409, 'This order requires tool v3.');
+                abort_if($goldTransaction->hasDeliveryCheckpoint(), 409, 'This order has a delivery checkpoint.');
 
                 $currentStatus = $goldTransaction->status;
                 $newStatus = $request->status;
@@ -147,6 +147,8 @@ class AppGoldTransactionController extends Controller
                 if ($currentStatus === $newStatus) {
                     return $goldTransaction;
                 }
+
+                abort_if($goldTransaction->bot?->isChecker() === true, 422, 'Checker bots do not process customer orders.');
 
                 $refundGrace = max((int) config('trading.gold_order_refund_grace_minutes', 5), 1);
                 $canRecoverTimedOutCancellation = $currentStatus === GoldTransaction::STATUS_CANCELLED

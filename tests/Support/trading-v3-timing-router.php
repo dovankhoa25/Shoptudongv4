@@ -17,10 +17,11 @@ if (!$app->environment('testing') || config('database.default') !== 'sqlite'
 }
 $path = (string) parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 $methods = (string) (getenv('NRO_TRADING_V3_TIMING_METHODS') ?: 'both');
-if (!in_array($methods, ['both', 'gift_ticket', 'gift_shop_interleave'], true)) { http_response_code(403); return; }
-$giftOnly = $methods !== 'both';
+if (!in_array($methods, ['both', 'gift_ticket', 'gift_shop_interleave', 'concurrent_receipt'], true)) { http_response_code(403); return; }
+$concurrent = $methods === 'concurrent_receipt';
+$giftOnly = !in_array($methods, ['both', 'concurrent_receipt'], true);
 $allowedMethods = $giftOnly ? ['gift_ticket'] : ['consignment', 'gift_ticket'];
-$maximumGems = $giftOnly ? 10 : 40;
+$maximumGems = $concurrent ? 70 : ($giftOnly ? 10 : 40);
 $body = json_decode(file_get_contents('php://input'), true) ?? [];
 if (!is_array($body)) $body = [];
 $started = hrtime(true);
@@ -44,7 +45,39 @@ if (str_starts_with($path, '/testing/')) {
         http_response_code(403); return;
     }
     header('Content-Type: application/json');
+    if ($path === '/testing/orders' && $_SERVER['REQUEST_METHOD'] === 'POST' && $concurrent) {
+        $names = $body['names'] ?? null;
+        if (!is_array($names) || count($names) < 1 || count($names) > 2
+            || count(array_unique(array_map(fn ($name) => is_string($name) ? strtolower($name) : '', $names))) !== count($names)
+            || array_filter($names, fn ($name) => !is_string($name) || !preg_match('/^[a-zA-Z0-9_-]{3,30}$/D', $name))) {
+            http_response_code(422); $record(422); echo json_encode(['success' => false, 'message' => 'One or two distinct test customers required.']); return;
+        }
+        $created = Illuminate\Support\Facades\DB::transaction(function () use ($names) {
+            if (App\Models\GemTransaction::query()->lockForUpdate()->exists()) return null;
+            $bot = App\Models\GemBot::sole();
+            if ((int) $bot->server_game_id !== 6 || (int) $bot->map_id !== 84
+                || (int) $bot->area_number !== 41 || $bot->coordinates !== '652-336') {
+                throw new RuntimeException('Fixture must remain at the authorized SV6 location.');
+            }
+            $user = App\Models\User::firstOrCreate(['email' => 'v3-timing-test@example.invalid'],
+                ['username' => 'v3timingtester', 'password' => Illuminate\Support\Facades\Hash::make(Illuminate\Support\Str::random(32))]);
+            $requests = [['method' => 'gift_ticket', 'name' => $names[0], 'quantity' => 10]];
+            foreach ($names as $name) $requests[] = ['method' => 'consignment', 'name' => $name, 'quantity' => 30];
+            return array_map(fn ($entry) => App\Models\GemTransaction::create([
+                'user_id' => $user->id, 'bot_id' => $bot->id, 'server_id' => $bot->server_id,
+                'character_name' => $entry['name'], 'gem_qty' => $entry['quantity'], 'amount_vnd' => 10000,
+                'price_at_transaction' => $entry['quantity'], 'delivery_method' => $entry['method'],
+                'status' => 'pending', 'updated_by' => 'web',
+            ]), $requests);
+        });
+        if ($created === null) {
+            http_response_code(409); $record(409); echo json_encode(['success' => false, 'message' => 'The atomic batch already exists; no replay.']); return;
+        }
+        $record(200); echo json_encode(['success' => true, 'created_at_utc' => $stamp(), 'data' => array_map(
+            fn ($order) => (new App\Http\Resources\AppAuto\VersionThree\GemOrderResource($order))->resolve(), $created)]); return;
+    }
     if ($path === '/testing/order' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        if ($concurrent) { http_response_code(403); $record(403); echo json_encode(['success' => false, 'message' => 'Concurrent mode requires one atomic bounded batch.']); return; }
         $method = $body['method'] ?? '';
         $name = $body['name'] ?? '';
         if (!is_string($method) || !is_string($name)
@@ -109,6 +142,7 @@ if (str_starts_with($path, '/testing/')) {
                 fn ($order) => (new App\Http\Resources\AppAuto\VersionThree\GemOrderResource($order))->resolve()),
             'movements' => $movements, 'ledger_proof' => $ledgerProof,
             'bounds' => ['methods' => $methods, 'consignment_gems' => $giftOnly ? 0 : 30,
+                'maximum_consignment_orders' => $concurrent ? 2 : ($giftOnly ? 0 : 1),
                 'ticket_gems' => 10, 'tickets' => 1, 'total_gems' => $maximumGems],
             'timeline' => $timeline,
         ]], JSON_UNESCAPED_UNICODE); return;

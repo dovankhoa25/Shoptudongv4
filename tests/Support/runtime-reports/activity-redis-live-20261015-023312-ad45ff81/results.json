@@ -1,0 +1,74 @@
+{
+    "isolated": true,
+    "redis_pid": 15620,
+    "port": 55799,
+    "database": 7,
+    "other_database": 8,
+    "prefix_verified": true,
+    "cases": [
+        {
+            "case": "real_oom_lrem_zrem_del_outside_multi",
+            "result": "PASS",
+            "byte_exact_removal": true,
+            "unknown_payload_preserved": true
+        },
+        {
+            "case": "default_read_only",
+            "result": "PASS",
+            "target_keys": 4,
+            "target_jobs": 3,
+            "unchanged": true,
+            "command": {
+                "code": 0,
+                "output": "+-------------------+------------+\r\n| Thông số          | Giá trị    |\r\n+-------------------+------------+\r\n| used_memory_human | 752.70K    |\r\n| used_memory       | 770760     |\r\n| maxmemory_human   | 0B         |\r\n| maxmemory         | 0          |\r\n| maxmemory_policy  | noeviction |\r\n+-------------------+------------+\r\n+-----------------------------+----------+\r\n| Queue trading-activity-live | Số lượng |\r\n+-----------------------------+----------+\r\n| pending                     | 1        |\r\n| reserved                    | 1        |\r\n| delayed                     | 1        |\r\n| notify                      | 1        |\r\n+-----------------------------+----------+\r\nChỉ đọc. Chỉ dùng --clear-backlog sau khi backend đã chuyển hoạt động sang after_response."
+            }
+        },
+        {
+            "case": "real_oom_exact_payload_cleanup",
+            "result": "PASS",
+            "oom_set_rejected": true,
+            "removed_keys": 4,
+            "foreign_queue_and_cache_preserved": true,
+            "other_database_preserved": true,
+            "diagnostic": {
+                "code": 0,
+                "output": "+-------------------+------------+\r\n| Thông số          | Giá trị    |\r\n+-------------------+------------+\r\n| used_memory_human | 752.70K    |\r\n| used_memory       | 770760     |\r\n| maxmemory_human   | 1B         |\r\n| maxmemory         | 1          |\r\n| maxmemory_policy  | noeviction |\r\n+-------------------+------------+\r\n+-----------------------------+----------+\r\n| Queue trading-activity-live | Số lượng |\r\n+-----------------------------+----------+\r\n| pending                     | 1        |\r\n| reserved                    | 1        |\r\n| delayed                     | 1        |\r\n| notify                      | 1        |\r\n+-----------------------------+----------+\r\nChỉ đọc. Chỉ dùng --clear-backlog sau khi backend đã chuyển hoạt động sang after_response."
+            },
+            "command": {
+                "code": 0,
+                "output": "+-------------------+------------+\r\n| Thông số          | Giá trị    |\r\n+-------------------+------------+\r\n| used_memory_human | 752.70K    |\r\n| used_memory       | 770760     |\r\n| maxmemory_human   | 1B         |\r\n| maxmemory         | 1          |\r\n| maxmemory_policy  | noeviction |\r\n+-------------------+------------+\r\n+-----------------------------+----------+\r\n| Queue trading-activity-live | Số lượng |\r\n+-----------------------------+----------+\r\n| pending                     | 1        |\r\n| reserved                    | 1        |\r\n| delayed                     | 1        |\r\n| notify                      | 1        |\r\n+-----------------------------+----------+\r\nĐã xóa 3 payload hoạt động và notify của queue riêng. Không xóa queue\/cache\/session khác hoặc dữ liệu đơn."
+            }
+        },
+        {
+            "case": "unknown_job_refuses_all_cleanup_under_oom",
+            "result": "PASS",
+            "all_keys_unchanged": true,
+            "command": {
+                "code": 1,
+                "output": "+-------------------+------------+\r\n| Thông số          | Giá trị    |\r\n+-------------------+------------+\r\n| used_memory_human | 748.73K    |\r\n| used_memory       | 766704     |\r\n| maxmemory_human   | 1B         |\r\n| maxmemory         | 1          |\r\n| maxmemory_policy  | noeviction |\r\n+-------------------+------------+\r\n+-----------------------------+----------+\r\n| Queue trading-activity-live | Số lượng |\r\n+-----------------------------+----------+\r\n| pending                     | 1        |\r\n| reserved                    | 0        |\r\n| delayed                     | 0        |\r\n| notify                      | 1        |\r\n+-----------------------------+----------+\r\nPhát hiện job khác hoặc payload không xác định; chưa xóa payload nào."
+            }
+        },
+        {
+            "case": "real_oom_exact_legacy_cache_cleanup",
+            "result": "PASS",
+            "cache_database": 9,
+            "removed_exact_keys": 3,
+            "hmac_nonce_and_session_preserved": true,
+            "unknown_activity_type_preserved": true,
+            "queue_preserved": true,
+            "command": {
+                "code": 0,
+                "output": "+-------------------+------------+\r\n| Thông số          | Giá trị    |\r\n+-------------------+------------+\r\n| used_memory_human | 788.73K    |\r\n| used_memory       | 807656     |\r\n| maxmemory_human   | 1B         |\r\n| maxmemory         | 1          |\r\n| maxmemory_policy  | noeviction |\r\n+-------------------+------------+\r\n+-----------------------------+----------+\r\n| Queue trading-activity-live | Số lượng |\r\n+-----------------------------+----------+\r\n| pending                     | 1        |\r\n| reserved                    | 0        |\r\n| delayed                     | 0        |\r\n| notify                      | 1        |\r\n+-----------------------------+----------+\r\nĐã xóa 3 cache hoạt động\/policy ngọc cũ. Không xóa nonce HMAC, session, tồn kho, đơn hoặc cache khác."
+            }
+        }
+    ],
+    "success": true,
+    "attempted_oom_diagnostic": {
+        "code": 0,
+        "output": "+-------------------+------------+\r\n| Thông số          | Giá trị    |\r\n+-------------------+------------+\r\n| used_memory_human | 752.70K    |\r\n| used_memory       | 770760     |\r\n| maxmemory_human   | 1B         |\r\n| maxmemory         | 1          |\r\n| maxmemory_policy  | noeviction |\r\n+-------------------+------------+\r\n+-----------------------------+----------+\r\n| Queue trading-activity-live | Số lượng |\r\n+-----------------------------+----------+\r\n| pending                     | 1        |\r\n| reserved                    | 1        |\r\n| delayed                     | 1        |\r\n| notify                      | 1        |\r\n+-----------------------------+----------+\r\nChỉ đọc. Chỉ dùng --clear-backlog sau khi backend đã chuyển hoạt động sang after_response."
+    },
+    "attempted_oom_cleanup": {
+        "code": 0,
+        "output": "+-------------------+------------+\r\n| Thông số          | Giá trị    |\r\n+-------------------+------------+\r\n| used_memory_human | 752.70K    |\r\n| used_memory       | 770760     |\r\n| maxmemory_human   | 1B         |\r\n| maxmemory         | 1          |\r\n| maxmemory_policy  | noeviction |\r\n+-------------------+------------+\r\n+-----------------------------+----------+\r\n| Queue trading-activity-live | Số lượng |\r\n+-----------------------------+----------+\r\n| pending                     | 1        |\r\n| reserved                    | 1        |\r\n| delayed                     | 1        |\r\n| notify                      | 1        |\r\n+-----------------------------+----------+\r\nĐã xóa 3 payload hoạt động và notify của queue riêng. Không xóa queue\/cache\/session khác hoặc dữ liệu đơn."
+    }
+}

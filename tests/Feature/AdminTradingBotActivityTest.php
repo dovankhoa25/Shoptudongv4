@@ -7,12 +7,10 @@ use App\Models\{Bot, GemBot, GemTransaction, GoldTransaction, Server, User};
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\{DB, Event};
 use Tests\TestCase;
-use Tests\Concerns\QueuesTradingBotActivity;
 
 class AdminTradingBotActivityTest extends TestCase
 {
     use RefreshDatabase;
-    use QueuesTradingBotActivity;
 
     private string $worker = '00000000-0000-4000-8000-000000000201';
     private string $otherWorker = '00000000-0000-4000-8000-000000000202';
@@ -26,7 +24,6 @@ class AdminTradingBotActivityTest extends TestCase
         config()->set('trading_v3', require base_path('config/trading_v3.php'));
         config()->set('trading_v3.enabled', true);
         config()->set('trading_v3.hmac_secret', $this->secret);
-        $this->fakeTradingActivityQueue();
         Event::fake();
         $this->freezeTime();
         $this->server = Server::create(['name' => 'activity-test', 'status' => true]);
@@ -45,7 +42,6 @@ class AdminTradingBotActivityTest extends TestCase
         $bot = $module === 'gem'
             ? GemBot::create([...$data, 'gem_qty' => 100, 'gift_ticket_qty' => 10, 'consign_item_qty' => 3])
             : Bot::create([...$data, 'type' => 'selling_main', 'gold_qty' => 0, 'gold_bar_qty' => 10]);
-        $bot->forceFill(['v3_worker_id' => $this->worker])->save();
         return $bot;
     }
 
@@ -55,7 +51,6 @@ class AdminTradingBotActivityTest extends TestCase
             'user_id' => User::factory()->create()->id, 'server_id' => $this->server->id,
             'character_name' => 'customer-private', 'amount_vnd' => 10000, 'price_at_transaction' => 10,
             'status' => 'pending', 'updated_by' => 'web', 'bot_id' => null,
-            'processing_owner' => null, 'processing_version' => null,
         ];
         return $module === 'gem'
             ? GemTransaction::create([...$data, 'delivery_method' => 'consignment', 'gem_qty' => 30])
@@ -74,7 +69,6 @@ class AdminTradingBotActivityTest extends TestCase
             'X-Tool-Id' => $tool, 'X-Tool-Timestamp' => $time, 'X-Tool-Nonce' => $nonce,
             'X-Tool-Signature' => hash_hmac('sha256', implode("\n", ['POST', $path, $tool, $time, $nonce, hash('sha256', $body)]), $this->secret),
         ]);
-        $this->runQueuedTradingActivities();
         return $response;
     }
 
@@ -153,10 +147,8 @@ class AdminTradingBotActivityTest extends TestCase
             $order = $this->order($module);
             $otherServer = Server::create(['name' => 'other-activity-server', 'status' => true]);
             $cases = [
-                ['server_id' => $otherServer->id, 'bot_id' => null, 'processing_owner' => null, 'processing_version' => null, 'status' => 'pending'],
-                ['server_id' => $bot->server_id, 'bot_id' => $other->id, 'processing_owner' => null, 'processing_version' => null, 'status' => 'pending'],
-                ['server_id' => $bot->server_id, 'bot_id' => $bot->id, 'processing_owner' => $this->otherWorker, 'processing_version' => 3, 'status' => 'processing'],
-                ['server_id' => $bot->server_id, 'bot_id' => $bot->id, 'processing_owner' => null, 'processing_version' => 2, 'status' => 'processing'],
+                ['server_id' => $otherServer->id, 'bot_id' => null, 'status' => 'pending'],
+                ['server_id' => $bot->server_id, 'bot_id' => $other->id, 'status' => 'pending'],
             ];
             foreach ($cases as $values) {
                 $order->forceFill($values)->save();
@@ -173,7 +165,7 @@ class AdminTradingBotActivityTest extends TestCase
         foreach (['gem', 'gold'] as $module) {
             $bot = $this->bot($module, false);
             $order = $this->order($module);
-            $order->forceFill(['status' => 'completed', 'bot_id' => $bot->id, 'processing_version' => 3, 'processing_owner' => $this->worker])->save();
+            $order->forceFill(['status' => 'completed', 'bot_id' => $bot->id])->save();
             $before = $order->refresh()->getAttributes();
             Event::fake();
             $this->activity($module, $bot, ['code' => 'disabled', 'online_seconds' => 0, 'order_id' => $order->id, 'customer_message' => 'thank-you'])->assertOk();
@@ -182,9 +174,28 @@ class AdminTradingBotActivityTest extends TestCase
             $this->assertFalse($bot->refresh()->status);
             $this->assertSame($before, $order->refresh()->getAttributes());
             Event::fake();
-            $this->activity($module, $bot, ['worker_id' => $this->otherWorker])->assertConflict();
+            $this->activity($module, $bot, ['worker_id' => $this->otherWorker])->assertOk();
+            $this->assertFalse($bot->refresh()->status);
+            $this->assertSame($before, $order->refresh()->getAttributes());
+            Event::fake();
             $this->activity($module, $bot, ['code' => 'unknown-code'])->assertUnprocessable();
             Event::assertNotDispatched(TradingBotActivity::class);
+        }
+    }
+    public function test_same_bot_private_notice_preserves_orders_with_or_without_delivery_checkpoint(): void
+    {
+        foreach (['gem','gold'] as $module) {
+            $bot=$this->bot($module);$order=$this->order($module);
+            $claim=$module==='gem'?['character_name'=>$order->character_name,'gem_qty'=>(int)$order->gem_qty,'delivery_method'=>$order->delivery_method]
+                :['character_name'=>$order->character_name,'type'=>$order->type,'bars'=>(int)$order->gold_bar_qty,'pure'=>(int)$order->pure_gold_qty];
+            foreach ([[],['claim'=>$claim]] as $checkpoint) {
+                $order->forceFill(['delivery_data'=>$checkpoint,'server_id'=>$bot->server_id,'bot_id'=>$bot->id,'status'=>'processing'])->save();
+                $before=$order->refresh()->getAttributes();Event::fake();
+                $this->activity($module,$bot,['code'=>'name_mismatch','order_id'=>$order->id,'customer_message'=>'private'])->assertOk();
+                Event::assertDispatched(UserEvent::class);
+                Event::assertDispatched(TradingBotActivity::class,fn($event)=>!isset($event->activity['customer_message'],$event->activity['order_id']));
+                $this->assertSame($before,$order->refresh()->getAttributes());
+            }
         }
     }
 }

@@ -6,9 +6,9 @@ class GemOrderUpdateRequest extends FormRequest {
     public function rules(): array { return [
         'bot_snapshot.map_name'=>['prohibited'], 'bot_snapshot.map_id'=>['prohibited'],
         'bot_snapshot.area_number'=>['prohibited'], 'bot_snapshot.coordinates'=>['prohibited'], 'bot_snapshot.status'=>['prohibited'],
-        'worker_id'=>['required','uuid'], 'bot_id'=>['required','integer','min:1'],
-        'action'=>['required','in:claim,phase,receipt,release_unstarted,timeout,refund,refund_pending'],
-        'processing_token'=>['required_if:action,phase,receipt,release_unstarted','nullable','uuid'],
+        'worker_id'=>['sometimes','nullable','uuid'], 'bot_id'=>['required','integer','min:1'],
+        'action'=>['required','in:start,claim,phase,receipt,release_unstarted,timeout,refund,refund_pending'],
+        'processing_token'=>['sometimes','nullable','uuid'],
         'character_id'=>['nullable','integer','min:1'],
         'phase'=>['required_if:action,phase','string','in:waiting_customer,giving_item,waiting_consignment,gifting,buying,waiting_login,review_required,ready'],
         'delivery_data'=>['nullable','array:delivery_item,listing_id,recipient_balance_observed'],

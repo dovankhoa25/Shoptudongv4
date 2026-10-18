@@ -37,7 +37,7 @@ class GemOrderResource extends JsonResource
             'delivery_method' => $this->delivery_method,
             'delivery_method_label' => $this->delivery_method === 'gift_ticket' ? 'Vé tặng ngọc' : 'Đồ ký gửi',
             'bot_id' => $this->bot_id,
-            'processing_version' => $this->processing_version,
+            'has_delivery_checkpoint' => $this->resource->hasDeliveryCheckpoint(),
             'delivery_phase' => $this->delivery_phase,
             'delivery_phase_label' => match ($this->delivery_phase) {
                 'waiting_customer' => 'Chờ khách giao dịch',
@@ -69,10 +69,10 @@ class GemOrderResource extends JsonResource
             'can_refund' => $this->status === 'pending'
                 && $this->refunded_at === null
                 && (int) $this->amount_vnd > 0,
-            'can_complete' => $this->status === 'processing' && !$this->processing_token && empty($this->delivery_data['claim']),
-            'can_cancel' => $this->status === 'pending' || ($this->status === 'processing' && !$this->processing_token && empty($this->delivery_data['claim'])),
+            'can_complete' => $this->status === 'processing' && !$this->resource->hasDeliveryCheckpoint(),
+            'can_cancel' => $this->status === 'pending' || ($this->status === 'processing' && !$this->resource->hasDeliveryCheckpoint()),
             'can_update_status' => $this->refunded_at === null
-                && !($this->status === 'processing' && ($this->processing_token || !empty($this->delivery_data['claim'])))
+                && !($this->status === 'processing' && $this->resource->hasDeliveryCheckpoint())
                 && in_array($this->status, ['pending', 'processing', 'cancelled']),
             'is_timeout_cancellation' => $this->status === 'cancelled'
                 && $this->cancel_requested_at !== null

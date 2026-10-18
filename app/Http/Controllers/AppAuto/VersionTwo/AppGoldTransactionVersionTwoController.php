@@ -22,7 +22,7 @@ class AppGoldTransactionVersionTwoController extends Controller
     public function index(Request $request)
     {
         $query = GoldTransaction::query()
-            ->where(fn ($q) => $q->whereNull('processing_version')->orWhere('processing_version', 2))
+            ->withoutDeliveryCheckpoint()
             ->where('updated_by', 'web')
             ->whereIn('status', ['pending', 'processing']);
 
@@ -178,7 +178,7 @@ class AppGoldTransactionVersionTwoController extends Controller
 
                 // Match v3 lock order: account before transaction, so legacy and v3 claims serialize.
                 $requestedBot = Bot::query()->whereKey($validated['bot_id'])->lockForUpdate()->firstOrFail();
-                abort_if(\App\Services\TradingV3\GoldTradingService::ownedByV3($requestedBot), 409, 'This bot is owned by tool v3.');
+                abort_if(\App\Services\TradingV3\GoldTradingService::hasActiveDelivery($requestedBot), 409, 'Bot has unfinished delivery.');
                 // 1) Lock transaction
                 $goldTransaction = GoldTransaction::query()
                     ->whereKey($id)
@@ -186,7 +186,7 @@ class AppGoldTransactionVersionTwoController extends Controller
                     ->firstOrFail();
 
                 $currentStatus = $goldTransaction->status;
-                abort_if((int) $goldTransaction->processing_version === 3, 409, 'This order requires tool v3.');
+                abort_if($goldTransaction->hasDeliveryCheckpoint(), 409, 'This order has a delivery checkpoint.');
                 abort_unless((int) $requestedBot->server_id === (int) $goldTransaction->server_id, 422, 'Order and bot server_id differ.');
                 abort_if($goldTransaction->bot_id && (int) $goldTransaction->bot_id !== $requestedBot->id, 409, 'Order belongs to another bot.');
                 $newStatus = $validated['status'];
@@ -196,6 +196,8 @@ class AppGoldTransactionVersionTwoController extends Controller
                 if ($currentStatus === $newStatus) {
                     return $goldTransaction;
                 }
+
+                abort_if($requestedBot->isChecker(), 422, 'Checker bots do not process customer orders.');
 
                 $refundGrace = max((int) config('trading.gold_order_refund_grace_minutes', 5), 1);
                 $canRecoverTimedOutCancellation = $currentStatus === GoldTransaction::STATUS_CANCELLED
@@ -224,7 +226,6 @@ class AppGoldTransactionVersionTwoController extends Controller
 
                 // 3) Update transaction trước
                 $goldTransaction->status = $newStatus;
-                $goldTransaction->processing_version ??= 2;
                 $goldTransaction->bot_id = $requestedBot->id;
                 $goldTransaction->updated_by = 'app';
                 $goldTransaction->last_synced_at = now();

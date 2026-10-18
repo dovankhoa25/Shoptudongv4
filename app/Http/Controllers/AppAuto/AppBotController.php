@@ -14,14 +14,14 @@ class AppBotController extends Controller
 
     public function index(Request $request)
     {
-        $bots = Bot::query()
+        $bots = Bot::query()->withoutChecker()
             ->when($request->filled('server_id'), fn($q) => $q->where('server_id', $request->server_id))
             ->when($request->filled('type'), fn($q) => $q->withRole($request->type))
             ->where('status', true) // bot status
             ->whereHas('server', function ($q) {
                 $q->where('status', true); // server status
             })
-            ->get()->reject(fn($bot)=>\App\Services\TradingV3\GoldTradingService::ownedByV3($bot))->values();
+            ->get()->reject(fn($bot)=>\App\Services\TradingV3\GoldTradingService::hasActiveDelivery($bot))->values();
 
         return response()->json([
             'success' => true,
@@ -37,7 +37,8 @@ class AppBotController extends Controller
     {
         return \Illuminate\Support\Facades\DB::transaction(function () use ($request, $id) {
         $bot = Bot::whereKey($id)->lockForUpdate()->firstOrFail();
-        abort_if(\App\Services\TradingV3\GoldTradingService::ownedByV3($bot), 409, 'This bot is owned by tool v3.');
+        abort_if($bot->isChecker(), 422, 'Checker bots are managed by the checker runtime, not legacy stock updates.');
+        abort_if(\App\Services\TradingV3\GoldTradingService::hasActiveDelivery($bot), 409, 'Bot has unfinished delivery.');
 
         // if ($bot->updated_by !== 'web') {
         //     return response()->json([

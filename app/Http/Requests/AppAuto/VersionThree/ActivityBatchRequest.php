@@ -11,7 +11,7 @@ class ActivityBatchRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'worker_id' => ['required', 'uuid'],
+            'worker_id'=>['sometimes','nullable','uuid'],
             'activities' => ['required', 'array', 'min:1', 'max:2000'],
             'activities.*' => ['array:bot_type,bot_id,code,map_id,zone,x,y,online_seconds,wait_seconds'],
             'activities.*.bot_type' => ['required', 'in:gem_bot,bot'],

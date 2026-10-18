@@ -14,7 +14,7 @@ class ActivityController extends Controller
         $data = $request->validated(); $groups = collect($data['activities'])->groupBy('bot_type'); $bots = [];
         foreach (['gem_bot' => GemBot::class, 'bot' => Bot::class] as $type => $model) {
             $ids = ($groups[$type] ?? collect())->pluck('bot_id')->unique()->all();
-            $bots[$type] = $ids ? $model::whereIn('id', $ids)->get(['id', 'server_id', 'v3_worker_id'])->keyBy('id') : collect();
+            $bots[$type] = $ids ? $model::whereIn('id', $ids)->get(['id', 'server_id'])->keyBy('id') : collect();
         }
         $observed = now(); $expires = $observed->copy()->addSeconds(config('trading_v3.activity_ttl_seconds', 35))->toIso8601String();
         $accepted = []; $rejected = [];

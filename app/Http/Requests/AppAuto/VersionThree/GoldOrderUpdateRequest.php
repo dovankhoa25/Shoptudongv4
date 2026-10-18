@@ -5,11 +5,11 @@ class GoldOrderUpdateRequest extends FormRequest {
     public function authorize(): bool { return true; }
     public function rules(): array {
         $rules = [
-            'worker_id'=>['required','uuid'], 'bot_id'=>['required','integer','min:1'],
-            'action'=>['required','in:claim,phase,receipt,refund_pending,release_unstarted'], 'processing_token'=>['required_if:action,phase,receipt,release_unstarted','nullable','uuid'],
+            'worker_id'=>['sometimes','nullable','uuid'], 'bot_id'=>['required','integer','min:1'],
+            'action'=>['required','in:start,claim,phase,receipt,refund_pending,release_unstarted'], 'processing_token'=>['sometimes','nullable','uuid'],
             'character_id'=>['nullable','integer','min:1'],
             'phase'=>['required_if:action,phase','string','in:waiting_customer,waiting_stock,trading,syncing,reconciling,waiting_login'],
-            'step_id'=>['required_unless:action,claim','uuid'],
+            'step_id'=>['required_unless:action,start,claim','uuid'],
             'timeout_seconds'=>['required_if:action,refund_pending','integer','between:1,86400'],
             'bars_qty'=>['required_if:action,receipt','integer','between:0,999'],
             'pure_gold_qty'=>['required_if:action,receipt','integer','between:0,2147483647'],
@@ -22,12 +22,36 @@ class GoldOrderUpdateRequest extends FormRequest {
             'evidence'=>['required_if:action,receipt,release_unstarted','array:kind,confirmed,intent,fresh_login,no_effect'],
             'evidence.fresh_login'=>['nullable','boolean'],
             'evidence.kind'=>['required_if:action,receipt','in:sale,import'],
-            'evidence.confirmed'=>['exclude_unless:action,receipt,release_unstarted','required','accepted'],
-            'evidence.no_effect'=>['exclude_unless:action,release_unstarted','required','accepted'],
+            'evidence.confirmed'=>[...($this->input('action')==='phase'?['sometimes']:[]),'exclude_unless:action,receipt,release_unstarted,phase','required_if:action,receipt,release_unstarted','accepted'],
+            'evidence.no_effect'=>[...($this->input('action')==='phase'?['sometimes']:[]),'exclude_unless:action,release_unstarted,phase','required_if:action,release_unstarted','accepted'],
             'evidence.intent'=>['nullable','array'],
             'delivery_data'=>['prohibited'],
         ];
         foreach (['map_name','map_id','area_number','coordinates','status','server_id','server_game_id','server_login_id','account_name','account_password','proxy','type'] as $field) $rules['bot_snapshot.'.$field]=['prohibited'];
+        // A new claim may carry exact frozen terminal receipts whose HTTP ACK is delayed.
+        // Reuse the ordinary receipt validation, including its conditional exclusions,
+        // so the saved payload hash is identical through either endpoint shape.
+        $receiptRules=$rules;
+        $rules['pending_receipts']=['sometimes','prohibited_unless:action,start,claim','array','max:16'];
+        $rules['pending_receipts.*']=['required','array:order_id,payload'];
+        $rules['pending_receipts.*.order_id']=['required','integer','min:1','distinct'];
+        $rules['pending_receipts.*.payload']=['required','array'];
+        foreach($receiptRules as $field=>$fieldRules) $rules['pending_receipts.*.payload.'.$field]=array_map(
+            fn($rule)=>str_replace(':action,',':pending_receipts.*.payload.action,',$rule),$fieldRules);
+        $rules['pending_receipts.*.payload.action']=['required','in:receipt'];
+        $rules['pending_receipts.*.payload.completed']=['required','boolean','accepted'];
+        $rules['pending_receipts.*.payload.pending_receipts']=['prohibited'];
+        $rules['pending_receipts.*.payload.pending_transfers']=['prohibited'];
+        $rules['pending_transfers']=['sometimes','prohibited_unless:action,start,claim','array','max:16'];
+        $rules['pending_transfers.*']=['required','array:transfer_id,payload'];
+        $rules['pending_transfers.*.transfer_id']=['required','uuid','distinct'];
+        $rules['pending_transfers.*.payload']=['required','array'];
+        foreach((new GoldTransferUpdateRequest)->rules() as $field=>$fieldRules)
+            $rules['pending_transfers.*.payload.'.$field]=array_map(fn($rule)=>str_replace(
+                [':action,',':from_bot_id'],[':pending_transfers.*.payload.action,',':pending_transfers.*.payload.from_bot_id'],$rule),$fieldRules);
+        $rules['pending_transfers.*.payload.action']=['required','in:receipt'];
+        $rules['pending_transfers.*.payload.pending_receipts']=['prohibited'];
+        $rules['pending_transfers.*.payload.pending_transfers']=['prohibited'];
         return $rules;
     }
 }

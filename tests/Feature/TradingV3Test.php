@@ -2,20 +2,18 @@
 namespace Tests\Feature;
 use App\Events\TradingBotActivity;
 use App\Models\{GemBot,GemTransaction,Server,ServerGameLogin,User};
+use App\Models\InventoryMovement;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Str;
 use Tests\TestCase;
-use Tests\Concerns\QueuesTradingBotActivity;
 class TradingV3Test extends TestCase {
     use RefreshDatabase;
-    use QueuesTradingBotActivity;
     private string $worker='00000000-0000-4000-8000-000000000001';
     private string $secret='test-only-secret-with-at-least-32-characters';
     protected function setUp(): void {
         parent::setUp();config()->set('trading_v3',require base_path('config/trading_v3.php'));config()->set('trading_v3.enabled',true);config()->set('trading_v3.hmac_secret',$this->secret);
         config()->set('services.app_api_key','legacy-test');Event::fake();
-        $this->fakeTradingActivityQueue();
     }
     private function callSigned(string $method,string $path,array $data=[],?array $headers=null) {
         $body=in_array($method,['GET','HEAD'])?'':json_encode($data);
@@ -44,7 +42,7 @@ class TradingV3Test extends TestCase {
     }
     private function claim(GemBot $b,GemTransaction $o): string {
         $result=$this->callSigned('PUT',"/app/v3/gem-transactions/{$o->id}",['worker_id'=>$this->worker,'bot_id'=>$b->id,'action'=>'claim']);
-        $result->assertOk();return $result->json('data.processing_token');
+        $result->assertOk()->assertJsonPath('data.has_delivery_checkpoint',true);return (string)Str::uuid(); // Legacy wire field only.
     }
     private function receipt(GemBot $b,string $token,int $version,bool $done=false): array {
         return ['worker_id'=>$this->worker,'bot_id'=>$b->id,'action'=>'receipt','processing_token'=>$token,
@@ -129,7 +127,7 @@ class TradingV3Test extends TestCase {
         $this->putJson('/app/v2/gem/bots/'.$b->id,['gem_qty'=>1],$headers)->assertConflict();
         $this->putJson('/app/v2/gem-transactions/'.$o->id,['status'=>'processing','bot_id'=>$b->id],$headers)->assertConflict();
         $this->callSigned('PUT',"/app/v3/gem/bots/{$b->id}",['worker_id'=>$this->worker,'action'=>'release'])->assertOk();
-        $this->assertSame($token,$o->fresh()->processing_token);
+        $this->assertTrue($o->fresh()->hasDeliveryCheckpoint());
         $this->getJson('/app/v2/gem/bots',$headers)->assertOk()->assertJsonCount(0,'data');
     }
     public function test_claim_terms_and_phase_receipts_cannot_be_overwritten(): void {
@@ -164,15 +162,15 @@ class TradingV3Test extends TestCase {
     public function test_activity_is_an_event_and_does_not_change_database_bot(): void {
         $b=$this->bot();$this->lease($b);$before=$b->refresh()->getAttributes();
         $this->callSigned('POST',"/app/v3/gem/bots/{$b->id}/activity",['worker_id'=>$this->worker,'code'=>'travelling','map_id'=>1,'zone'=>2,'x'=>100,'y'=>200])->assertOk();
-        $this->runQueuedTradingActivities();
+
         $this->assertSame($before,$b->refresh()->getAttributes());
         Event::assertDispatched(TradingBotActivity::class,fn($e)=>$e->activity['code']==='travelling' && $e->activity['map_id']===1);
         $this->callSigned('POST',"/app/v3/gem/bots/{$b->id}/activity",['worker_id'=>$this->worker,'code'=>'paused','online_seconds'=>0])->assertOk();
-        $this->runQueuedTradingActivities();
+
         $this->assertSame($before,$b->refresh()->getAttributes());
         Event::assertDispatched(TradingBotActivity::class,fn($e)=>$e->activity['code']==='paused' && $e->activity['text']==='Đã tạm dừng Ngọc tại QLTK');
         $this->callSigned('POST',"/app/v3/gem/bots/{$b->id}/activity",['worker_id'=>$this->worker,'code'=>'reconciling','online_seconds'=>60])->assertOk();
-        $this->runQueuedTradingActivities();
+
         $this->assertSame($before,$b->refresh()->getAttributes());
         Event::assertDispatched(TradingBotActivity::class,fn($e)=>$e->activity['code']==='reconciling' && $e->activity['text']==='Đang đối chiếu tồn và giao dịch');
     }
@@ -185,8 +183,107 @@ class TradingV3Test extends TestCase {
         $next='00000000-0000-4000-8000-000000000002';
         $this->callSigned('PUT',"/app/v3/gem/bots/{$b->id}",['worker_id'=>$next,'action'=>'lease'])->assertOk();
         $this->callSigned('PUT',"/app/v3/gem-transactions/{$o->id}",$p)->assertOk()->assertJsonPath('ack_id',$p['step_id'])->assertJsonPath('data.status','completed');
-        $this->assertSame($next,$b->refresh()->v3_worker_id);$this->assertSame(80,(int)$b->gem_qty);
+        $this->assertSame(80,(int)$b->refresh()->gem_qty);
         $p['gem_spent_qty']=0;$this->callSigned('PUT',"/app/v3/gem-transactions/{$o->id}",$p)->assertConflict();
+    }
+    public function test_gift_receipt_separates_external_inventory_changes_and_lost_ack(): void {
+        $b=$this->bot();$o=$this->order($b);$token=$this->claim($b,$o);
+        $this->callSigned('PUT',"/app/v3/gem-transactions/{$o->id}",['bot_id'=>$b->id,'action'=>'phase','phase'=>'gifting','character_id'=>1234])->assertOk();
+        $p=$this->receipt($b,$token,1);
+        $p['bot_snapshot']=['stock_version'=>1,'gem_qty'=>190,'gift_ticket_qty'=>1009,'consign_item_qty'=>3];
+        $path="/app/v3/gem-transactions/{$o->id}";
+        $this->callSigned('PUT',$path,$p)->assertOk()->assertJsonPath('data.delivered_gem_qty',10);
+        $this->assertSame(-10,(int)InventoryMovement::where('transaction_id',$o->id)->where('asset_type','gem')->sum('quantity_delta'));
+        $this->assertSame(100,(int)InventoryMovement::where('movement_type','sync_correction')->where('asset_type','gem')->sum('quantity_delta'));
+        $this->assertSame(1000,(int)InventoryMovement::where('movement_type','sync_correction')->where('asset_type','gem_ticket')->sum('quantity_delta'));
+        $this->assertSame(0,InventoryMovement::where('movement_type','sync_correction')->whereNotNull('transaction_id')->count());
+        $count=InventoryMovement::count();$this->callSigned('PUT',$path,$p)->assertOk()->assertJsonPath('ack_id',$p['step_id']);
+        $this->assertDatabaseCount('inventory_movements',$count);$this->assertSame(190,(int)$b->refresh()->gem_qty);
+        $p['bot_snapshot']['gem_qty']++;$this->callSigned('PUT',$path,$p)->assertConflict();
+    }
+    public function test_equipment_trade_and_consignment_accept_unrelated_gem_ticket_and_item_changes(): void {
+        $b=$this->bot();$o=$this->order($b,'consignment');$this->claim($b,$o);$path="/app/v3/gem-transactions/{$o->id}";
+        $base=['bot_id'=>$b->id,'character_id'=>1234];$plan=['template_id'=>1,'signature'=>'1:87=0','quantity'=>1,'verified'=>false];
+        $this->callSigned('PUT',$path,[...$base,'action'=>'phase','phase'=>'giving_item','delivery_data'=>['delivery_item'=>$plan]])->assertOk();
+        $plan['verified']=true;
+        $trade=[...$base,'action'=>'receipt','step_id'=>(string)Str::uuid(),'gem_spent_qty'=>0,'delivered_gem_qty'=>0,'tickets_used_qty'=>0,'completed'=>false,
+            'delivery_data'=>['delivery_item'=>$plan],'evidence'=>['kind'=>'trade','confirmed'=>true],
+            'bot_snapshot'=>['stock_version'=>1,'gem_qty'=>150,'gift_ticket_qty'=>1010,'consign_item_qty'=>7]];
+        $this->callSigned('PUT',$path,$trade)->assertOk()->assertJsonPath('data.delivery_data.delivery_item.verified',true);
+        $buy=[...$base,'action'=>'receipt','step_id'=>(string)Str::uuid(),'gem_spent_qty'=>20,'delivered_gem_qty'=>19,'tickets_used_qty'=>0,'completed'=>true,
+            'evidence'=>['kind'=>'consignment','confirmed'=>true],'bot_snapshot'=>['stock_version'=>2,'gem_qty'=>170,'gift_ticket_qty'=>1200,'consign_item_qty'=>10]];
+        $this->callSigned('PUT',$path,$buy)->assertOk()->assertJsonPath('data.status','completed')->assertJsonPath('data.delivered_gem_qty',19);
+        $this->assertSame(-20,(int)InventoryMovement::where('transaction_id',$o->id)->where('asset_type','gem')->sum('quantity_delta'));
+        $this->assertSame(0,(int)InventoryMovement::where('transaction_id',$o->id)->where('asset_type','consign_item')->sum('quantity_delta'));
+        $this->assertSame(90,(int)InventoryMovement::where('movement_type','sync_correction')->where('asset_type','gem')->sum('quantity_delta'));
+        $this->assertSame(7,(int)InventoryMovement::where('movement_type','sync_correction')->where('asset_type','consign_item')->sum('quantity_delta'));
+        $this->assertSame(170,(int)$b->refresh()->gem_qty);
+    }
+    public function test_stale_gift_receipt_settles_once_without_overwriting_newer_stock(): void {
+        $b=$this->bot();$o=$this->order($b);$token=$this->claim($b,$o);
+        $this->callSigned('PUT',"/app/v3/gem-transactions/{$o->id}",['bot_id'=>$b->id,'action'=>'phase','phase'=>'gifting','character_id'=>1234])->assertOk();
+        $p=$this->receipt($b,$token,1);$b->update(['stock_version'=>5,'gem_qty'=>500,'gift_ticket_qty'=>50]);
+        $this->callSigned('PUT',"/app/v3/gem-transactions/{$o->id}",$p)->assertOk();
+        $this->assertSame(500,(int)$b->refresh()->gem_qty);$this->assertSame(5,(int)$b->stock_version);
+        $movement=InventoryMovement::where('idempotency_key',"trading-v3:gem:{$o->id}:{$p['step_id']}:receipt")->firstOrFail();
+        $this->assertSame(-10,$movement->quantity_delta);$this->assertSame('snapshot_already_current',$movement->meta['snapshot_resolution']);
+        $count=InventoryMovement::count();$this->callSigned('PUT',"/app/v3/gem-transactions/{$o->id}",$p)->assertOk();$this->assertDatabaseCount('inventory_movements',$count);
+        $this->assertSame(10,(int)$o->refresh()->delivered_gem_qty);
+    }
+    public function test_pending_gift_snapshot_requires_current_proof_and_keeps_stock_until_refresh(): void {
+        $b=$this->bot();$o=$this->order($b);$token=$this->claim($b,$o);
+        $this->callSigned('PUT',"/app/v3/gem-transactions/{$o->id}",['bot_id'=>$b->id,'action'=>'phase','phase'=>'gifting','character_id'=>1234])->assertOk();
+        $p=$this->receipt($b,$token,2);$p['evidence']['intent']=['stock_snapshot_pending'=>true];$path="/app/v3/gem-transactions/{$o->id}";
+        $this->callSigned('PUT',$path,$p)->assertUnprocessable();$this->assertSame(0,(int)$o->refresh()->delivered_gem_qty);
+        $p['evidence']['intent']=['stock_snapshot_pending'=>true,'id'=>$p['step_id'],'order_id'=>$o->id,'kind'=>'gift','character_id'=>999,'amount'=>10,
+            'server_success'=>['intent_id'=>$p['step_id'],'kind'=>'gift','outcome'=>'success','character_id'=>999,'recipient_name'=>'lezit1','amount'=>10,'source'=>'game_message','observed_at'=>now()->toIso8601String()]];
+        $wrong=$p;$wrong['evidence']['intent']['server_success']['intent_id']=(string)Str::uuid();$this->callSigned('PUT',$path,$wrong)->assertUnprocessable();
+        $this->callSigned('PUT',$path,$p)->assertOk()->assertJsonPath('data.delivered_gem_qty',10);
+        $this->assertSame(100,(int)$b->refresh()->gem_qty);$this->assertSame(2,(int)$b->stock_version);
+        $movement=InventoryMovement::where('idempotency_key',"trading-v3:gem:{$o->id}:{$p['step_id']}:receipt")->firstOrFail();
+        $this->assertSame('snapshot_pending',$movement->meta['snapshot_resolution']);$this->assertSame(-10,$movement->quantity_delta);
+        $this->assertTrue($movement->meta['snapshot_watermark_advanced']);
+        // This HTTP upload was captured before the game effect but arrived after its receipt.
+        $late=['action'=>'stock','stock_version'=>1,'gem_qty'=>111,'gift_ticket_qty'=>11,'consign_item_qty'=>3];
+        $this->callSigned('PUT',"/app/v3/gem/bots/{$b->id}",$late)->assertConflict();
+        $this->assertSame(100,(int)$b->refresh()->gem_qty);$this->assertSame(2,(int)$b->stock_version);
+        $count=InventoryMovement::count();$this->callSigned('PUT',$path,$p)->assertOk();$this->assertDatabaseCount('inventory_movements',$count);
+        $stock=['action'=>'stock','stock_version'=>3,'gem_qty'=>190,'gift_ticket_qty'=>1009,'consign_item_qty'=>3];
+        $this->callSigned('PUT',"/app/v3/gem/bots/{$b->id}",$stock)->assertOk();
+        $this->assertArrayNotHasKey('stock_refresh_pending_step_id',$o->refresh()->delivery_data);
+        $stock['stock_version']=4;$this->callSigned('PUT',"/app/v3/gem/bots/{$b->id}",$stock)->assertConflict();
+        $this->callSigned('PUT',$path,$p)->assertOk();$this->assertArrayNotHasKey('stock_refresh_pending_step_id',$o->refresh()->delivery_data);
+    }
+    public function test_delayed_equipment_receipt_does_not_block_another_claimed_customer_or_lose_frozen_plan(): void {
+        $b=$this->bot();$equipment=$this->order($b,'consignment');$this->claim($b,$equipment);$equipmentPath="/app/v3/gem-transactions/{$equipment->id}";
+        $plan=['template_id'=>1,'signature'=>'1:87=0','quantity'=>1,'verified'=>false];
+        $this->callSigned('PUT',$equipmentPath,['bot_id'=>$b->id,'action'=>'phase','phase'=>'giving_item','character_id'=>1234,
+            'delivery_data'=>['delivery_item'=>$plan]])->assertOk();
+        $plan['verified']=true;
+        $trade=['bot_id'=>$b->id,'character_id'=>1234,'action'=>'receipt','step_id'=>(string)Str::uuid(),'gem_spent_qty'=>0,'delivered_gem_qty'=>0,'tickets_used_qty'=>0,'completed'=>false,
+            'delivery_data'=>['delivery_item'=>$plan],'evidence'=>['kind'=>'trade','confirmed'=>true],
+            'bot_snapshot'=>['stock_version'=>1,'gem_qty'=>100,'gift_ticket_qty'=>10,'consign_item_qty'=>2]];
+        // Its game trade is confirmed locally, but its frozen HTTP receipt is still queued.
+        $gift=$this->order($b);$token=$this->claim($b,$gift);$giftPath="/app/v3/gem-transactions/{$gift->id}";
+        $this->callSigned('PUT',$giftPath,['bot_id'=>$b->id,'action'=>'phase','phase'=>'gifting','character_id'=>5678])->assertOk();
+        $giftReceipt=$this->receipt($b,$token,2,true);$giftReceipt['character_id']=5678;$giftReceipt['gem_spent_qty']=20;$giftReceipt['delivered_gem_qty']=20;$giftReceipt['tickets_used_qty']=2;
+        $giftReceipt['bot_snapshot']=['stock_version'=>2,'gem_qty'=>80,'gift_ticket_qty'=>8,'consign_item_qty'=>2];
+        $this->callSigned('PUT',$giftPath,$giftReceipt)->assertOk()->assertJsonPath('data.status','completed');
+        $buy=['bot_id'=>$b->id,'character_id'=>1234,'action'=>'receipt','step_id'=>(string)Str::uuid(),'gem_spent_qty'=>20,'delivered_gem_qty'=>19,'tickets_used_qty'=>0,'completed'=>true,
+            'evidence'=>['kind'=>'consignment','confirmed'=>true],'bot_snapshot'=>['stock_version'=>4,'gem_qty'=>60,'gift_ticket_qty'=>8,'consign_item_qty'=>3]];
+        $this->callSigned('PUT',$equipmentPath,$buy)->assertUnprocessable();
+        $stock=['action'=>'stock','stock_version'=>3,'gem_qty'=>80,'gift_ticket_qty'=>8,'consign_item_qty'=>2];
+        $this->callSigned('PUT',"/app/v3/gem/bots/{$b->id}",$stock)->assertConflict();
+        $wrong=$trade;$wrong['delivery_data']['delivery_item']['signature']='different-item';$this->callSigned('PUT',$equipmentPath,$wrong)->assertUnprocessable();
+        $this->callSigned('PUT',$equipmentPath,$trade)->assertOk()->assertJsonPath('data.delivery_data.delivery_item.verified',true);
+        $this->assertSame(80,(int)$b->refresh()->gem_qty);$this->assertSame(2,(int)$b->stock_version);
+        $this->callSigned('PUT',"/app/v3/gem/bots/{$b->id}",$stock)->assertOk();
+        $this->callSigned('PUT',$equipmentPath,$buy)->assertOk()->assertJsonPath('data.status','completed');
+        $count=InventoryMovement::count();$this->callSigned('PUT',$equipmentPath,$trade)->assertOk();$this->callSigned('PUT',$giftPath,$giftReceipt)->assertOk();
+        $this->assertDatabaseCount('inventory_movements',$count);$this->assertSame(60,(int)$b->refresh()->gem_qty);
+        $this->assertSame(-40,(int)InventoryMovement::where('movement_type','sale')->where('asset_type','gem')->sum('quantity_delta'));
+        $this->assertSame(0,(int)InventoryMovement::where('movement_type','sync_correction')->where('asset_type','gem')->sum('quantity_delta'));
+        $this->assertSame('completed',$equipment->refresh()->status);$this->assertSame('completed',$gift->refresh()->status);
     }
     public function test_admin_cannot_refund_or_complete_a_claimed_v3_order_during_reconciliation(): void {
         $b=$this->bot();$this->lease($b);$o=$this->order($b);$this->claim($b,$o);

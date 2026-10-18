@@ -25,7 +25,7 @@ class BotController extends Controller
 
         return ApiCache::rememberJson('public:bots', $cacheKey, 180, function () use ($request) {
             $request->validate(['server_id' => 'exists:servers,id']);
-            $bots = Bot::query()
+            $bots = Bot::query()->withoutChecker()
             ->where('server_id', $request->server_id)
             ->withRole($request->type)
             ->where('status', true)

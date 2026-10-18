@@ -35,7 +35,7 @@ class TradingV3SingleToolTest extends TestCase {
         return $this->signed('PUT',"/app/v3/gem-transactions/{$o->id}",['worker_id'=>$this->worker,'bot_id'=>$b->id,...$data]);
     }
     private function claim(GemBot $b,GemTransaction $o): string {
-        return $this->update($b,$o,['action'=>'claim'])->assertOk()->json('data.processing_token');
+        $this->update($b,$o,['action'=>'claim'])->assertOk()->assertJsonPath('data.has_delivery_checkpoint',true);return (string)Str::uuid(); // Legacy wire field only.
     }
     private function gift(string $token): array {
         return ['action'=>'receipt','processing_token'=>$token,'step_id'=>(string)Str::uuid(),'gem_spent_qty'=>10,'delivered_gem_qty'=>10,
@@ -43,18 +43,20 @@ class TradingV3SingleToolTest extends TestCase {
             'evidence'=>['kind'=>'gift','confirmed'=>true,'recipient_name'=>'recipient','gift_gem_qty'=>10,'gift_ticket_qty'=>1]];
     }
     public function test_lists_and_terminal_details_survive_changed_worker_and_legacy_versions(): void {
-        $b=$this->bot();$legacy=$this->order($b,'consignment',['status'=>'processing','processing_version'=>2,'bot_id'=>$b->id,'item'=>'legacy item']);
-        $owned=$this->order($b,'gift_ticket',['status'=>'processing','processing_version'=>3,'bot_id'=>$b->id,'processing_owner'=>(string)Str::uuid()]);
+        $b=$this->bot();$legacy=$this->order($b,'consignment',['status'=>'processing','bot_id'=>$b->id,'item'=>'legacy item']);
+        $owned=$this->order($b,'gift_ticket',['status'=>'processing','bot_id'=>$b->id,'delivery_data'=>['claim'=>['marker'=>'checkpoint']]]);
         $done=$this->order($b,'gift_ticket',['status'=>'completed']);
         $this->signed('GET','/app/v3/gem-transactions')->assertOk()->assertJsonCount(2,'data')->assertJsonPath('data.0.item','legacy item');
         $this->signed('GET',"/app/v3/gem-transactions/{$done->id}")->assertOk()->assertJsonPath('data.status','completed');
         $before=$legacy->fresh()->getAttributes();
         $this->signed('POST','/app/v3/heartbeat',['worker_id'=>$this->worker,'single_tool_mode'=>true,'gem_bot_ids'=>[$b->id]])
-            ->assertOk()->assertJsonPath('purpose','presence')->assertJsonPath('gem_bots.0.granted',true);
+            ->assertOk()->assertJsonPath('purpose','compatibility')->assertJsonPath('gem_bots.0.granted',true);
         $this->assertSame($before,$legacy->fresh()->getAttributes());
         $this->update($b,$legacy,['action'=>'claim'])->assertConflict()->assertJsonPath('message','legacy_checkpoint_missing: this order needs its original delivery checkpoint.');
         $this->signed('PUT',"/app/v3/gem/bots/{$b->id}",['worker_id'=>$this->worker,'action'=>'stock','stock_version'=>1,
-            'gem_qty'=>100,'gift_ticket_qty'=>10,'consign_item_qty'=>3])->assertOk();
+            'gem_qty'=>100,'gift_ticket_qty'=>10,'consign_item_qty'=>3])->assertConflict();
+        // Listing old processing orders does not establish their missing safe stock checkpoint.
+        $this->assertSame(0,(int)$b->fresh()->stock_version);
     }
     public function test_gift_by_frozen_name_needs_no_invite_or_character_id_and_receipts_remain_idempotent(): void {
         $b=$this->bot();$o=$this->order($b);$token=$this->claim($b,$o);$p=$this->gift($token);
@@ -176,7 +178,7 @@ class TradingV3SingleToolTest extends TestCase {
         $this->assertSame('processing',$claimFirst->fresh()->status);$this->assertSame(50000,(int)$claimFirst->user->fresh()->balance);
         $refundFirst=$this->order($b,'gift_ticket',['created_at'=>now()->subMinutes(11)]);
         $this->update($b,$refundFirst,['action'=>'refund_pending','step_id'=>(string)Str::uuid(),'timeout_seconds'=>600])->assertOk();
-        $this->update($b,$refundFirst,['action'=>'claim'])->assertOk()->assertJsonPath('data.status','refunded')->assertJsonPath('data.processing_token',null);
+        $this->update($b,$refundFirst,['action'=>'claim'])->assertOk()->assertJsonPath('data.status','refunded')->assertJsonPath('data.has_delivery_checkpoint',false);
         $this->update($b,$refundFirst,$this->gift($token))->assertConflict();
         $this->assertSame(60000,(int)$refundFirst->user->fresh()->balance);
         $this->assertSame(1,Transaction::where('idempotency_key',"gem-order-timeout-refund:{$refundFirst->id}")->count());

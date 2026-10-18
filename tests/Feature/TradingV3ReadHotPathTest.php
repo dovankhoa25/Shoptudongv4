@@ -106,6 +106,25 @@ class TradingV3ReadHotPathTest extends TestCase
         $this->assertSame(['bars' => 4, 'pure' => 8], GoldTradingService::available($prefetched->first()));
     }
 
+    public function test_gem_list_reads_fresh_rows_in_three_selects_without_lease_writes(): void
+    {
+        for ($i = 0; $i < 74; $i++) {
+            GemBot::create(['name' => 'gem-'.$i, 'account_name' => 'gem-'.$i, 'account_password' => 'test-only',
+                'server_id' => $this->server->id, 'server_game_id' => $this->loginId, 'status' => $i !== 73,
+                'gem_qty' => 100, 'gift_ticket_qty' => 10, 'consign_item_qty' => 2,
+                'map_name' => 'Siêu thị', 'map_id' => '84', 'area_number' => '41', 'coordinates' => '652-336']);
+        }
+        DB::enableQueryLog(); DB::flushQueryLog();
+        $response = $this->signedGet('/app/v3/gem/bots');
+        $queries = collect(DB::getQueryLog()); DB::disableQueryLog();
+        $response->assertOk()->assertJsonCount(74, 'data')->assertJsonPath('data.73.status', false);
+        $this->assertCount(3, $queries, $queries->pluck('query')->implode("\n"));
+        $this->assertTrue($queries->every(fn($q) => str_starts_with(strtolower(ltrim($q['query'])), 'select')));
+        $id = $response->json('data.0.id');
+        GemBot::whereKey($id)->update(['gem_qty' => 79]);
+        $this->signedGet('/app/v3/gem/bots')->assertOk()->assertJsonPath('data.0.gem_qty', 79);
+    }
+
     public function test_filtered_lists_do_not_reuse_another_request_or_server_stock(): void
     {
         $first = $this->bot(4, 40); $otherServer = Server::create(['name' => 'other', 'status' => true]);
@@ -119,11 +138,10 @@ class TradingV3ReadHotPathTest extends TestCase
     public function test_public_ticket_capacity_depends_on_stock_and_status_not_presence_expiry(): void
     {
         $this->travelTo(now()->startOfSecond());
-        $create = fn(string $name, int $seconds) => GemBot::create(['name' => $name, 'account_name' => $name, 'account_password' => 'dummy',
+        $create = fn(string $name) => GemBot::create(['name' => $name, 'account_name' => $name, 'account_password' => 'dummy',
             'server_id' => $this->server->id, 'status' => true, 'gem_qty' => 100, 'gift_ticket_qty' => 10, 'consign_item_qty' => 1,
-            'map_name' => 'Siêu thị', 'map_id' => '84', 'area_number' => '41', 'coordinates' => '652-336',
-            'v3_worker_id' => (string) Str::uuid(), 'v3_lease_until' => now()->addSeconds($seconds)]);
-        $create('early', 90); $create('later', 600);
+            'map_name' => 'Siêu thị', 'map_id' => '84', 'area_number' => '41', 'coordinates' => '652-336']);
+        $create('early'); $create('later');
         $url = '/api/gem/bots?server_id='.$this->server->id;
         $this->getJson($url)->assertOk()->assertJsonPath('data.0.gift_available_gems', 100)->assertJsonPath('data.1.gift_available_gems', 100);
         $this->travel(91)->seconds();

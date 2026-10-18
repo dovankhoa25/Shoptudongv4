@@ -26,7 +26,7 @@ export default function GemOrderShow() {
         ['Tiền thực trừ', order.amount_vnd_formatted, Gem],
         ['Ngọc của đơn', `${order.gem_qty_formatted} ngọc`, Gem],
         ['Cách nhận ngọc', order.delivery_method_label ?? (order.delivery_method === 'gift_ticket' ? 'Vé tặng ngọc' : 'Đồ ký gửi'), Gem],
-        ['Bot xử lý', order.bot_id ? `Bot #${order.bot_id}${order.processing_version === 3 ? ' · Tool v3' : ''}` : 'Chưa chọn bot', RefreshCw],
+        ['Bot xử lý', order.bot_id ? `Bot #${order.bot_id}` : 'Chưa chọn bot', RefreshCw],
         ['Hệ số giao dịch', order.multiplier_display ?? `x${order.price_at_transaction}`, Gem],
         ['Nguồn cập nhật', order.updated_by === 'app' ? 'Ứng dụng bot' : 'Website/Admin', RefreshCw],
         ['Cập nhật gần nhất', order.last_synced_at ?? 'Chưa đồng bộ', Clock],
@@ -67,13 +67,13 @@ export default function GemOrderShow() {
                         type="warning"
                         showIcon
                         message="Đơn đang được bot xử lý"
-                        description={order.processing_version === 3
+                        description={order.has_delivery_checkpoint
                             ? 'Tool lưu tiến độ và tự đối chiếu trước khi tiếp tục. Trang cập nhật theo kết quả tool gửi về.'
                             : 'Job tự động không hủy hoặc hoàn đơn đang xử lý. Admin cần kiểm tra kết quả trước khi hoàn tiền.'}
                     />
                 )}
 
-                {order.processing_version === 3 && <GemDeliveryProgress order={order} />}
+                {order.has_delivery_checkpoint && <GemDeliveryProgress order={order} />}
 
                 {order.is_timeout_cancellation && (
                     <Alert

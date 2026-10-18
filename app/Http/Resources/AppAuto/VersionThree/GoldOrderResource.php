@@ -10,8 +10,8 @@ class GoldOrderResource extends JsonResource {
             'character_name'=>$this->character_name,'character_id'=>$this->character_id,
             'gold_qty'=>(int)$this->gold_qty,'gold_bar_qty'=>(int)$this->gold_bar_qty,'bars_qty'=>(int)$this->gold_bar_qty,'pure_gold_qty'=>(int)$this->pure_gold_qty,
             'amount_vnd'=>(int)$this->amount_vnd,'price_at_transaction'=>(int)$this->price_at_transaction,
-            'status'=>$this->status,'delivery_phase'=>$this->delivery_phase,'processing_version'=>$this->processing_version,
-            'processing_owner'=>$this->processing_owner,'processing_token'=>$this->processing_token,'delivery_data'=>$data,
+            'status'=>$this->status,'delivery_phase'=>$this->delivery_phase,
+            'has_delivery_checkpoint'=>$this->resource->hasDeliveryCheckpoint(),'delivery_data'=>$data,
             'remaining'=>GoldTradingService::remaining($this->resource),'created_at'=>$this->created_at,'completed_at'=>$this->completed_at,
             'cancel_requested_at'=>$this->cancel_requested_at,'refunded_at'=>$this->refunded_at,
         ];

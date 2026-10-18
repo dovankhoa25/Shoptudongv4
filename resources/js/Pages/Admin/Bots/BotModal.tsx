@@ -127,7 +127,7 @@ export default function BotModal({ open, onClose, bot, servers, logins }: BotMod
 
                 // Set form errors
                 const formErrors = Object.keys(errors).map(key => ({
-                    name: key as keyof FormData,
+                    name: (key === 'type' ? 'types' : key) as keyof FormData,
                     errors: Array.isArray(errors[key]) ? errors[key] : [errors[key]]
                 }));
 
@@ -193,6 +193,10 @@ export default function BotModal({ open, onClose, bot, servers, logins }: BotMod
                     <span>Auto bán thỏi</span>
                 </Space>
             )
+        },
+        {
+            value: 'checker',
+            label: <Space><span>🔎</span><span>Kiểm tra bot (checker)</span></Space>
         },
     ];
 
@@ -328,18 +332,24 @@ export default function BotModal({ open, onClose, bot, servers, logins }: BotMod
                                     <RobotOutlined />
                                     <span>Loại Bot</span>
                                     <span className="text-red-500">*</span>
-                                    <Tooltip title="Có thể chọn nhiều loại bot">
+                                    <Tooltip title="Có thể kết hợp các loại bán/nhập. Checker dùng riêng để kiểm tra bot vàng và ngọc cùng server, không giao dịch.">
                                         <InfoCircleOutlined className="text-gray-400" />
                                     </Tooltip>
                                 </Space>
                             }
                             name="types"
+                            extra="Checker kiểm tra bot vàng và ngọc cùng server; chỉ chọn riêng loại này."
                             rules={[
                                 {
                                     required: true,
                                     message: 'Vui lòng chọn ít nhất một loại bot!',
                                     type: 'array',
                                     min: 1
+                                },
+                                {
+                                    validator: (_, values: string[]) => values?.includes('checker') && values.length > 1
+                                        ? Promise.reject(new Error('Checker không kết hợp với các loại bot khác.'))
+                                        : Promise.resolve()
                                 }
                             ]}
                         >
@@ -351,6 +361,12 @@ export default function BotModal({ open, onClose, bot, servers, logins }: BotMod
                                 allowClear
                                 showSearch={false}
                                 optionFilterProp="label"
+                                onChange={(values: string[]) => {
+                                    if (values.includes('checker') && values.length > 1) {
+                                        form.setFieldValue('types', values[values.length - 1] === 'checker'
+                                            ? ['checker'] : values.filter(value => value !== 'checker'));
+                                    }
+                                }}
                             />
                         </Form.Item>
                     </div>

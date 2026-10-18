@@ -25,7 +25,7 @@ class AppGemBotVersionTwoController extends Controller
             ->whereHas('server', function ($q) {
                 $q->where('status', true); // server status
             })
-            ->get()->reject(fn($bot)=>\App\Services\TradingV3\GemStock::ownedByV3($bot))->values();
+            ->get()->reject(fn($bot)=>\App\Services\TradingV3\GemStock::hasActiveDelivery($bot))->values();
 
 
         return AppGemBotVersionTwoResource::collection($bots)
@@ -134,7 +134,7 @@ class AppGemBotVersionTwoController extends Controller
 
         $bot = DB::transaction(function () use ($id, $updateData, $validated) {
             $bot = GemBot::query()->whereKey($id)->lockForUpdate()->firstOrFail();
-            abort_if(\App\Services\TradingV3\GemStock::ownedByV3($bot),409,'Bot is currently owned by tool v3.');
+            abort_if(\App\Services\TradingV3\GemStock::hasActiveDelivery($bot),409,'Bot has unfinished delivery.');
 
             $oldData = $bot->only([
                 'name',

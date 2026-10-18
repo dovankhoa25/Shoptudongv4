@@ -21,14 +21,14 @@ class AppBotVersionTwoController extends Controller
 
     public function index(Request $request)
     {
-        $bots = Bot::query()
+        $bots = Bot::query()->withoutChecker()
             ->when($request->filled('server_id'), fn($q) => $q->where('server_id', $request->server_id))
             ->when($request->filled('type'), fn($q) => $q->withRole($request->type))
             ->where('status', true)
             ->whereHas('server', function ($q) {
                 $q->where('status', true);
             })
-            ->get()->reject(fn($bot)=>\App\Services\TradingV3\GoldTradingService::ownedByV3($bot))->values();
+            ->get()->reject(fn($bot)=>\App\Services\TradingV3\GoldTradingService::hasActiveDelivery($bot))->values();
 
 
         return AppBotVersionTwoResource::collection($bots)
@@ -45,7 +45,7 @@ class AppBotVersionTwoController extends Controller
             'name' => 'nullable|string|max:255',
             'account_name' => 'required|string|max:255',
             'account_password' => 'required|string|max:255',
-            'type' => 'required|string',
+            'type' => ['required', 'string', new \App\Rules\ExclusiveCheckerRole],
             'server_id' => 'required|exists:servers,id',
             'server_game_id' => 'nullable|integer|min:0',
             'gold_bar_qty' => 'nullable|integer|min:0',
@@ -153,7 +153,19 @@ class AppBotVersionTwoController extends Controller
 
         $bot = DB::transaction(function () use ($id, $updateData, $validated) {
             $bot = Bot::query()->whereKey($id)->lockForUpdate()->firstOrFail();
-            abort_if(\App\Services\TradingV3\GoldTradingService::ownedByV3($bot), 409, 'This bot is owned by tool v3.');
+            if ($bot->isChecker()) {
+                // A completed legacy receipt may be retried after the account changes role.
+                // Acknowledge recorded quantities without applying its old stock snapshot again.
+                $transactionId = $validated['transactions_id'] ?? null;
+                $prior = $transactionId ? \App\Models\InventoryMovement::where('idempotency_key', "gold_transaction:{$transactionId}:bot:{$bot->id}")->first() : null;
+                $matches = $prior !== null;
+                foreach (['gold_qty', 'gold_bar_qty'] as $field) {
+                    if (isset($validated[$field]) && (!isset($prior?->meta['after_'.$field]) || (int) $validated[$field] !== (int) $prior->meta['after_'.$field])) $matches = false;
+                }
+                abort_unless($matches, 422, 'Checker bots cannot receive new legacy stock or delivery updates.');
+                return $bot;
+            }
+            abort_if(\App\Services\TradingV3\GoldTradingService::hasActiveDelivery($bot), 409, 'Bot has unfinished delivery.');
 
             $oldData = $bot->only([
                 'name',

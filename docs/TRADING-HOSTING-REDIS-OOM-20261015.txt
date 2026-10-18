@@ -1,0 +1,41 @@
+HOSTING / REDIS OOM - BACKEND FIX 2026-10-15
+
+Nguyen nhan can kiem tra tren hosting
+- Ban activity cu day job Redis vao queue rieng trading-activity. TTL 35 giay cua frame/token khong tu xoa job dang cho.
+- Hosting khong chay worker rieng co the tich tu backlog. Chua co INFO/stack trace production de ket luan queue nay chiem bao nhieu RAM.
+- Redis OOM co the chan ca nonce HMAC, rate limiter va cache cua API khac. Source fix khong tu giai phong backlog dang nam tren hosting.
+
+Luong da don gian hoa
+- GET gem/bots, gold/bots tra full bot truc tiep DB; tool tu login theo status/server/checkbox.
+- GET gem-transactions, gold-transactions tra pending/processing, khong loc quyen worker/version/lease.
+- POST heartbeat chi ACK tuong thich, khong truy van/ghi DB, khong cache, khong cap quyen. Tool hien tai khong goi endpoint nay.
+- action=lease/release cu chi tra cau hinh, khong khoa/ghi bot, khong xoa checkpoint.
+- Hoat dong Ably gui truc tiep trong callback sau response; khong job/queue/token/cache hoat dong. Env queue/cache cu khong bat lai duoc luong cu.
+- Class PublishTradingBotActivities cu giu de tuong thich backlog, handle khong phat lai frame cu.
+- Nonce HMAC TTL 190 giay va rate limiter van giu de bao ve API. Day khong phai cache bot/don hay quyen chay.
+- Receipt, ton, DONE, journal/token va idempotency van bao ve tranh giao/hoan hai lan. Khong thay doi cron hoan tien.
+- Cache public website van cap nhat khi ton/don doi. Redis OOM o cache tuy chon khong bien ket qua DB da commit thanh HTTP 500; loi DB/xac thuc khong bi bo qua.
+
+Ap dung tren hosting
+1. Upload cac file PHP/config trong goi dung duong dan tuong doi, giu .env va du lieu hien co.
+2. Tai thu muc backend chay:
+php artisan config:cache
+php artisan trading:activity-redis
+3. Don backlog va cache van hanh v3 cu:
+php artisan trading:activity-redis --clear-backlog --clear-tool-cache
+4. Kiem tra lai:
+php artisan trading:activity-redis
+
+Lenh don chi xoa payload PublishTradingBotActivities da xac minh trong queue rieng, cache activity va policy timeout v3 cu. Khong xoa nonce HMAC/session/don/tien/ton/queue khac.
+Dung LREM/ZREM ngoai MULTI de giai phong RAM ngay ca khi OOM. Neu phat hien job la, lenh dung va bao ro; khong xoa theo prefix rong.
+Mac dinh cache store cu la redis; neu ban cu dung Redis cache store ten khac, truyen --cache-store=TEN_STORE. Queue connection/name lay tu NRO_TRADING_V3_ACTIVITY_QUEUE_CONNECTION va NRO_TRADING_V3_ACTIVITY_QUEUE cu. Giu hai gia tri nay den khi don xong.
+Khong can migration, worker activity hoac build lai admin. Khong doi APP_KEY/HMAC. Khong FLUSHALL/FLUSHDB va khong xoa cache toan he thong.
+Neu hosting khong co Terminal, dat lenh artisan vao cron tam thoi mot lan voi duong dan PHP/backend cua hosting, xem output roi go cron. Khong tao endpoint web cong khai de xoa Redis.
+Neu queue/cache v3 da het ma Redis van OOM, can INFO memory tu hosting de tim phan chiem RAM con lai.
+
+Gioi han xac minh
+- Kiem tra truy van: 74 bot ngoc = 3 SELECT; 74 bot vang = 5 SELECT; khong ghi lease khi doc danh sach.
+- PHP syntax 12 file production: PASS. SQLite RAM: 154 tests / 1495 assertions PASS.
+- Redis 5.0.14.1 local/Predis: 5 case PASS khi maxmemory=1 gay OOM. Don dung queue/cache cu, giu nonce/session/queue khac/DB khac; tu choi job la. Chi dung Redis test tao rieng.
+- Nhanh PhpRedis chua chay extension that; source adapter da doc va mock kiem tra. Ket qua local khong xac nhan quyen/config Redis hosting.
+- Chua deploy/cham Redis/DB hosting; goi khong co .env, tai khoan, HMAC hay du lieu van hanh.

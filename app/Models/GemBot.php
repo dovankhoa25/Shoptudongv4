@@ -12,7 +12,7 @@ class GemBot extends Model
     use HasFactory;
 
     protected $fillable = [
-        'gift_ticket_qty', 'consign_item_qty', 'stock_version', 'v3_worker_id', 'v3_lease_until',
+        'gift_ticket_qty', 'consign_item_qty', 'stock_version',
         'name',
         'account_name',
         'account_password',
@@ -30,14 +30,14 @@ class GemBot extends Model
     ];
 
     protected $casts = [
-        'gift_ticket_qty' => 'integer', 'consign_item_qty' => 'integer', 'stock_version' => 'integer', 'v3_lease_until' => 'datetime',
+        'gift_ticket_qty' => 'integer', 'consign_item_qty' => 'integer', 'stock_version' => 'integer',
         'gem_qty' => 'integer',
         'status' => 'boolean',
         'last_synced_at' => 'datetime'
     ];
 
     protected $hidden = [
-        'account_password', 'gift_ticket_qty', 'consign_item_qty', 'stock_version', 'v3_worker_id', 'v3_lease_until',
+        'account_password', 'gift_ticket_qty', 'consign_item_qty', 'stock_version',
     ];
 
     /**

@@ -14,7 +14,7 @@ class GoldBotResource extends JsonResource {
             'type'=>$this->type,'types'=>GoldTradingService::types($this->resource),'status'=>(bool)$this->status,'proxy'=>$this->proxy,
             'map_name'=>$this->map_name,'map_id'=>(int)$this->map_id,'area_number'=>(int)$this->area_number,'coordinates'=>$this->coordinates,
             'gold_qty'=>(int)$this->gold_qty,'gold_bar_qty'=>(int)$this->gold_bar_qty,'stock_version'=>(int)$this->stock_version,
-            'last_synced_at'=>$this->last_synced_at,'v3_worker_id'=>$this->v3_worker_id,'v3_lease_until'=>$this->v3_lease_until,
+            'last_synced_at'=>$this->last_synced_at,
             'available'=>$stock['available']??GoldTradingService::available($this->resource),
             'receive_room'=>$stock['receive_room']??GoldTradingService::receiveRoom($this->resource),
             'gold_bar_template_id'=>457,'gold_per_bar'=>37000000,'gold_bar_capacity'=>999,

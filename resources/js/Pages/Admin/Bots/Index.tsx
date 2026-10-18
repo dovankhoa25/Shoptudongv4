@@ -188,7 +188,8 @@ export default function BotPage() {
             'selling_sub': { color: 'bg-emerald-100 text-emerald-800 border-emerald-300', text: 'Bán phụ', icon: '🛍️' },
             'import_main': { color: 'bg-blue-100 text-blue-800 border-blue-300', text: 'Nhập chính', icon: '📦' },
             'import_sub': { color: 'bg-cyan-100 text-cyan-800 border-cyan-300', text: 'Nhập phụ', icon: '📋' },
-            'auto_sell_bar': { color: 'bg-purple-100 text-purple-800 border-purple-300', text: 'Auto bán thỏi', icon: '🤖' }
+            'auto_sell_bar': { color: 'bg-purple-100 text-purple-800 border-purple-300', text: 'Auto bán thỏi', icon: '🤖' },
+            'checker': { color: 'bg-indigo-100 text-indigo-800 border-indigo-300', text: 'Kiểm tra bot', icon: '🔎' }
         };
 
         // Sử dụng types array từ record, fallback về parse từ type string
@@ -224,7 +225,8 @@ export default function BotPage() {
             'selling_sub': { color: 'text-emerald-600', bgColor: 'from-emerald-100 to-green-100', icon: Package },
             'import_main': { color: 'text-blue-600', bgColor: 'from-blue-100 to-cyan-100', icon: Upload },
             'import_sub': { color: 'text-cyan-600', bgColor: 'from-cyan-100 to-blue-100', icon: Activity },
-            'auto_sell_bar': { color: 'text-purple-600', bgColor: 'from-purple-100 to-pink-100', icon: Zap }
+            'auto_sell_bar': { color: 'text-purple-600', bgColor: 'from-purple-100 to-pink-100', icon: Zap },
+            'checker': { color: 'text-indigo-600', bgColor: 'from-indigo-100 to-sky-100', icon: Activity }
         };
 
         // Lấy type đầu tiên để hiển thị icon
@@ -341,6 +343,7 @@ export default function BotPage() {
                 { text: '🛍️ Bán phụ', value: 'selling_sub' },
                 { text: '📦 Nhập chính', value: 'import_main' },
                 { text: '📋 Nhập phụ', value: 'import_sub' },
+                { text: '🔎 Kiểm tra bot', value: 'checker' },
             ],
             render: (type: string, record: IBot) => renderBotType(type, record)
         },
@@ -535,6 +538,7 @@ export default function BotPage() {
                 { label: 'Bán phụ', value: 'selling_sub' },
                 { label: 'Nhập chính', value: 'import_main' },
                 { label: 'Nhập phụ', value: 'import_sub' },
+                { label: 'Kiểm tra bot', value: 'checker' },
                 { label: 'Auto bán thỏi', value: 'auto_sell_bar' },
             ],
             value: currentFilters.type || ''

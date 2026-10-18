@@ -26,7 +26,7 @@ class OrderTimeoutService {
         if($order->status!=='pending'||$order->cancel_requested_at!==null||!$order->created_at
             ||$order->created_at->gt(now()->subSeconds($seconds)))return false;
         // A stale pending label must not turn a verified game delivery into a refund.
-        if($order->processing_token)return false;
+        if($order->hasDeliveryCheckpoint())return false;
         if($order instanceof GemTransaction&&($order->bot_gem_spent_qty||$order->delivered_gem_qty||$order->tickets_used_qty
             ||!empty($order->delivery_data['delivery_item']['verified'])))return false;
         if($order instanceof GoldTransaction&&(!empty($order->delivery_data['progress']['bars'])

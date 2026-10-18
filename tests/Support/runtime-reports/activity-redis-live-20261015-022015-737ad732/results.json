@@ -1,0 +1,26 @@
+{
+    "isolated": true,
+    "redis_pid": 8160,
+    "port": 51856,
+    "database": 7,
+    "other_database": 8,
+    "prefix_verified": true,
+    "cases": [
+        {
+            "case": "default_read_only",
+            "result": "PASS",
+            "target_keys": 4,
+            "target_jobs": 3,
+            "unchanged": true,
+            "command": {
+                "code": 0,
+                "output": "+-------------------+------------+\r\n| Thông số          | Giá trị    |\r\n+-------------------+------------+\r\n| used_memory_human | 731.13K    |\r\n| used_memory       | 748680     |\r\n| maxmemory_human   | 0B         |\r\n| maxmemory         | 0          |\r\n| maxmemory_policy  | noeviction |\r\n+-------------------+------------+\r\n+-----------------------------+----------+\r\n| Queue trading-activity-live | Số lượng |\r\n+-----------------------------+----------+\r\n| pending                     | 1        |\r\n| reserved                    | 1        |\r\n| delayed                     | 1        |\r\n| notify                      | 1        |\r\n+-----------------------------+----------+\r\nChỉ đọc. Chỉ dùng --clear-backlog sau khi backend đã chuyển hoạt động sang after_response."
+            }
+        }
+    ],
+    "success": false,
+    "failure": {
+        "class": "RuntimeException",
+        "message": "Cleanup command failed against real Redis under OOM."
+    }
+}

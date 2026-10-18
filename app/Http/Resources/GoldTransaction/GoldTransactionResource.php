@@ -48,11 +48,11 @@ class GoldTransactionResource extends JsonResource
             'remaining' => \App\Services\TradingV3\GoldTradingService::remaining($this->resource),
             'status_label' => $this->getStatusLabel(),
             'status_color' => $this->getStatusColor(),
-            'can_refund' => (int) $this->processing_version !== 3 && $this->type === 'order'
+            'can_refund' => !$this->resource->hasDeliveryCheckpoint() && $this->type === 'order'
                 && in_array($this->status, ['pending', 'processing'], true),
-            'can_complete' => (int) $this->processing_version !== 3 && $this->status === 'processing',
-            'can_cancel' => (int) $this->processing_version !== 3 && in_array($this->status, ['pending', 'processing']),
-            'can_process' => (int) $this->processing_version !== 3 && $this->status === 'pending',
+            'can_complete' => !$this->resource->hasDeliveryCheckpoint() && $this->status === 'processing',
+            'can_cancel' => !$this->resource->hasDeliveryCheckpoint() && in_array($this->status, ['pending', 'processing']),
+            'can_process' => !$this->resource->hasDeliveryCheckpoint() && $this->status === 'pending',
             'updated_by' => $this->updated_by,
             'cancel_reason' => $this->cancel_reason,
             'admin_note' => $this->admin_note,

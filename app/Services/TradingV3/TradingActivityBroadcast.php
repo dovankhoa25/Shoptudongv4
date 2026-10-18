@@ -9,7 +9,7 @@ use Illuminate\Broadcasting\BroadcastManager;
 use Illuminate\Broadcasting\Broadcasters\AblyBroadcaster;
 use Illuminate\Support\Carbon;
 
-/** Worker-only network transport; preserves Laravel Echo's channel/message envelope. */
+/** After-response network transport; preserves Laravel Echo's channel/message envelope. */
 class TradingActivityBroadcast
 {
     private ?AblyRest $ably = null;

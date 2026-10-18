@@ -21,7 +21,7 @@ class GemTransaction extends Model
     const STATUS_REFUNDED = 'refunded';
 
     protected $fillable = [
-        'bot_id', 'delivery_method', 'processing_version', 'processing_owner', 'processing_token', 'character_id', 'delivery_phase', 'delivery_data', 'processing_started_at', 'completed_at', 'delivered_gem_qty', 'bot_gem_spent_qty', 'tickets_used_qty',
+        'bot_id', 'delivery_method', 'character_id', 'delivery_phase', 'delivery_data', 'processing_started_at', 'completed_at', 'delivered_gem_qty', 'bot_gem_spent_qty', 'tickets_used_qty',
         'user_id',
         'server_id',
         'character_name',
@@ -37,7 +37,7 @@ class GemTransaction extends Model
     ];
 
     protected $casts = [
-        'processing_version' => 'integer', 'character_id' => 'integer', 'bot_gem_spent_qty' => 'integer', 'delivered_gem_qty' => 'integer', 'tickets_used_qty' => 'integer',
+        'character_id' => 'integer', 'bot_gem_spent_qty' => 'integer', 'delivered_gem_qty' => 'integer', 'tickets_used_qty' => 'integer',
         'delivery_data' => 'array', 'processing_started_at' => 'datetime', 'completed_at' => 'datetime',
         'amount_vnd' => 'decimal:0',
         'gem_qty' => 'integer',
@@ -48,10 +48,13 @@ class GemTransaction extends Model
     ];
 
     protected $hidden = [
-        'bot_id', 'delivery_method', 'processing_version', 'processing_owner', 'processing_token', 'character_id', 'delivery_phase', 'delivery_data', 'processing_started_at', 'completed_at', 'delivered_gem_qty', 'bot_gem_spent_qty', 'tickets_used_qty',
+        'bot_id', 'delivery_method', 'character_id', 'delivery_phase', 'delivery_data', 'processing_started_at', 'completed_at', 'delivered_gem_qty', 'bot_gem_spent_qty', 'tickets_used_qty',
         'cancel_requested_at',
         'refunded_at',
     ];
+
+    public function hasDeliveryCheckpoint(): bool {return !empty($this->delivery_data['claim']);}
+    public function scopeWithoutDeliveryCheckpoint($query) {return $query->whereNull('delivery_data->claim');}
 
     /** Ticket rates keep their precision; legacy consignment responses keep their old format. */
     public function getPriceAtTransactionAttribute($value): ?string

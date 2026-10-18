@@ -40,7 +40,7 @@ class TradingV3TimeoutServiceTest extends TestCase {
     }
     public function test_gold_imports_processing_and_any_receipt_checkpoint_are_never_refunded(): void {
         foreach([
-            ['type'=>'import'],['status'=>'processing'],['processing_token'=>(string)Str::uuid()],
+            ['type'=>'import'],['status'=>'processing'],['delivery_data'=>['claim'=>['marker'=>'checkpoint']]],
             ['delivery_data'=>['progress'=>['bars'=>1,'pure'=>0]]],
             ['delivery_data'=>['progress'=>['bars'=>0,'pure'=>1]]],
             ['delivery_data'=>['progress'=>['bars'=>0,'pure'=>0],'last_step_id'=>(string)Str::uuid()]],

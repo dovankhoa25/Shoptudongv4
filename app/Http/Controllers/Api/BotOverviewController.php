@@ -17,7 +17,7 @@ class BotOverviewController extends Controller
         // Share invalidation with legacy endpoints, including bulk admin/app writes.
         // Do not wrap these in another cache: it could survive a bot mutation.
         $gold = ApiCache::rememberJson('public:bots', 'overview:gold:v1', 180, function () {
-            $bots = Bot::query()->where('status', true)
+            $bots = Bot::query()->withoutChecker()->where('status', true)
                 ->where(fn($q)=>$q->withRole('selling_main')->orWhere(fn($q)=>$q->withRole('import_main')))->orderBy('id')
                 ->get(['id', 'name', 'server_id', 'type', 'map_name', 'map_id', 'area_number', 'status']);
 
@@ -28,7 +28,7 @@ class BotOverviewController extends Controller
         });
         $gems = ApiCache::rememberJson('public:gembot', 'overview:gems:v3', 10, function () {
             return ApiGemBotResource::collection(GemBot::query()->where('status', true)->orderBy('id')
-                ->get(['id', 'name', 'server_id', 'map_name', 'map_id', 'area_number', 'coordinates', 'status', 'gem_qty', 'gift_ticket_qty', 'consign_item_qty', 'v3_worker_id', 'v3_lease_until']))
+                ->get(['id', 'name', 'server_id', 'map_name', 'map_id', 'area_number', 'coordinates', 'status', 'gem_qty', 'gift_ticket_qty', 'consign_item_qty']))
                 ->resolve();
         });
 

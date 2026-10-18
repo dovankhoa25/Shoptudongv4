@@ -1,0 +1,22 @@
+CHECKER / PHUC HOI DU LIEU GAME - 2026-10-15
+
+1. Cap nhat source backend va public/build tu goi checker.
+2. Chay php artisan config:cache va php artisan route:cache.
+3. Checker dung cot bots.type hien co; KHONG can migration/env/cache/queue/worker moi.
+   Neu chua cai ban single-tool truoc: thuc hien huong dan TRADING-SINGLE-TOOL-20261015.txt
+   (co migration bo cot lease/owner cu). Checker khong them thay doi schema nao.
+4. Admin / Bots: tao tai khoan rieng, type "Kiem tra bot" (checker), Bat, dung server_id
+   va server login. Type checker khong ket hop voi selling_main/import_main/auxiliary.
+5. QLTK lay checker qua GET gold/bots, chung chu ky polling. Khong can endpoint moi.
+   Checker chay khi it nhat mot module Ngoc/Vang bat; moi server chon ID checker Bat nho nhat.
+6. Khong co checker dung server/endpoint, hoac checker chua hoat dong duoc: bot ban
+   tu dung phuong phap kiem tra packet/dan so khu. Khong can them checker de tiep tuc ban.
+7. Checker khong hien tren public shop va khong xu ly don/chuyen kho. API van nhan
+   lai receipt cu da xu ly theo UUID de khong lam mat ACK sau khi doi vai tro bot.
+8. Realtime them checking_presence, checker_idle, presence_wait, presence_ready,
+   presence_unverified, packet_stalled, checker_recovery. Van chi gui Ably sau response;
+   khong luu activity vao Redis, DB hoac Laravel queue.
+9. Settings QLTK: CHO NEXTMAP - GIAY, mac dinh 2 (0..60), luu JSON va doi duoc khi chay.
+
+Giu nguyen data/settings.json va journal cua QLTK khi thay EXE. Khong xoa checkpoint.
+Khong thay .env tren hosting bang .env.example tu repo.

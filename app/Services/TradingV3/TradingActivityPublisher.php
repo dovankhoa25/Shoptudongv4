@@ -2,12 +2,9 @@
 
 namespace App\Services\TradingV3;
 
-use App\Jobs\PublishTradingBotActivities;
-use Illuminate\Contracts\Bus\Dispatcher;
-use Illuminate\Support\Facades\{Cache, Log};
-use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Log;
 
-/** Transient activity only. Financial receipts and stock never enter this queue. */
+/** Transient activity only. Financial receipts and stock never enter this transport. */
 class TradingActivityPublisher
 {
     public static function labels(string $botType): array
@@ -17,7 +14,11 @@ class TradingActivityPublisher
             'travelling'=>'Bot đang đến điểm đứng', 'ready'=>'Sẵn sàng', 'warmup'=>'Bot vừa vào game, đang chờ',
             'waiting_customer'=>'Đang chờ khách giao dịch', 'syncing'=>'Đang gửi kết quả lên web',
             'name_mismatch'=>'Tên đặt đơn chưa khớp ingame', 'customer_offline'=>'Đang chờ khách online',
-            'trade_cancelled'=>'Giao dịch chưa hoàn tất', 'api_wait'=>'Đã xử lý trong game — đang chờ web xác nhận'];
+            'trade_cancelled'=>'Giao dịch chưa hoàn tất', 'api_wait'=>'Đã xử lý trong game — đang chờ web xác nhận',
+            'checking_presence'=>'Đang kiểm tra dữ liệu nhân vật hai chiều', 'checker_idle'=>'Bot kiểm tra đang chờ lượt',
+            'presence_wait'=>'Đang chờ dữ liệu nhân vật từ game', 'map_recovery'=>'Đang ra map lân cận rồi quay lại điểm đứng',
+            'presence_ready'=>'Đã xác nhận nhìn thấy nhân vật hai chiều', 'packet_stalled'=>'Game chưa trả dữ liệu cần thiết',
+            'presence_unverified'=>'Chưa đủ dữ liệu xác định bot bị kẹt', 'checker_recovery'=>'Đang khôi phục dữ liệu bot kiểm tra'];
         return $common + ($botType === 'gem_bot' ? [
             'paused'=>'Đã tạm dừng Ngọc tại QLTK', 'giving_item'=>'Đang giao đồ ký gửi',
             'waiting_consignment'=>'Đang chờ khách ký gửi', 'buying'=>'Đang mua đồ ký gửi', 'gifting'=>'Đang tặng ngọc',
@@ -34,32 +35,28 @@ class TradingActivityPublisher
         ]);
     }
 
-    public static function cacheKey(string $type, int $id): string { return 'trading-v3:activity:'.$type.':'.$id; }
-
     public function publish(array $activities, array $notices = []): bool
     {
         if (!$activities && !$notices) return true;
         try {
-            $connection = (string) config('trading_v3.activity_queue_connection', 'redis');
-            if (!in_array(config('queue.connections.'.$connection.'.driver'), ['redis', 'database', 'beanstalkd', 'sqs'], true)) {
-                throw new \RuntimeException('An asynchronous activity queue is required.');
-            }
-            $cache = Cache::store(config('trading_v3.activity_cache_store', 'redis'));
-            $frames = [];
-            foreach ($activities as $activity) {
-                $token = (string) Str::uuid();
-                $key = self::cacheKey($activity['bot_type'], (int) $activity['bot_id']);
-                $expires = \Illuminate\Support\Carbon::parse($activity['expires_at']);
-                $cache->put($key, $token, $expires);
-                $frames[] = ['key' => $key, 'token' => $token, 'activity' => $activity];
-            }
-            $job = (new PublishTradingBotActivities($frames, $notices))
-                ->onConnection($connection)->onQueue((string) config('trading_v3.activity_queue', 'trading-activity'));
-            app(Dispatcher::class)->dispatch($job);
+            // Only this request's payload remains in RAM until its response has been sent.
+            // No job, queue, cache token, lease or durable activity state is created.
+            $delivered = false;
+            app()->terminating(function () use ($activities, $notices, &$delivered): void {
+                if ($delivered) return;
+                $delivered = true;
+                try { app(TradingActivityDelivery::class)->deliver($activities, $notices); }
+                catch (\Throwable $e) { $this->warn('Trading activity delivery failed'); }
+            });
             return true;
         } catch (\Throwable $e) {
-            Log::warning('Trading activity could not be queued', ['count' => count($activities)]);
+            $this->warn('Trading activity could not be scheduled');
             return false;
         }
+    }
+
+    private function warn(string $message): void
+    {
+        try { Log::warning($message); } catch (\Throwable $ignored) { }
     }
 }

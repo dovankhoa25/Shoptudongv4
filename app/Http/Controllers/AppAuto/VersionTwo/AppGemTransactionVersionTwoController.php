@@ -23,7 +23,7 @@ class AppGemTransactionVersionTwoController extends Controller
     {
         $query = GemTransaction::query()
             ->where('delivery_method', 'consignment')
-            ->where(fn ($q) => $q->whereNull('processing_version')->orWhere('processing_version', 2))
+            ->withoutDeliveryCheckpoint()
             ->with(['server', 'user']) // Load relationships
             ->whereIn('updated_by', ['web', 'app'])
             ->whereIn('status', ['pending', 'processing']);
@@ -212,7 +212,7 @@ class AppGemTransactionVersionTwoController extends Controller
 
         $result = DB::transaction(function () use ($id, $validated) {
             $leasedBot=GemBot::query()->whereKey($validated['bot_id'])->lockForUpdate()->firstOrFail();
-            abort_if(\App\Services\TradingV3\GemStock::ownedByV3($leasedBot),409,'Bot is currently owned by tool v3.');
+            abort_if(\App\Services\TradingV3\GemStock::hasActiveDelivery($leasedBot),409,'Bot has unfinished delivery.');
 
             $gemTransaction = GemTransaction::query()
                 ->whereKey($id)
@@ -220,7 +220,7 @@ class AppGemTransactionVersionTwoController extends Controller
                 ->firstOrFail();
 
             $oldTransactionData = $gemTransaction->historySnapshot();
-            abort_if($gemTransaction->delivery_method !== 'consignment' || $gemTransaction->processing_version === 3, 409, 'This order requires tool v3.');
+            abort_if($gemTransaction->delivery_method !== 'consignment' || $gemTransaction->hasDeliveryCheckpoint(), 409, 'This order has a delivery checkpoint or requires ticket delivery.');
 
             $currentStatus = $gemTransaction->status;
             $newStatus = $validated['status'];
@@ -257,7 +257,6 @@ class AppGemTransactionVersionTwoController extends Controller
             $newBotData = null;
 
             $gemTransaction->status = $newStatus;
-            $gemTransaction->processing_version ??= 2;
             $gemTransaction->bot_id = $validated['bot_id'];
             $gemTransaction->item = $validated['item'] ?? null;
             $gemTransaction->updated_by = 'app';

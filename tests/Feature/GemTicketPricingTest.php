@@ -290,7 +290,6 @@ class GemTicketPricingTest extends TestCase
             'server_id' => $server->id, 'name' => 'gem-test', 'account_name' => 'fixture', 'account_password' => 'not-a-real-password',
             'gem_qty' => $gems, 'gift_ticket_qty' => $tickets, 'consign_item_qty' => 1, 'status' => true,
             'map_name' => 'Siêu thị', 'map_id' => '84', 'area_number' => '41', 'coordinates' => '652-336',
-            'v3_worker_id' => '00000000-0000-4000-8000-000000000001', 'v3_lease_until' => now()->addMinute(),
         ]);
     }
 

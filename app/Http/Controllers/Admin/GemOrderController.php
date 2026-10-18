@@ -396,7 +396,7 @@ class GemOrderController extends Controller
         ?string $note,
         string $action,
     ): GemTransaction {
-        if($order->status==='processing'&&($order->processing_token||!empty($order->delivery_data['claim']))) throw ValidationException::withMessages(['status'=>'Đơn đang được xử lý. Cần đối soát biên nhận trước khi đổi trạng thái thủ công.']);
+        if($order->status==='processing'&&$order->hasDeliveryCheckpoint()) throw ValidationException::withMessages(['status'=>'Đơn đang được xử lý. Cần đối soát biên nhận trước khi đổi trạng thái thủ công.']);
         if (! $this->canTransitionStatus($order, $targetStatus)) {
             throw ValidationException::withMessages([
                 'status' => "Không thể chuyển trạng thái từ {$order->status} sang {$targetStatus}.",

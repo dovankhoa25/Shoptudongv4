@@ -12,11 +12,11 @@ const tones = {
 };
 
 function tone(code: string): string {
-    if (['disabled', 'paused', 'reserve_idle', 'storage_idle'].includes(code)) return tones.neutral;
+    if (['disabled', 'paused', 'reserve_idle', 'storage_idle', 'checker_idle'].includes(code)) return tones.neutral;
     if (['out_of_items', 'insufficient_gems', 'out_of_tickets', 'insufficient_bars', 'out_of_bars', 'source_empty', 'capacity_full'].includes(code)) return tones.problem;
-    if (code === 'ready') return tones.ready;
+    if (['ready', 'presence_ready'].includes(code)) return tones.ready;
     if (code === 'gifting') return tones.gift;
-    if (['connecting', 'reconnecting', 'reconciling', 'review_required', 'error', 'warmup', 'login_wait', 'waiting_customer', 'waiting_consignment', 'waiting_stock', 'syncing', 'api_wait', 'name_mismatch', 'customer_offline', 'trade_cancelled'].includes(code)) return tones.waiting;
+    if (['connecting', 'reconnecting', 'reconciling', 'review_required', 'error', 'warmup', 'login_wait', 'waiting_customer', 'waiting_consignment', 'waiting_stock', 'syncing', 'api_wait', 'name_mismatch', 'customer_offline', 'trade_cancelled', 'presence_wait', 'packet_stalled', 'presence_unverified'].includes(code)) return tones.waiting;
     return tones.working;
 }
 

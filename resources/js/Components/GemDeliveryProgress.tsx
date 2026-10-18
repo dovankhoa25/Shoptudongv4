@@ -1,7 +1,7 @@
 import type { IGemOrder } from '@/InterFaces/gemorder';
 
 export default function GemDeliveryProgress({ order }: { order: IGemOrder }) {
-    if (order.processing_version !== 3) return <span className="text-xs text-gray-400">—</span>;
+    if (!order.has_delivery_checkpoint) return <span className="text-xs text-gray-400">—</span>;
     const spent = Number(order.bot_gem_spent_qty ?? 0);
     const quantity = Number(order.gem_qty ?? 0);
     const received = Number(order.delivered_gem_qty ?? 0);
