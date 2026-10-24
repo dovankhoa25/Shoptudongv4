@@ -244,7 +244,7 @@ export default function ImportPage() {
                 </div>
                 {order.gold_bar_qty > 0 && (
                     <div className="text-xs text-orange-600">
-                        {order.gold_bar_qty_formatted} thỏi vàng
+                        {order.gold_bar_qty_formatted} {order.gold_bar_label || 'thỏi vàng'}
                     </div>
                 )}
                 {order.pure_gold_qty > 0 && (

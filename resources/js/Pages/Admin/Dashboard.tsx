@@ -6,6 +6,7 @@ import { AlertCircle, TrendingUp, Package, Coins } from 'lucide-react';
 
 interface GoldData {
     total_gold_bar: number;
+    total_nrj_gold_bar?: number;
     total_gold: number;
     total_gold_raw: number;
     price_per_gold: number;
@@ -294,7 +295,7 @@ function DailyReconciliation({
                 <div>
                     <h2 className="text-sm font-semibold uppercase text-gray-800">Kiểm kê tài sản theo ngày</h2>
                     <p className="mt-1 text-xs text-gray-500">
-                        Tồn đầu + nhập - bán ± thêm/sửa/chuyển bot = tồn lý thuyết. Vàng đã quy đổi 1 thỏi = 37.000.000.
+                        Tồn đầu + nhập - bán ± thêm/sửa/chuyển bot = tồn lý thuyết. Thỏi thường = 37.000.000 vàng; thỏi NRJ = 195.000.000 vàng.
                     </p>
                     {ledgerStartedAt && (
                         <p className="mt-1 text-xs text-blue-700">
@@ -428,6 +429,7 @@ function TableView({ servers }: { servers: ServerAsset[] }) {
                                 </td>
                                 <td className="px-4 py-3 whitespace-nowrap text-right text-sm text-gray-900">
                                     {formatCompact(server.gold.total_gold_bar)}
+                                    <div className="text-xs text-purple-600">NRJ: {formatCompact(server.gold.total_nrj_gold_bar || 0)}</div>
                                 </td>
                                 <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-medium text-gray-900">
                                     {formatCompact(server.gold.total_gold_raw)}
@@ -536,6 +538,10 @@ function CardsView({ servers }: { servers: ServerAsset[] }) {
                                             <span className="font-medium text-gray-900">
                                                 {formatNumber(server.gold.total_gold_bar)}
                                             </span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span className="text-gray-600">Thỏi NRJ:</span>
+                                            <span className="font-medium text-purple-700">{formatNumber(server.gold.total_nrj_gold_bar || 0)}</span>
                                         </div>
                                         <div className="flex justify-between">
                                             <span className="text-gray-600">Vàng tươi:</span>

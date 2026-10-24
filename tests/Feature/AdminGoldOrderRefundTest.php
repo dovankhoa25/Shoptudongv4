@@ -39,6 +39,8 @@ class AdminGoldOrderRefundTest extends TestCase
             'price_at_transaction' => 10,
             'status' => $status,
             'updated_by' => 'web',
+            'delivery_data' => $status === 'processing' ? ['claim' => ['marker' => 'original'], 'progress' => ['bars' => 1, 'pure' => 0]] : null,
+            'delivery_phase' => $status === 'processing' ? 'trading' : null,
         ]);
 
         $this->actingAs($admin)
@@ -54,6 +56,9 @@ class AdminGoldOrderRefundTest extends TestCase
         $order->refresh();
         $this->assertSame(GoldTransaction::STATUS_CANCELLED, $order->status);
         $this->assertNotNull($order->refunded_at);
+        $this->assertSame('manual_cancelled', $order->delivery_phase);
+        $this->assertSame($status, $order->delivery_data['manual_resolution']['previous_status']);
+        if ($status === 'processing') $this->assertSame(1, $order->delivery_data['progress']['bars']);
         $this->assertSame(57_000, (int) $customer->refresh()->balance);
         $this->assertDatabaseHas('transactions', [
             'type' => Transaction::TYPE_GOLD_ORDER_REFUND,
@@ -83,6 +88,7 @@ class AdminGoldOrderRefundTest extends TestCase
         return [
             'pending' => [GoldTransaction::STATUS_PENDING],
             'processing' => [GoldTransaction::STATUS_PROCESSING],
+            'cancelled' => [GoldTransaction::STATUS_CANCELLED],
         ];
     }
 }

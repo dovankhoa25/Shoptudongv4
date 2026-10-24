@@ -37,13 +37,17 @@ class GemOrderUpdateRequest extends FormRequest {
         'bot_snapshot.gift_ticket_qty'=>['required_if:action,receipt','integer','min:0'],
         'bot_snapshot.consign_item_qty'=>['required_if:action,receipt','integer','min:0'],
         'evidence'=>['required_if:action,receipt','array'],
-        'evidence.kind'=>['required_if:action,receipt','in:gift,trade,consignment'],
+        'evidence.kind'=>['required_if:action,receipt','in:gift,trade,consignment,legacy_listing'],
         'evidence.intent'=>['nullable','array'],
         'evidence.recipient_name'=>['nullable','string','max:191'],
+        'evidence.listing_id'=>['nullable','integer','min:0'],
+        'evidence.gem_qty'=>['nullable','integer','min:1'],
+        'evidence.quantity'=>['nullable','integer','in:1'],
+        'evidence.buy_type'=>['nullable','integer','in:1'],
         'evidence.gift_gem_qty'=>['nullable','integer','min:10'],
         'evidence.gift_ticket_qty'=>['nullable','integer','min:1'],
         'evidence.no_effect'=>['exclude_unless:action,release_unstarted','required','accepted'],
-        'evidence.confirmed'=>['exclude_unless:action,receipt','required','accepted'],
+        'evidence.confirmed'=>($this->input('action')==='receipt'||$this->input('evidence.kind')==='legacy_listing')?['required','accepted']:['sometimes','accepted'],
     ]; }
 }
 

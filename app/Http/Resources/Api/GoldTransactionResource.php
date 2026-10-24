@@ -26,6 +26,8 @@ class GoldTransactionResource extends JsonResource
             'money_amount' => (int) $this->amount_vnd,
             'gold_qty' => (int) $this->gold_qty,
             'gold_bar_qty' => (int) $this->gold_bar_qty,
+            'gold_bar_template_id' => (int)($this->gold_bar_template_id??457),
+            'gold_per_bar' => \App\Services\GoldBarAsset::value($this->gold_bar_template_id),
             'pure_gold_qty' => (int) $this->pure_gold_qty,
             'total_gold' => (int) $this->gold_qty,
             'estimated_gold' => $this->type === GoldTransaction::TYPE_ORDER ? (int) $this->gold_qty : null,

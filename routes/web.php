@@ -746,6 +746,10 @@ Route::prefix('admin')
         });
 
         Route::prefix('gold-prices')->name('gold-prices.')->controller(GoldPriceController::class)->group(function (): void {
+            Route::put('/servers/{server}/trading-policy', 'updateTradingPolicy')
+                ->whereNumber('server')
+                ->middleware(Permission::middleware(Permission::GoldPricesManage))
+                ->name('trading-policy.update');
             Route::get('/', 'index')
                 ->middleware(Permission::middleware(Permission::GoldPricesView, Permission::GoldPricesManage))
                 ->name('index');

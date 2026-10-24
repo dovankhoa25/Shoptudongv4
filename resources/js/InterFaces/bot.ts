@@ -18,6 +18,8 @@ export interface IBot {
     server_game_id?: number;
     gold_bar_qty: number;
     gold_bar_qty_formatted: string;
+    nrj_gold_bar_qty?: number;
+    nrj_gold_bar_qty_formatted?: string;
     gold_qty: number;
     gold_qty_formatted: string;
     map_info?: {

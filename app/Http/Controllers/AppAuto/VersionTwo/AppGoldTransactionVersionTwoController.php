@@ -22,6 +22,7 @@ class AppGoldTransactionVersionTwoController extends Controller
     public function index(Request $request)
     {
         $query = GoldTransaction::query()
+            ->where('gold_bar_template_id', 457)
             ->withoutDeliveryCheckpoint()
             ->where('updated_by', 'web')
             ->whereIn('status', ['pending', 'processing']);
@@ -186,6 +187,7 @@ class AppGoldTransactionVersionTwoController extends Controller
                     ->firstOrFail();
 
                 $currentStatus = $goldTransaction->status;
+                abort_unless((int) ($goldTransaction->gold_bar_template_id ?? 457) === 457, 409, 'NRJ gold orders require the multi-asset tool.');
                 abort_if($goldTransaction->hasDeliveryCheckpoint(), 409, 'This order has a delivery checkpoint.');
                 abort_unless((int) $requestedBot->server_id === (int) $goldTransaction->server_id, 422, 'Order and bot server_id differ.');
                 abort_if($goldTransaction->bot_id && (int) $goldTransaction->bot_id !== $requestedBot->id, 409, 'Order belongs to another bot.');

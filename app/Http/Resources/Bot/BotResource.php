@@ -29,6 +29,8 @@ class BotResource extends JsonResource
             'server_game_id' => $this->server_game_id,
             'gold_bar_qty' => $this->gold_bar_qty,
             'gold_bar_qty_formatted' => number_format($this->gold_bar_qty, 0, ',', '.'),
+            'nrj_gold_bar_qty' => (int) $this->nrj_gold_bar_qty,
+            'nrj_gold_bar_qty_formatted' => number_format((int) $this->nrj_gold_bar_qty, 0, ',', '.'),
             'gold_qty' => $this->gold_qty,
             'gold_qty_formatted' => number_format($this->gold_qty, 0, ',', '.'),
             'map_info' => [

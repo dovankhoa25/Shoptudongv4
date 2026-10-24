@@ -32,6 +32,7 @@ interface FormData {
     server_id: number;
     server_game_id: number;
     gold_bar_qty: number | null;
+    nrj_gold_bar_qty: number | null;
     gold_qty: number | null;
     map_name: string;
     map_id: string;
@@ -66,6 +67,7 @@ export default function BotModal({ open, onClose, bot, servers, logins }: BotMod
                     server_id: bot.server_id,
                     server_game_id: bot.server_game_id,
                     gold_bar_qty: bot.gold_bar_qty || null,
+                    nrj_gold_bar_qty: bot.nrj_gold_bar_qty || null,
                     gold_qty: bot.gold_qty || null,
                     map_name: bot.map_name || '',
                     map_id: bot.map_id?.toString() || '',
@@ -81,6 +83,7 @@ export default function BotModal({ open, onClose, bot, servers, logins }: BotMod
                     status: true,
                     types: ['selling_main'], // Default type as array
                     gold_bar_qty: 0,
+                    nrj_gold_bar_qty: 0,
                     gold_qty: 0,
                 });
             }
@@ -99,7 +102,7 @@ export default function BotModal({ open, onClose, bot, servers, logins }: BotMod
             type: typeString, // Send as comma-separated string
             server_id: values.server_id,
             server_game_id: values.server_game_id,
-            ...(!bot ? { gold_bar_qty: values.gold_bar_qty || 0, gold_qty: values.gold_qty || 0 } : {}),
+            ...(!bot ? { gold_bar_qty: values.gold_bar_qty || 0, nrj_gold_bar_qty: values.nrj_gold_bar_qty || 0, gold_qty: values.gold_qty || 0 } : {}),
             map_name: values.map_name?.trim() || null,
             map_id: values.map_id.trim(),
             area_number: values.area_number.trim(),
@@ -481,6 +484,7 @@ export default function BotModal({ open, onClose, bot, servers, logins }: BotMod
                         <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/20">
                             <div className="grid grid-cols-2 gap-3 text-sm">
                                 <div><p className="text-xs text-gray-500">Thỏi trong hành trang</p><strong>{Number(bot.gold_bar_qty || 0).toLocaleString('vi-VN')} / 999</strong></div>
+                                <div><p className="text-xs text-gray-500">Thỏi NRJ (2032)</p><strong>{Number(bot.nrj_gold_bar_qty || 0).toLocaleString('vi-VN')} / 999</strong></div>
                                 <div><p className="text-xs text-gray-500">Vàng tươi</p><strong>{Number(bot.gold_qty || 0).toLocaleString('vi-VN')}</strong></div>
                             </div>
                             <p className="mt-2 text-xs text-gray-500">Tồn được tool đồng bộ; lưu cấu hình giữ nguyên tồn trên web.</p>
@@ -536,6 +540,10 @@ export default function BotModal({ open, onClose, bot, servers, logins }: BotMod
                         </Form.Item>
 
                         {/* Gold Bar Quantity */}
+                        <Form.Item label="Thỏi vàng NRJ (2032 · 195 triệu/thỏi)" name="nrj_gold_bar_qty"
+                            rules={[{ type: 'number', min: 0, max: 999, message: 'Số thỏi NRJ từ 0 đến 999.' }]}>
+                            <InputNumber min={0} max={999} precision={0} controls={false} addonAfter="thỏi NRJ" style={{ width: '100%' }} />
+                        </Form.Item>
                         <Form.Item
                             label={
                                 <Space>

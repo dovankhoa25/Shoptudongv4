@@ -154,6 +154,19 @@ class AdminTradingBotLiveTest extends TestCase
         }
     }
 
+    public function test_nrj_only_stock_change_refreshes_bot_inventory_and_totals_realtime(): void
+    {
+        $this->admin();$bot=$this->bot(false);
+        $view=$this->subscribe('/admin/bots');
+        Event::fake([AdminViewPatched::class]);
+        app(GoldTradingService::class)->updateBot($bot->id,['action'=>'stock','stock_version'=>1,'gold_qty'=>0,'gold_bar_qty'=>10,'nrj_gold_bar_qty'=>7]);
+        app(Updates::class)->flush();
+        $data=$this->state($view);
+        $this->assertSame(7,$data['bots']['data'][0]['nrj_gold_bar_qty']);
+        $this->assertEquals(7,$data['stats']['total_nrj_gold_bars']);
+        Event::assertDispatchedTimes(AdminViewPatched::class,1);
+    }
+
     public function test_completed_receipts_update_bot_and_order_views_and_repeat_is_silent(): void
     {
         $this->admin();

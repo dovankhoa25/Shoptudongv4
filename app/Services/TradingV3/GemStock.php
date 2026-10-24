@@ -13,7 +13,10 @@ class GemStock {
         foreach($orders as $o) {
             $remaining=max(0,(int)$o->gem_qty-(int)$o->bot_gem_spent_qty);$gems+=$remaining;
             if($o->delivery_method==='gift_ticket')$tickets+=intdiv($remaining,10);
-            elseif(empty($o->delivery_data['delivery_item']['verified']))$items++;
+            // V2 processing already means the customer received equipment, even
+            // before the tool observes a listing and persists legacy_resume.
+            elseif(empty($o->delivery_data['delivery_item']['verified']) && empty($o->delivery_data['legacy_resume']['no_redelivery'])
+                && !($o->status==='processing' && empty($o->delivery_data['claim'])))$items++;
         }
         return ['gems'=>max(0,(int)$bot->gem_qty-$gems),'tickets'=>max(0,(int)$bot->gift_ticket_qty-$tickets),
             'items'=>max(0,(int)$bot->consign_item_qty-$items)];

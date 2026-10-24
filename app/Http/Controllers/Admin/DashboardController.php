@@ -80,12 +80,13 @@ class DashboardController extends Controller
                 // ==================== TÍNH TOÁN VÀNG ====================
                 $goldBots = $server->bots;
                 $totalGoldBar = $goldBots->sum('gold_bar_qty') ?? 0;
+                $totalNrjGoldBar = $goldBots->sum('nrj_gold_bar_qty') ?? 0;
                 $totalGold = $goldBots->sum('gold_qty') ?? 0;
 
-                // Tính tổng vàng tươi (1 thỏi = 37 triệu vàng tươi)
+                // Value each bar asset separately; NRJ bars are worth 195 million.
                 $goldPerBar = '37000000';
                 $totalGoldInRaw = bcadd(
-                    bcmul((string)$totalGoldBar, $goldPerBar, 0),
+                    bcadd(bcmul((string)$totalGoldBar, $goldPerBar, 0), bcmul((string)$totalNrjGoldBar, '195000000', 0), 0),
                     (string)$totalGold,
                     0
                 );
@@ -126,7 +127,7 @@ class DashboardController extends Controller
                 $soldGems = (int) $serverGemTransactions->sum('gem_qty');
 
                 // gold_transactions.gold_qty đã là tổng quy đổi; gold_bar_qty chỉ là cơ cấu hiển thị.
-                // bots.gold_qty lại là vàng tươi nên tổng bot vẫn phải cộng thêm số thỏi × 37 triệu.
+                // bots.gold_qty là vàng tươi; thỏi thường và NRJ được quy đổi theo đúng loại.
                 $soldGoldConverted = $soldGold;
                 $importedGoldConverted = $importedGold;
                 $currentGoldConverted = (int) $totalGoldInRaw;
@@ -196,6 +197,7 @@ class DashboardController extends Controller
                     // Gold Data
                     'gold' => [
                         'total_gold_bar' => (int)$totalGoldBar,
+                        'total_nrj_gold_bar' => (int)$totalNrjGoldBar,
                         'total_gold' => (int)$totalGold,
                         'total_gold_raw' => (float)$totalGoldInRaw,
                         'price_per_gold' => $goldPriceValue,

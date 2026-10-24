@@ -49,6 +49,7 @@ const FIELD_LABELS: Record<string, string> = {
     coordinates: 'Tọa độ',
     gold_qty: 'Vàng',
     gold_bar_qty: 'Thỏi vàng',
+    nrj_gold_bar_qty: 'Thỏi vàng NRJ',
     proxy: 'Proxy',
     account_name: 'Tài khoản',
     updated_by: 'Cập nhật bởi',
@@ -80,7 +81,7 @@ const SOURCE_CONFIG: Record<string, {
 const formatValue = (key: string, value: any): string => {
     if (value === null || value === undefined) return '(trống)';
     if (key === 'status') return value ? 'Bật trên web' : 'Tắt trên web';
-    if (key === 'gold_qty' || key === 'gold_bar_qty')
+    if (key === 'gold_qty' || key === 'gold_bar_qty' || key === 'nrj_gold_bar_qty')
         return new Intl.NumberFormat('vi-VN').format(Number(value));
     if (key === 'account_password') return '***';
     return String(value);

@@ -17,6 +17,7 @@ class AppGoldTransactionController extends Controller
     public function index(Request $request)
     {
         $query = GoldTransaction::query()
+            ->where('gold_bar_template_id', 457)
             ->withoutDeliveryCheckpoint()
             ->where('updated_by', 'web')
             ->whereIn('status', ['pending', 'processing']);
@@ -139,6 +140,7 @@ class AppGoldTransactionController extends Controller
             $updatedTransaction = DB::transaction(function () use ($request, $id) {
                 // ✅ Lock thật sự bắt đầu tại đây
                 $goldTransaction = GoldTransaction::where('id', $id)->lockForUpdate()->firstOrFail();
+                abort_unless((int) ($goldTransaction->gold_bar_template_id ?? 457) === 457, 409, 'NRJ gold orders require the multi-asset tool.');
                 abort_if($goldTransaction->hasDeliveryCheckpoint(), 409, 'This order has a delivery checkpoint.');
 
                 $currentStatus = $goldTransaction->status;

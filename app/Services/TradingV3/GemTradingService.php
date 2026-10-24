@@ -66,7 +66,17 @@ class GemTradingService {
                 if(!in_array($order->status,['pending','processing'],true))return $order;
                 abort_if($order->bot_id && (int)$order->bot_id!==$bot->id,409,'Order is assigned to another bot.');
                 if($order->status==='processing') {
-                    abort_unless(!empty($order->delivery_data['claim']),409,'legacy_checkpoint_missing: this order needs its original delivery checkpoint.');
+                    if(empty($order->delivery_data['claim'])) {
+                        // V2 entered processing after handing the equipment to the customer.
+                        // Adopt that meaning, never manufacture a second handover or stock debit.
+                        abort_unless($order->delivery_method==='consignment',409,'Gift delivery needs its saved game result before it can resume.');
+                        $data=$order->delivery_data??[];
+                        $data['claim']=['character_name'=>$order->character_name,'gem_qty'=>(int)$order->gem_qty,'delivery_method'=>$order->delivery_method];
+                        $data['legacy_resume']=['source'=>'v2','no_redelivery'=>true,'original_item'=>$order->item,
+                            'original_phase'=>$order->delivery_phase,'adopted_at'=>now()->toIso8601String()];
+                        $order->forceFill(['bot_id'=>$bot->id,'delivery_data'=>$data,'delivery_phase'=>'waiting_consignment',
+                            'processing_started_at'=>$order->processing_started_at??now(),'updated_by'=>'app'])->save();
+                    }
                     $terms=$order->delivery_data['claim'];
                     abort_unless(($terms['character_name']??null)===$order->character_name && ($terms['gem_qty']??null)===(int)$order->gem_qty
                         && ($terms['delivery_method']??null)===$order->delivery_method,409,'Order terms changed after delivery started.');
@@ -99,6 +109,7 @@ class GemTradingService {
                 abort_unless($order->status==='processing'&&in_array($order->delivery_method,['consignment','gift_ticket'],true)
                     && in_array($order->delivery_phase,$allowedPhases,true)
                     && !$order->bot_gem_spent_qty&&!$order->delivered_gem_qty&&!$order->tickets_used_qty
+                    && empty($order->delivery_data['legacy_resume']['no_redelivery'])
                     && empty($order->delivery_data['delivery_item']['verified'])&&!empty($d['evidence']['no_effect']),409,'Only a confirmed unapplied pre-delivery action can return to pending.');
                 abort_if(InventoryMovement::where('transaction_type','gem_transaction')->where('transaction_id',$id)
                     ->where('asset_type','gem')->whereNotNull('idempotency_key')->exists(),409,'An acknowledged receipt must not be released.');
@@ -113,7 +124,9 @@ class GemTradingService {
             if($d['action']==='phase') {
                 $phaseKey=isset($d['step_id']) ? "trading-v3:gem:{$id}:{$d['step_id']}:phase" : null;
                 if($order->status!=='processing')return $order;
-                abort_if(!empty($d['delivery_data']['delivery_item']['verified']),422,'Equipment is verified only by a confirmed trade receipt.');
+                $legacyListing=($d['evidence']['kind']??null)==='legacy_listing';
+                if($legacyListing)$this->adoptLegacyListing($order,$d);
+                else abort_if(!empty($d['delivery_data']['delivery_item']['verified']),422,'Equipment is verified only by a confirmed trade receipt.');
                 $previousPlan=$order->delivery_data['delivery_item']??null;
                 $newPlan=$d['delivery_data']['delivery_item']??null;
                 abort_if($previousPlan && $newPlan && $this->canonical($previousPlan)!==$this->canonical($newPlan),409,'The frozen equipment plan cannot be replaced.');
@@ -146,7 +159,13 @@ class GemTradingService {
                         422,'Fresh gift confirmation must identify the frozen recipient and quantities.');
                 } else abort_unless(!isset($d['character_id'])||$d['character_id']===$order->character_id,422,'Gift recipient ID changed.');
             } else {
-                abort_unless($order->character_id && (!isset($d['character_id']) || $d['character_id']===$order->character_id),422,'A verified recipient ID is required.');
+                $legacyProof=$order->delivery_data['legacy_resume']['listing']??null;
+                if($d['evidence']['kind']==='consignment' && $legacyProof) {
+                    abort_unless(($d['evidence']['recipient_name']??null)===$claim['character_name']
+                        && ($d['evidence']['listing_id']??null)===($legacyProof['listing_id']??null),422,'Legacy purchase must identify the frozen seller and listing.');
+                    abort_if(isset($d['delivery_data']['delivery_item']) && $this->canonical($d['delivery_data']['delivery_item'])!==$this->canonical($order->delivery_data['delivery_item']),409,'The frozen legacy equipment cannot be replaced.');
+                    abort_if(isset($d['delivery_data']['listing_id']) && $d['delivery_data']['listing_id']!==$legacyProof['listing_id'],409,'The frozen legacy listing cannot be replaced.');
+                } else abort_unless($order->character_id && (!isset($d['character_id']) || $d['character_id']===$order->character_id),422,'A verified recipient ID is required.');
                 abort_unless(in_array($d['evidence']['kind'],['trade','consignment'],true) && $tickets===0,422,'Consignment evidence does not match method.');
                 if($d['evidence']['kind']==='trade') {
                     abort_unless($spent===0 && $received===0 && !$d['completed'],422,'Trade only delivers equipment.');
@@ -178,6 +197,22 @@ class GemTradingService {
         },3);
         ApiCache::clearGroups(['public:gembot']);
         return $order->fresh();
+    }
+    private function adoptLegacyListing(GemTransaction $order,array $d): void {
+        $data=$order->delivery_data??[];$proof=$d['evidence']??[];$plan=$d['delivery_data']['delivery_item']??[];
+        $listing=$d['delivery_data']['listing_id']??null;
+        abort_unless($order->delivery_method==='consignment' && !empty($data['legacy_resume']['no_redelivery'])
+            && $d['phase']==='waiting_consignment' && isset($d['step_id']) && !empty($proof['confirmed']),422,'Only adopted V2 consignment can freeze an observed listing.');
+        abort_unless(($proof['recipient_name']??null)===$order->character_name && is_int($listing) && $listing>=0
+            && ($proof['listing_id']??null)===$listing && ($proof['buy_type']??null)===1 && ($proof['quantity']??null)===1
+            && ($proof['gem_qty']??null)===(int)$order->gem_qty-(int)$order->bot_gem_spent_qty
+            && !empty($plan['verified']) && (int)($plan['quantity']??0)===1 && !empty($plan['signature']),422,'Observed listing does not match the frozen seller, price and equipment.');
+        $frozen=['listing_id'=>$listing,'recipient_name'=>$order->character_name,'gem_qty'=>$proof['gem_qty'],
+            'buy_type'=>1,'quantity'=>1,'template_id'=>$plan['template_id'],'signature'=>$plan['signature']];
+        $previous=$data['legacy_resume']['listing']??null;
+        abort_if($previous && $this->canonical($previous)!==$this->canonical($frozen),409,'The frozen legacy listing cannot be replaced.');
+        $data['legacy_resume']['listing']=$frozen;
+        $order->delivery_data=$data;
     }
     private function workflow(GemBot $bot,GemTransaction $order,array $d): void {
         InventoryMovement::create(['server_id'=>$bot->server_id,'bot_id'=>$bot->id,'bot_type'=>'gem_bot','asset_type'=>'workflow',

@@ -14,6 +14,7 @@ class ApiServerResource extends JsonResource
             'name'   => $this->name,
             'name_view'   => $this->name_view,
             'status' => $this->status,
+            'gold_trading_options' => app(\App\Services\GoldTradingPolicyService::class)->publicOptions($this->resource),
             'gold_prices' => ApiGoldPriceResource::collection($this->whenLoaded('goldPrices')),
         ];
     }

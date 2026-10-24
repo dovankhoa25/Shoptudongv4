@@ -22,10 +22,13 @@ export interface IGoldTransaction {
     gold_qty_formatted: string;
     gold_bar_qty: number;
     gold_bar_qty_formatted: string;
+    gold_bar_template_id?: number;
+    gold_per_bar?: number;
+    gold_bar_label?: string;
     pure_gold_qty: number;
     pure_gold_qty_formatted: string;
     delivery_phase?: string | null;
-    delivery_data?: { progress?: { bars?: number; pure?: number }; remaining?: { bars?: number; pure?: number } } | null;
+    delivery_data?: { progress?: { bars?: number; pure?: number }; remaining?: { bars?: number; pure?: number }; manual_resolution?: { status: string; resolved_at: string; admin_id?: number; reason?: string } | null } | null;
     price_at_transaction: number;
     price_formatted: string;
     status: 'pending' | 'processing' | 'completed' | 'cancelled' | 'failed';

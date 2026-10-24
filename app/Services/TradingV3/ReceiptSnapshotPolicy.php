@@ -60,6 +60,8 @@ final class ReceiptSnapshotPolicy
             && (int)($proof['partner_id'] ?? 0) > 0
             && ($proof['character_id'] ?? null) === ($intent[$characterField] ?? null)
             && ($proof['partner_id'] ?? null) === ($intent[$partnerField] ?? null)
+            && (int)($proof['gold_bar_template_id'] ?? 457) === (int)($d['gold_bar_template_id'] ?? 457)
+            && (int)($intent['gold_bar_template_id'] ?? 457) === (int)($d['gold_bar_template_id'] ?? 457)
             && ($proof['bars_qty'] ?? null) === $d['bars_qty']
             && ($proof['pure_gold_qty'] ?? null) === ($d['pure_gold_qty'] ?? 0);
     }

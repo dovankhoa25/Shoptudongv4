@@ -38,6 +38,7 @@ class GoldTransaction extends Model
             'amount_vnd' => 'integer',
             'gold_qty' => 'integer',
             'gold_bar_qty' => 'integer',
+            'gold_bar_template_id' => 'integer',
             'pure_gold_qty' => 'integer',
             'price_at_transaction' => 'integer',
             'last_synced_at' => 'datetime',

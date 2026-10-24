@@ -22,6 +22,7 @@ class ServerInfoResource extends JsonResource
             'name' => $this->name,
             'name_view' => $this->name_view,
             'status' => $this->status,
+            'gold_trading_options' => app(\App\Services\GoldTradingPolicyService::class)->publicOptions($this->resource),
 
             // Giá vàng
             'gold_sell_price' => $currentGoldPrice?->price ?? null, // Giá bán vàng

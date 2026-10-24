@@ -1,0 +1,53 @@
+CẤU HÌNH NHẬP / BÁN VÀNG THEO SERVER — 23/10/2026
+
+Admin: Quản lý giá vàng -> Nhập / bán theo server và loại vàng.
+Chọn server, bật/tắt bán và nhập riêng cho vàng tươi, thỏi thường, thỏi NRJ.
+Trần nhập chỉ dành cho thỏi: để trống = không giới hạn; 0 = không nhận thêm thỏi.
+Trần là tổng tồn tối đa, không phải số lượng tối đa mỗi đơn.
+Ví dụ tổng bot có 300 thỏi, trần 500: đơn mới tối đa 200 thỏi.
+Tính mọi bot của server, không lọc vai trò hay trạng thái bật/tắt.
+Không cộng đơn nhập đang chờ, không trừ đơn bán đang chờ, không giữ chỗ.
+Nhiều khách đặt cùng lúc có thể vượt trần sau khi tool nhận hàng: đây là hành vi đã chọn.
+Chuyển thỏi giữa bot chính/phụ không làm thay đổi tổng tồn server.
+
+Mặc định tương thích:
+- Thỏi thường / NRJ: nhập và bán bật, trần nhập để trống.
+- Vàng tươi: nhập bật như API cũ; bán tắt, chỉ mở khi admin bật cho server hỗ trợ.
+- Không tự đoán ID hoặc tự bật server 15. Chọn đúng server trong admin để bật vàng tươi.
+- Tỷ giá giữ nguyên gold_prices hiện tại; không tự tăng giá.
+- Không đổi tool, receipt, điều chuyển, xử lý đơn cũ hoặc cơ chế hoàn tiền.
+- Công tắc chỉ chặn tạo đơn mới; đơn đã tạo tiếp tục xử lý.
+- Mua vàng tươi dùng pure_gold_qty, không tự đổi phần dư sang thỏi.
+  Mỗi đơn vàng tươi tối đa 2.147.483.647 vàng, theo trường giao dịch signed int.
+
+Client VangHHP:
+- Sau khi chọn server, đọc gold_trading_options từ /server-prices (và /servers).
+- Chỉ hiện loại đang bật bán; có thể có vàng tươi + thỏi thường + thỏi NRJ.
+- Ghi chú thỏi thường: bán NPC khi nhân vật trên 2 tỷ sức mạnh.
+- Ghi chú NRJ: bán Santa, không yêu cầu sức mạnh.
+- Backend vẫn kiểm tra khi tạo đơn, kể cả khi client còn dữ liệu cache cũ.
+- Không công khai tổng tồn hoặc cấu hình trần trong catalog.
+
+DB mới: gold_trading_policies
+id, server_id, asset_type (pure/standard/nrj), sell_enabled, import_enabled,
+import_stock_limit_bars (nullable), created_at, updated_at.
+Unique (server_id, asset_type). Không thêm cột vào gold_transactions hoặc bots.
+Migration: 2026_10_23_000001_create_gold_trading_policies_table.php.
+Yêu cầu schema NRJ từ migration 2026_10_20_000001_add_nrj_gold_bar_inventory.php đã có.
+
+Triển khai:
+1. Sao lưu DB; upload source backend và public/build của admin trong cùng lượt phát hành.
+2. Chạy php artisan migrate --force trước khi đưa source mới phục vụ request.
+3. Chạy php artisan config:cache và php artisan route:cache.
+4. Nếu có queue worker dài hạn, php artisan queue:restart để nạp source mới.
+5. Build/deploy frontend VangHHP và restart tiến trình Next theo hosting đang dùng.
+6. Mở admin, chọn từng server và lưu cấu hình. Bật vàng tươi trên server hỗ trợ.
+7. Không cần thay .env hoặc nâng cấp/restart tool cho riêng tính năng này.
+
+Kiểm chứng local:
+- 115 PHPUnit tests / 1.348 assertions: PASS, SQLite trong RAM.
+- 9 frontend tests: PASS, gồm render lựa chọn và phép tính vàng tươi/thỏi.
+- TypeScript frontend và admin: PASS; admin Vite build: PASS.
+- Build frontend chuẩn bị chặn ghi .next/trace; build thư mục riêng đi tới bước
+  biên dịch nhưng bị chặn tải Geist/Geist Mono từ Google Fonts do kết nối mạng.
+- Chưa chạy migration hosting, chưa bật server production hoặc giao dịch game thật.

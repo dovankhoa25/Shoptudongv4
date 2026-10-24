@@ -14,6 +14,18 @@ class DashboardPerformanceTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_inventory_values_standard_and_nrj_bars_at_their_own_rates(): void
+    {
+        $server=Server::create(['name'=>'NRJ', 'status'=>true]);
+        Bot::withoutEvents(fn()=>Bot::create(['account_name'=>'nrj-test','account_password'=>'fake','type'=>'selling_main',
+            'server_id'=>$server->id,'gold_qty'=>123,'gold_bar_qty'=>2,'nrj_gold_bar_qty'=>3,'map_id'=>'84','area_number'=>'1']));
+        $request=Request::create('/admin/dashboard','GET');$request->headers->set('X-Inertia','true');
+        $data=app(DashboardController::class)->index($request)->toResponse($request)->getData(true)['props']['servers'][0];
+        $this->assertSame(2,$data['gold']['total_gold_bar']);$this->assertSame(3,$data['gold']['total_nrj_gold_bar']);
+        $this->assertEquals(123+2*37000000+3*195000000,$data['gold']['total_gold_raw']);
+        $this->assertSame(123+2*37000000+3*195000000,$data['reconciliation']['gold']['actual_converted']);
+    }
+
     public function test_aggregates_preserve_counts_totals_and_historical_stock(): void
     {
         $server = Server::create(['name' => 'Server', 'status' => true]);

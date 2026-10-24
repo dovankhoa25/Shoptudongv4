@@ -40,11 +40,10 @@ class AdminRealtimeObserver implements ShouldHandleEventsAfterCommit
     {
         if(array_diff(array_keys($model->getChanges()),['updated_at'])===[])return;
 
-        // A worker renews its lease often. Refresh stock/configuration only when the
-        // durable values shown on the page change, not on leases or sync timestamps.
+        // Refresh stock/configuration only when durable values shown on the page change.
         if (($model instanceof Bot || $model instanceof GemBot) && !$model->wasChanged([
             'name', 'account_name', 'account_password', 'type', 'server_id', 'server_game_id',
-            'gold_qty', 'gold_bar_qty', 'gem_qty', 'gift_ticket_qty', 'consign_item_qty',
+            'gold_qty', 'gold_bar_qty', 'nrj_gold_bar_qty', 'gem_qty', 'gift_ticket_qty', 'consign_item_qty',
             'map_name', 'map_id', 'area_number', 'coordinates', 'proxy', 'status',
         ])) return;
         if ($model instanceof GemPrice && !$model->wasChanged([

@@ -52,11 +52,67 @@ class TradingV3SingleToolTest extends TestCase {
         $this->signed('POST','/app/v3/heartbeat',['worker_id'=>$this->worker,'single_tool_mode'=>true,'gem_bot_ids'=>[$b->id]])
             ->assertOk()->assertJsonPath('purpose','compatibility')->assertJsonPath('gem_bots.0.granted',true);
         $this->assertSame($before,$legacy->fresh()->getAttributes());
-        $this->update($b,$legacy,['action'=>'claim'])->assertConflict()->assertJsonPath('message','legacy_checkpoint_missing: this order needs its original delivery checkpoint.');
+        $this->update($b,$legacy,['action'=>'claim'])->assertOk()->assertJsonPath('data.delivery_phase','waiting_consignment')
+            ->assertJsonPath('data.delivery_data.legacy_resume.no_redelivery',true);
         $this->signed('PUT',"/app/v3/gem/bots/{$b->id}",['worker_id'=>$this->worker,'action'=>'stock','stock_version'=>1,
             'gem_qty'=>100,'gift_ticket_qty'=>10,'consign_item_qty'=>3])->assertConflict();
-        // Listing old processing orders does not establish their missing safe stock checkpoint.
+        // The unrelated active gift still prevents overwriting stock while its result is unresolved.
         $this->assertSame(0,(int)$b->fresh()->stock_version);
+    }
+    public function test_legacy_consignment_adopts_observed_listing_without_redelivery_or_synthetic_stock_debit(): void {
+        $b=$this->bot();$o=$this->order($b,'consignment',['status'=>'processing','bot_id'=>$b->id,'item'=>'old opaque item']);
+        $this->update($b,$o,['action'=>'start'])->assertOk()->assertJsonPath('data.delivery_phase','waiting_consignment');
+        $adopted=$o->fresh()->delivery_data;
+        $this->update($b,$o,['action'=>'start'])->assertOk();
+        $this->assertSame($adopted,$o->fresh()->delivery_data);
+        $this->assertSame('old opaque item',$adopted['legacy_resume']['original_item']);
+        $this->assertSame(3,\App\Services\TradingV3\GemStock::available($b)['items']);
+        $this->assertSame(0,InventoryMovement::count());
+        $this->update($b,$o,['action'=>'release_unstarted','step_id'=>(string)Str::uuid(),'evidence'=>['no_effect'=>true]])->assertConflict();
+        $plan=['template_id'=>12,'signature'=>'12:87=0','quantity'=>1,'verified'=>true,'options'=>[]];
+        $phase=['action'=>'phase','phase'=>'waiting_consignment','step_id'=>(string)Str::uuid(),
+            'delivery_data'=>['listing_id'=>765,'delivery_item'=>$plan],
+            'evidence'=>['kind'=>'legacy_listing','confirmed'=>true,'recipient_name'=>'recipient','listing_id'=>765,'gem_qty'=>10,'quantity'=>1,'buy_type'=>1]];
+        $wrong=$phase;$wrong['evidence']['recipient_name']='another';$this->update($b,$o,$wrong)->assertUnprocessable();
+        $this->update($b,$o,$phase)->assertOk();$this->update($b,$o,$phase)->assertOk();
+        $this->assertNull($o->fresh()->character_id);
+        $this->assertSame(100,(int)$b->fresh()->gem_qty);
+        $this->assertSame(3,(int)$b->fresh()->consign_item_qty);
+        $this->assertSame(0,InventoryMovement::where('asset_type','gem')->count());
+        $different=$phase;$different['step_id']=(string)Str::uuid();$different['delivery_data']['delivery_item']['signature']='different';
+        $this->update($b,$o,$different)->assertConflict();
+        $receipt=['action'=>'receipt','step_id'=>(string)Str::uuid(),'gem_spent_qty'=>10,'delivered_gem_qty'=>10,
+            'tickets_used_qty'=>0,'completed'=>true,'bot_snapshot'=>['stock_version'=>1,'gem_qty'=>90,'gift_ticket_qty'=>10,'consign_item_qty'=>4],
+            'evidence'=>['kind'=>'consignment','confirmed'=>true,'recipient_name'=>'recipient','listing_id'=>765]];
+        $wrong=$receipt;$wrong['evidence']['listing_id']=766;$this->update($b,$o,$wrong)->assertUnprocessable();
+        $this->update($b,$o,$receipt)->assertOk()->assertJsonPath('data.status','completed');
+        $this->update($b,$o,$receipt)->assertOk();
+        $this->assertSame(1,InventoryMovement::where('asset_type','gem')->count());
+        $this->assertSame(4,(int)$b->fresh()->consign_item_qty);
+    }
+    public function test_normal_consignment_cannot_fake_a_legacy_listing_or_skip_handover(): void {
+        $b=$this->bot();$o=$this->order($b,'consignment');$this->claim($b,$o);
+        $this->update($b,$o,['action'=>'phase','phase'=>'waiting_consignment','step_id'=>(string)Str::uuid(),
+            'delivery_data'=>['listing_id'=>765,'delivery_item'=>['template_id'=>12,'signature'=>'12:87=0','quantity'=>1,'verified'=>true]],
+            'evidence'=>['kind'=>'legacy_listing','confirmed'=>true,'recipient_name'=>'recipient','listing_id'=>765,'gem_qty'=>10,'quantity'=>1,'buy_type'=>1]])->assertUnprocessable();
+        $gift=$this->order($b,'gift_ticket',['status'=>'processing','bot_id'=>$b->id]);
+        $this->update($b,$gift,['action'=>'start'])->assertConflict();
+        $this->assertEmpty($gift->fresh()->delivery_data['claim']??null);
+    }
+    public function test_unadopted_v2_processing_reserves_gems_but_does_not_hold_equipment_for_a_new_customer(): void {
+        $b=$this->bot();$b->update(['consign_item_qty'=>1]);
+        $legacy=$this->order($b,'consignment',['status'=>'processing','bot_id'=>$b->id,'item'=>'already handed by v2']);
+        $available=\App\Services\TradingV3\GemStock::available($b);
+        $this->assertSame(90,$available['gems']);$this->assertSame(1,$available['items']);
+        $next=$this->order($b,'consignment');
+        $this->update($b,$next,['action'=>'start'])->assertOk()->assertJsonPath('data.delivery_phase','waiting_customer');
+        $this->assertEmpty($legacy->fresh()->delivery_data['claim']??null);
+        $this->assertSame('already handed by v2',$legacy->fresh()->item);
+        $this->assertSame(0,\App\Services\TradingV3\GemStock::available($b)['items']);
+        $this->assertSame(1,(int)$b->fresh()->consign_item_qty);
+        $this->assertSame(0,InventoryMovement::count());
+        $next->refresh()->update(['status'=>'pending','delivery_data'=>null]);
+        $this->assertSame(0,\App\Services\TradingV3\GemStock::available($b)['items']);
     }
     public function test_gift_by_frozen_name_needs_no_invite_or_character_id_and_receipts_remain_idempotent(): void {
         $b=$this->bot();$o=$this->order($b);$token=$this->claim($b,$o);$p=$this->gift($token);

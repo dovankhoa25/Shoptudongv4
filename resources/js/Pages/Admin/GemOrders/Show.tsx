@@ -67,9 +67,7 @@ export default function GemOrderShow() {
                         type="warning"
                         showIcon
                         message="Đơn đang được bot xử lý"
-                        description={order.has_delivery_checkpoint
-                            ? 'Tool lưu tiến độ và tự đối chiếu trước khi tiếp tục. Trang cập nhật theo kết quả tool gửi về.'
-                            : 'Job tự động không hủy hoặc hoàn đơn đang xử lý. Admin cần kiểm tra kết quả trước khi hoàn tiền.'}
+                        description="Admin có thể hoàn thành, hủy hoặc hoàn tiền sau khi kiểm tra kết quả giao dịch. Tiến độ cũ được giữ lại trong lịch sử; tool sẽ nhận trạng thái mới để đóng đúng đơn."
                     />
                 )}
 

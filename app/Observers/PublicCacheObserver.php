@@ -21,6 +21,7 @@ final class PublicCacheObserver
         Models\AttributeOption::class => ['public:nick'],
         Models\Server::class => ['public:servers', 'public:server-prices', 'public:bots', 'public:gembot', 'public:nro-metadata'],
         Models\GoldPrice::class => ['public:servers', 'public:server-prices'],
+        Models\GoldTradingPolicy::class => ['public:servers', 'public:server-prices'],
         Models\GemPrice::class => ['public:servers', 'public:server-prices'],
         Models\Bot::class => ['public:bots'],
         Models\GemBot::class => ['public:gembot', 'public:server-prices'],

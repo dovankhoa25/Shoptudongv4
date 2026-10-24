@@ -92,6 +92,31 @@ class GoldTradingV3Test extends TestCase {
         $this->signed('GET','/app/v3/gold-transactions?worker_id='.$this->worker)->assertJsonCount(0,'data');
         $p['bars_qty']=0;$this->signed('PUT',"/app/v3/gold-transactions/{$o->id}",$p)->assertConflict();
     }
+    public function test_manual_completed_sale_and_import_details_do_not_replay_or_credit(): void {
+        $b=$this->bot('selling_main,import_main',10,100000000,false);$beforeBot=$b->fresh()->getAttributes();
+        $u=User::factory()->create(['balance'=>12345]);$beforeWallet=$u->fresh()->getAttributes();
+        foreach(['order','import'] as $type) {
+            $o=$this->order($b,$type,2,0,$u);
+            $o->forceFill(['bot_id'=>$b->id,'status'=>'completed','delivery_phase'=>'trading',
+                'delivery_data'=>['progress'=>['bars'=>0,'pure'=>0]],'completed_at'=>null])->save();
+            $before=$o->fresh()->getAttributes();
+            $this->signed('GET',"/app/v3/gold-transactions/{$o->id}")->assertOk()
+                ->assertHeader('Cache-Control','no-store, private')
+                ->assertJsonPath('data.id',$o->id)->assertJsonPath('data.bot_id',$b->id)
+                ->assertJsonPath('data.server_id',$b->server_id)->assertJsonPath('data.character_name','lezit1')
+                ->assertJsonPath('data.type',$type)->assertJsonPath('data.gold_bar_qty',2)
+                ->assertJsonPath('data.pure_gold_qty',0)->assertJsonPath('data.amount_vnd',100000)
+                ->assertJsonPath('data.status','completed')->assertJsonPath('data.delivery_phase','trading')
+                ->assertJsonPath('data.completed_at',null)->assertJsonPath('data.delivery_data.progress',['bars'=>0,'pure'=>0]);
+            $this->assertSame($before,$o->fresh()->getAttributes());
+        }
+        $this->signed('GET','/app/v3/gold-transactions')->assertOk()->assertJsonCount(0,'data');
+        $this->signed('GET','/app/v3/gold-transactions/999999999')->assertNotFound();
+        $this->assertSame($beforeBot,$b->fresh()->getAttributes());
+        $this->assertSame($beforeWallet,$u->fresh()->getAttributes());
+        $this->assertDatabaseCount('inventory_movements',0);
+        $this->assertDatabaseCount('transactions',0);
+    }
     public function test_completed_receipt_ack_survives_later_role_change_to_checker(): void {
         $b=$this->bot();$o=$this->order($b);$token=$this->claim($b,$o);$this->phase($b,$o,$token);
         $receipt=$this->receipt($b,$o,$token,2,100000000,true);
@@ -215,13 +240,14 @@ class GoldTradingV3Test extends TestCase {
         $retry=$d;$this->signed('PUT',"/app/v3/gold-transfers/{$id}",$retry)->assertOk()->assertJsonPath('data.status','completed');
         $retry['bars_qty']=2;$this->signed('PUT',"/app/v3/gold-transfers/{$id}",$retry)->assertConflict();
     }
-    public function test_old_lease_metadata_does_not_exclude_v2_but_missing_order_checkpoint_cannot_be_replayed(): void {
+    public function test_old_lease_metadata_does_not_exclude_v2_and_legacy_processing_is_adopted_for_fresh_invitation(): void {
         $b=$this->bot('selling_main,import_sub');$this->lease($b);$o=$this->order($b);$headers=['X-APP-KEY'=>'legacy-test'];
         $this->getJson('/app/v2/bots?type=selling_main',$headers)->assertOk()->assertJsonCount(1,'data');
         $this->getJson('/app/v1/bots?type=selling_main',$headers)->assertOk()->assertJsonCount(1,'data');
         $this->putJson("/app/v2/gold-transactions/{$o->id}",['status'=>'processing','bot_id'=>$b->id,'gold_bar_qty'=>10,'gold_qty'=>100000000],$headers)->assertOk();
         $this->assertSame($b->id,(int)$o->refresh()->bot_id);$this->signed('PUT',"/app/v3/gold/bots/{$b->id}",['worker_id'=>$this->worker,'action'=>'lease'])->assertOk();
-        $this->signed('PUT',"/app/v3/gold-transactions/{$o->id}",['worker_id'=>$this->worker,'bot_id'=>$b->id,'action'=>'claim'])->assertConflict();
+        $this->signed('PUT',"/app/v3/gold-transactions/{$o->id}",['worker_id'=>$this->worker,'bot_id'=>$b->id,'action'=>'claim'])->assertOk()
+            ->assertJsonPath('data.delivery_phase','waiting_customer')->assertJsonPath('data.delivery_data.legacy_resume.requires_customer_invitation',true);
     }
     public function test_sale_and_stock_work_without_heartbeat_and_with_expired_old_worker_metadata(): void {
         $b=$this->bot();
@@ -274,17 +300,20 @@ class GoldTradingV3Test extends TestCase {
         $this->assertTrue($o->refresh()->hasDeliveryCheckpoint());
         $this->assertSame(1,$b->refresh()->stock_version);
     }
-    public function test_activity_is_transient_and_admin_cannot_complete_or_cancel_owned_orders(): void {
+    public function test_activity_is_transient_and_admin_can_resolve_processing_checkpoints(): void {
         $b=$this->bot();$this->lease($b);$o=$this->order($b);$this->claim($b,$o);$before=$b->refresh()->getAttributes();
         $this->signed('POST',"/app/v3/gold/bots/{$b->id}/activity",['worker_id'=>$this->worker,'code'=>'refilling','map_id'=>1,'zone'=>2])->assertOk();
 
         $this->assertSame($before,$b->refresh()->getAttributes());Event::assertDispatched(TradingBotActivity::class,fn($e)=>$e->activity['bot_type']==='bot' && $e->activity['code']==='refilling');
         \Spatie\Permission\Models\Role::findOrCreate('super-admin','web');$admin=User::factory()->create();$admin->assignRole('super-admin');$this->actingAs($admin);
-        $this->put('/admin/orders/'.$o->id.'/status',['status'=>'completed'])->assertSessionHasErrors('status');
+        $this->put('/admin/orders/'.$o->id.'/status',['status'=>'completed'])->assertSessionHasNoErrors();
+        $this->assertSame('completed',$o->refresh()->status);$this->assertSame('manual_completed',$o->delivery_phase);
+        $this->assertSame($before,$b->refresh()->getAttributes());
         $resource=(new \App\Http\Resources\GoldTransaction\GoldTransactionResource($o->refresh()))->resolve();
         $this->assertFalse($resource['can_complete']);$this->assertFalse($resource['can_cancel']);$this->assertFalse($resource['can_refund']);
         $importer=$this->bot('import_main');$this->lease($importer);$i=$this->order($importer,'import');$this->claim($importer,$i);
-        $this->put('/admin/imports/'.$i->id.'/status',['status'=>'completed'])->assertSessionHasErrors('status');$this->assertSame('processing',$i->refresh()->status);
+        $this->put('/admin/imports/'.$i->id.'/status',['status'=>'completed'])->assertSessionHasNoErrors();$this->assertSame('completed',$i->refresh()->status);
+        $this->assertSame('manual_completed',$i->delivery_phase);
     }
     private function pendingRefund(Bot $bot,GoldTransaction $order,array $data=[]) {
         return $this->signed('PUT',"/app/v3/gold-transactions/{$order->id}",[

@@ -9,9 +9,9 @@ class InventoryMovementService
 {
     public const GOLD_PER_BAR = 37_000_000;
 
-    public static function convertedGold(int $goldQty, int $goldBarQty): int
+    public static function convertedGold(int $goldQty, int $goldBarQty, int $nrjGoldBarQty=0): int
     {
-        return $goldQty + ($goldBarQty * self::GOLD_PER_BAR);
+        return $goldQty + ($goldBarQty * self::GOLD_PER_BAR) + ($nrjGoldBarQty * GoldBarAsset::value(GoldBarAsset::NRJ));
     }
 
     public static function recordGemChange(
@@ -59,15 +59,19 @@ class InventoryMovementService
         ?string $idempotencyKey = null,
         ?int $adminUserId = null,
         ?string $note = null,
-        ?int $serverId = null
+        ?int $serverId = null,
+        ?int $beforeNrjBars = null,
+        ?int $afterNrjBars = null
     ): ?InventoryMovement {
+        $beforeNrjBars ??= (int) $bot->nrj_gold_bar_qty;
+        $afterNrjBars ??= (int) $bot->nrj_gold_bar_qty;
         return self::record(
             serverId: $serverId ?? (int) $bot->server_id,
             botId: (int) $bot->id,
             botType: 'bot',
             assetType: 'pure_gold',
-            before: self::convertedGold($beforeGold, $beforeBars),
-            after: self::convertedGold($afterGold, $afterBars),
+            before: self::convertedGold($beforeGold, $beforeBars, $beforeNrjBars),
+            after: self::convertedGold($afterGold, $afterBars, $afterNrjBars),
             movementType: $movementType,
             source: $source,
             transactionId: $transactionId,
@@ -81,6 +85,8 @@ class InventoryMovementService
                 'before_gold_bar_qty' => $beforeBars,
                 'after_gold_qty' => $afterGold,
                 'after_gold_bar_qty' => $afterBars,
+                'before_nrj_gold_bar_qty' => $beforeNrjBars,
+                'after_nrj_gold_bar_qty' => $afterNrjBars,
             ]
         );
     }

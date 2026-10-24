@@ -9,7 +9,7 @@ class Bot extends Model
 {
     use HasFactory;
     protected $hidden = ['stock_version'];
-    protected $casts = ['stock_version'=>'integer', 'gold_qty'=>'integer', 'gold_bar_qty'=>'integer', 'status'=>'boolean', 'last_synced_at'=>'datetime'];
+    protected $casts = ['stock_version'=>'integer', 'gold_qty'=>'integer', 'gold_bar_qty'=>'integer', 'nrj_gold_bar_qty'=>'integer', 'status'=>'boolean', 'last_synced_at'=>'datetime'];
 
     protected $fillable = [
         'name',
@@ -19,6 +19,7 @@ class Bot extends Model
         'server_id',
         'server_game_id',
         'gold_bar_qty',
+        'nrj_gold_bar_qty',
         'gold_qty',
         'map_name',
         'map_id',

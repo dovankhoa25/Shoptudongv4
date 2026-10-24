@@ -6,18 +6,20 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\Api\GoldTransactionResource;
 use App\Models\GoldPrice;
 use App\Models\GoldTransaction;
+use App\Services\GoldTradingPolicyService;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 
 class ImportController extends Controller
 {
-    public function store(Request $request)
+    public function store(Request $request, GoldTradingPolicyService $policies)
     {
         $validated = $request->validate([
             'server_id' => 'required|exists:servers,id',
             'character_name' => 'required|string|min:3|max:191',
             'pure_gold_qty' => 'nullable|integer|min:0|max:900000000',    // Vàng tươi (từ frontend)
             'gold_bar_qty' => 'nullable|integer|min:0|max:999',          // Số thỏi vàng
+            'gold_bar_template_id' => 'sometimes|integer|in:457,2032',
         ]);
 
         $user = $request->user();
@@ -52,8 +54,9 @@ class ImportController extends Controller
                 'pure_gold_qty' => 'Vàng tươi tối thiểu là 50.000.000.',
             ]);
         }
-        $totalGoldQty = bcadd((string) $pureGoldQty, bcmul((string) $goldBarQty, '37000000'));
-        // = 100M + (5 × 37M) = 285M ✅
+        $templateId=(int)($validated['gold_bar_template_id']??457);
+        $totalGoldQty = bcadd((string) $pureGoldQty, bcmul((string) $goldBarQty, (string)\App\Services\GoldBarAsset::value($templateId)));
+        // Giá trị mỗi thỏi theo loại đã chọn; dùng chung tỷ giá nhập vàng hiện có.
 
         // Lấy giá nhập mới nhất từ bảng gold_prices
         $goldPrice = GoldPrice::where('server_id', $validated['server_id'])
@@ -77,6 +80,8 @@ class ImportController extends Controller
             ], 422);
         }
 
+        $policies->assertImportAllowed((int) $validated['server_id'], $templateId, (int) $goldBarQty, (int) $pureGoldQty);
+
         // Tính số tiền VND: tổng vàng ÷ import_price
         $amountVnd = bcdiv($totalGoldQty, (string) $importPrice, 0);
 
@@ -88,6 +93,7 @@ class ImportController extends Controller
             'amount_vnd' => $amountVnd,
             'gold_qty' => $totalGoldQty,          // Vàng tươi (lưu vào gold_qty)
             'gold_bar_qty' => $goldBarQty,           // Số thỏi
+            'gold_bar_template_id' => $templateId,
             'pure_gold_qty' => $pureGoldQty,         // Tổng vàng
             'price_at_transaction' => $importPrice,
             'status' => 'pending',

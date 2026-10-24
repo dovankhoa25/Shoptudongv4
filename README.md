@@ -17,3 +17,6 @@
 
 0.2.2
 - bổ sung gpm pay
+
+0.2.4
+- nhập bán thỏi ssj

@@ -10,6 +10,8 @@ interface GoldOrder {
     amount_vnd_formatted: string;
     gold_qty_formatted: string;
     gold_bar_qty_formatted: string;
+    gold_bar_label?: string;
+    gold_per_bar?: number;
     pure_gold_qty_formatted: string;
     price_formatted: string;
     status_label: string;
@@ -37,7 +39,7 @@ export default function GoldOrderShow() {
         ['Bot', order.bot?.name ?? 'Chưa gán', Bot],
         ['Số tiền', order.amount_vnd_formatted, Coins],
         ['Tổng vàng', order.gold_qty_formatted, Coins],
-        ['Thỏi vàng', order.gold_bar_qty_formatted, Coins],
+        [order.gold_bar_label || 'Thỏi vàng', `${order.gold_bar_qty_formatted}${order.gold_per_bar ? ` · ${order.gold_per_bar.toLocaleString('vi-VN')} vàng/thỏi` : ''}`, Coins],
         ['Vàng tươi', order.pure_gold_qty_formatted, Coins],
         ['Giá giao dịch', order.price_formatted, Coins],
     ] as const;

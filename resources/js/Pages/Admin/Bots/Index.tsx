@@ -41,6 +41,7 @@ interface BotPageProps extends PageProps {
         import_bots: number;
         total_gold: number;
         total_gold_bars: number;
+        total_nrj_gold_bars?: number;
     };
 }
 
@@ -263,6 +264,11 @@ export default function BotPage() {
                 {bot.gold_bar_qty > 0 && (
                     <div className="text-xs text-orange-600">
                         {bot.gold_bar_qty_formatted || formatNumber(bot.gold_bar_qty)} thỏi vàng
+                    </div>
+                )}
+                {Number(bot.nrj_gold_bar_qty) > 0 && (
+                    <div className="text-xs text-purple-600">
+                        {bot.nrj_gold_bar_qty_formatted || formatNumber(bot.nrj_gold_bar_qty || 0)} thỏi NRJ
                     </div>
                 )}
             </div>
@@ -616,7 +622,7 @@ export default function BotPage() {
                                 prefix={<Coins className="w-5 h-5 text-yellow-500" />}
                             />
                             <div className="text-xs text-gray-500 mt-2">
-                                Thỏi: {formatNumber(stats.total_gold_bars)}
+                                Thỏi: {formatNumber(stats.total_gold_bars)} · NRJ: {formatNumber(stats.total_nrj_gold_bars || 0)}
                             </div>
                         </Card>
                     </Col>

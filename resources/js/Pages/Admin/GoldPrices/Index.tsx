@@ -3,6 +3,7 @@ import { router, usePage } from "@inertiajs/react";
 import AdminLayout from "@/Layouts/AdminLayout";
 import { PageProps, PaginatedData } from "@/types";
 import GoldPriceModal, { IGoldPrice } from "./GoldPriceModal";
+import GoldTradingPolicyPanel, { type TradingPolicy, type TradingAsset, type BotStock } from './GoldTradingPolicyPanel';
 import { Column, DataTable } from "@/Components/Table/DataTable";
 import {
     Settings, Coins, CheckCircle, XCircle, 
@@ -15,10 +16,13 @@ import { IServer } from '@/InterFaces/server';
 
 
 export default function GoldPricePage() {
-    const { prices, servers, filters: serverFilters } = usePage<
+    const { prices, servers, tradingPolicies, tradingAssets, botStocks, auth, filters: serverFilters } = usePage<
         PageProps & {
             prices: PaginatedData<IGoldPrice>;
             servers: IServer[];
+            tradingPolicies: TradingPolicy[];
+            tradingAssets: TradingAsset[];
+            botStocks: BotStock[];
             filters: { server_id?: number; status?: boolean; per_page?: number };
         }
     >().props;
@@ -269,6 +273,8 @@ export default function GoldPricePage() {
 
     return (
         <>
+            <GoldTradingPolicyPanel servers={servers} policies={tradingPolicies} assets={tradingAssets} stocks={botStocks}
+                canManage={auth.is_super_admin || auth.permissions?.includes('gold-prices.manage')} />
             {/* 🎯 DataTable cho Gold Prices */}
             <DataTable<IGoldPrice>
                 data={prices.data}

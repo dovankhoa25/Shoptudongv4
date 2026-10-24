@@ -12,6 +12,7 @@ interface BotDetail {
     server_name?: string;
     gold_qty_formatted: string;
     gold_bar_qty_formatted: string;
+    nrj_gold_bar_qty_formatted?: string;
     map_name?: string;
     map_id?: number;
     area_number?: string;
@@ -50,6 +51,7 @@ export default function BotShow() {
                     <Info icon={Server} label="Server" value={bot.server_name || '—'} />
                     <Info icon={Coins} label="Vàng tươi" value={bot.gold_qty_formatted} />
                     <Info icon={Coins} label="Thỏi trong hành trang" value={`${bot.gold_bar_qty_formatted} / 999`} />
+                    <Info icon={Coins} label="Thỏi NRJ (2032 · 195 triệu/thỏi)" value={`${bot.nrj_gold_bar_qty_formatted || '0'} / 999`} />
                     <Info icon={MapPin} label="Điểm đứng được cấu hình" value={[bot.map_name, `Map ${bot.map_id}`, `Khu ${bot.area_number}`, bot.coordinates].filter(Boolean).join(' · ') || '—'} />
                     <Info icon={BotIcon} label="Vai trò" value={bot.type_labels.join(', ') || '—'} />
                     <Info icon={Clock} label="Đồng bộ tồn gần nhất" value={bot.last_synced_at || 'Chưa đồng bộ'} />

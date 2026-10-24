@@ -9,6 +9,7 @@ class GoldOrderResource extends JsonResource {
             'id'=>$this->id,'type'=>$this->type,'server_id'=>(int)$this->server_id,'bot_id'=>$this->bot_id ? (int)$this->bot_id : null,
             'character_name'=>$this->character_name,'character_id'=>$this->character_id,
             'gold_qty'=>(int)$this->gold_qty,'gold_bar_qty'=>(int)$this->gold_bar_qty,'bars_qty'=>(int)$this->gold_bar_qty,'pure_gold_qty'=>(int)$this->pure_gold_qty,
+            'gold_bar_template_id'=>(int)($this->gold_bar_template_id??457),'gold_per_bar'=>\App\Services\GoldBarAsset::value($this->gold_bar_template_id),
             'amount_vnd'=>(int)$this->amount_vnd,'price_at_transaction'=>(int)$this->price_at_transaction,
             'status'=>$this->status,'delivery_phase'=>$this->delivery_phase,
             'has_delivery_checkpoint'=>$this->resource->hasDeliveryCheckpoint(),'delivery_data'=>$data,

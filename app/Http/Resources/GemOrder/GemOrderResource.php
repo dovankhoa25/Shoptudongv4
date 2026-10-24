@@ -49,13 +49,17 @@ class GemOrderResource extends JsonResource
                 'review_required', 'reconciling' => 'Đang đối chiếu tồn và giao dịch',
                 'syncing' => 'Chờ web xác nhận',
                 'completed' => 'Đã giao đủ ngọc',
+                'manual_completed' => 'Admin xác nhận hoàn thành',
+                'manual_cancelled' => 'Admin đã hủy đơn',
+                'manual_refunded' => 'Admin đã hoàn tiền',
                 'ready' => 'Sẵn sàng xử lý',
                 default => $this->delivery_phase ? 'Đang xử lý' : null,
             },
             'bot_gem_spent_qty' => $this->bot_gem_spent_qty,
             'delivered_gem_qty' => $this->delivered_gem_qty,
             'tickets_used_qty' => $this->tickets_used_qty,
-            'equipment_delivered' => (bool) ($this->delivery_data['delivery_item']['verified'] ?? false),
+            'equipment_delivered' => (bool) ($this->delivery_data['delivery_item']['verified'] ?? false)
+                || !empty($this->delivery_data['legacy_resume']['no_redelivery']),
             'amount_vnd' => $this->amount_vnd,
             'amount_vnd_formatted' => number_format($this->amount_vnd, 0, ',', '.').' VND',
             'gem_qty' => $this->gem_qty,
@@ -66,13 +70,12 @@ class GemOrderResource extends JsonResource
             'status' => $this->status,
             'status_label' => $this->getStatusLabel(),
             'status_color' => $this->getStatusColor(),
-            'can_refund' => $this->status === 'pending'
+            'can_refund' => in_array($this->status, ['pending', 'processing', 'cancelled'], true)
                 && $this->refunded_at === null
                 && (int) $this->amount_vnd > 0,
-            'can_complete' => $this->status === 'processing' && !$this->resource->hasDeliveryCheckpoint(),
-            'can_cancel' => $this->status === 'pending' || ($this->status === 'processing' && !$this->resource->hasDeliveryCheckpoint()),
-            'can_update_status' => $this->refunded_at === null
-                && !($this->status === 'processing' && $this->resource->hasDeliveryCheckpoint())
+            'can_complete' => $this->status === 'processing' && $this->refunded_at === null,
+            'can_cancel' => in_array($this->status, ['pending', 'processing'], true) && $this->refunded_at === null,
+            'can_update_status' => $this->refunded_at === null && empty($this->delivery_data['manual_resolution'])
                 && in_array($this->status, ['pending', 'processing', 'cancelled']),
             'is_timeout_cancellation' => $this->status === 'cancelled'
                 && $this->cancel_requested_at !== null

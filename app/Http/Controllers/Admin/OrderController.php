@@ -253,16 +253,13 @@ class OrderController extends Controller
     ): void {
         DB::transaction(function () use ($orderId, $newStatus, $cancelReason, $note, $refundAmount): void {
             $order = GoldTransaction::query()->lockForUpdate()->findOrFail($orderId);
-            if ($order->hasDeliveryCheckpoint()) {
-                throw \Illuminate\Validation\ValidationException::withMessages(['status'=>'Tool v3 đang giữ biên nhận giao dịch; hãy để tool tự đối chiếu trước.']);
-            }
             abort_unless($order->type === GoldTransaction::TYPE_ORDER, 404);
 
             $allowedTransitions = [
                 GoldTransaction::STATUS_PENDING => [GoldTransaction::STATUS_PROCESSING, GoldTransaction::STATUS_CANCELLED],
                 GoldTransaction::STATUS_PROCESSING => [GoldTransaction::STATUS_COMPLETED, GoldTransaction::STATUS_CANCELLED],
                 GoldTransaction::STATUS_COMPLETED => [],
-                GoldTransaction::STATUS_CANCELLED => [],
+                GoldTransaction::STATUS_CANCELLED => $order->refunded_at === null ? [GoldTransaction::STATUS_CANCELLED] : [],
             ];
 
             if (! in_array($newStatus, $allowedTransitions[$order->status] ?? [], true)) {
@@ -279,9 +276,11 @@ class OrderController extends Controller
             }
 
             $order->update([
+                ...\App\Services\TradingV3\ManualOrderResolution::attributes($order, $newStatus, auth()->id(), $cancelReason ?? $note),
                 'status' => $newStatus,
                 'updated_by' => 'web',
                 'last_synced_at' => now(),
+                'cancel_requested_at' => null,
             ]);
             $order->refresh();
 
@@ -294,6 +293,7 @@ class OrderController extends Controller
                 action: 'gold_order.status_updated',
                 adminUserId: auth()->id(),
                 meta: [
+                    'manual_resolution' => $order->delivery_data['manual_resolution'] ?? null,
                     'previous_status' => $previousStatus,
                     'new_status' => $newStatus,
                     'cancel_reason' => $cancelReason,

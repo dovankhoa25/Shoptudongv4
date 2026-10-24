@@ -19,7 +19,7 @@ class ServerController extends Controller
             ApiCache::key('servers', 'gold-prices'),
             180,
             function () {
-                $servers = Server::with(['goldPrices' => function ($query) {
+                $servers = Server::with(['goldTradingPolicies', 'goldPrices' => function ($query) {
                     $query->where('status', true);
                 }])->get();
 

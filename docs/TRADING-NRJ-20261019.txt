@@ -1,0 +1,53 @@
+TRADING NRJ + TIẾP TỤC ĐƠN V2 — 19/10/2026
+
+Tài sản và giá
+- Thỏi thường: item 457, 37.000.000 vàng/thỏi.
+- Thỏi NRJ: item 2032, 195.000.000 vàng/thỏi.
+- Cả hai dùng bảng tỷ giá mua/nhập hiện tại. Mỗi loại tối đa 999 trong một tài khoản.
+- bots.gold_bar_qty vẫn chỉ là thỏi 457; bots.nrj_gold_bar_qty là thỏi 2032.
+- gold_transactions.gold_bar_template_id xác định loại thỏi. Dữ liệu cũ mặc định 457.
+- gold_bar_qty của đơn là số thỏi của loại đã chọn, không phải tổng hai loại.
+- Mua/nhập, bơm/cất kho, receipt, journal, tồn và lịch sử dùng cùng loại đã cố định.
+- API v2 chỉ xử lý thỏi 457 để client cũ không giao nhầm đơn NRJ.
+
+Đơn cũ và admin
+- Đơn ký V2 processing thiếu claim được tiếp tục mua đúng món đã ký: tên người bán,
+  giá ngọc, số lượng, loại trang bị; cố định ID/chữ ký món trước khi mua. Không giao thêm đồ.
+- Chưa thấy món hoặc có nhiều món trùng thì chờ, các đơn sẵn sàng khác vẫn được phục vụ.
+- Đơn ký V2 processing chưa tiếp nhận cũng không giữ thêm một món đồ trong tồn;
+  vẫn giữ chỗ số ngọc cần trả khách. Đơn pending/V3 chưa giao tiếp tục giữ chỗ đồ.
+- Đơn vàng V2 processing thiếu claim đợi đúng khách mời giao dịch rồi tiếp tục;
+  giữ tiến độ đã có, không giữ bot bận chỉ vì tồn tại đơn cũ.
+- Journal có thao tác chưa rõ hoặc receipt chưa ACK được ưu tiên khôi phục như trước.
+- Admin có thể hoàn thành/hủy/hoàn tiền đơn processing theo nút của từng loại đơn.
+  Tiền hoàn/tiền nhập ghi một lần. Hoàn thành tay không tự chỉnh tồn game của bot.
+- delivery_data.manual_resolution giữ người quyết định, thời điểm, lý do và trạng thái trước.
+- Tool đóng journal đúng đơn đã kết thúc thủ công tại điểm an toàn; giữ bằng chứng trong
+  lịch sử và chặn phát lại từ danh sách cũ. Không xóa thư mục data để nâng cấp.
+- processing trước thao tác game, HMAC và cron hoàn tiền vẫn giữ nguyên.
+
+Triển khai
+1. Sao lưu DB. Dừng tool trong lượt nâng cấp, giữ nguyên data/settings/journal/outbox.
+2. Upload backend mới (gồm source PHP, migration, public/build admin).
+3. Chạy php artisan migrate --force
+   Migration: 2026_10_20_000001_add_nrj_gold_bar_inventory.php
+4. Chạy php artisan config:cache và php artisan route:cache.
+   Nếu hosting có worker dài hạn cho nghiệp vụ khác, chạy php artisan queue:restart.
+   Activity bot không cần queue Redis mới; bản này không thêm cache/heartbeat/lease.
+5. Deploy frontend VangHHP đã build, restart tiến trình Next theo hosting hiện tại.
+6. Sau backend/migration mới, mở tool mới với thư mục data cũ.
+   Không chạy tool mới trước backend vì snapshot mới có nrj_gold_bar_qty.
+7. Xem tồn NRJ đồng bộ về admin/QLTK rồi kiểm tra đơn nhỏ cho từng loại.
+
+Không thêm biến .env bắt buộc. Không đổi tỷ giá đang cấu hình.
+Rollback schema làm mất phân loại NRJ: không rollback migration khi đã phát sinh đơn NRJ.
+Kiểm thử local/mô phỏng không thay thế việc kiểm tra game thật và hosting production.
+
+Kiểm chứng backend/frontend
+- Backend suite hợp nhất: 163 tests / 1.952 assertions PASS, SQLite trong RAM.
+- Sau đó hồi quy tồn món V2 chưa tiếp nhận: 44 tests / 389 assertions PASS
+  (suite có giao nhau với lượt hợp nhất, không cộng hai số này thành tổng).
+- Frontend giá/loại thỏi và ngọc: 14 tests PASS; TypeScript + ESLint phần sửa PASS.
+- Admin TypeScript/Vite build PASS; frontend Next build PASS.
+- Next build local không lấy được API giá vì backend local chưa chạy; trang đã
+  render và thử hai nút chọn loại thỏi ở cả mua/nhập, chưa tạo đơn production.

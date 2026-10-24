@@ -64,6 +64,7 @@ class BotController extends Controller
             'import_bots' => Bot::where(fn($q)=>$q->withRole('import_main')->orWhere(fn($q)=>$q->withRole('import_sub')))->count(),
             'total_gold' => Bot::where('status', true)->sum('gold_qty'),
             'total_gold_bars' => Bot::where('status', true)->sum('gold_bar_qty'),
+            'total_nrj_gold_bars' => Bot::where('status', true)->sum('nrj_gold_bar_qty'),
         ];
 
         return Inertia::render('Admin/Bots/Index', [
@@ -85,6 +86,7 @@ class BotController extends Controller
             'server_id' => 'required|exists:servers,id',
             'server_game_id' => 'required|exists:server_game_login,id',
             'gold_bar_qty' => 'nullable|integer|min:0',
+            'nrj_gold_bar_qty' => 'nullable|integer|between:0,999',
             'gold_qty' => 'nullable|integer|min:0',
             'map_name' => 'nullable|string|max:255',
             'map_id' => 'required|string|max:255',
@@ -105,6 +107,7 @@ class BotController extends Controller
                 'server_id' => $request->server_id,
                 'server_game_id' => $request->server_game_id,
                 'gold_bar_qty' => $request->gold_bar_qty ?? 0,
+                'nrj_gold_bar_qty' => $request->nrj_gold_bar_qty ?? 0,
                 'gold_qty' => $request->gold_qty ?? 0,
                 'map_name' => $request->map_name,
                 'map_id' => $request->map_id,
@@ -125,7 +128,9 @@ class BotController extends Controller
                 source: 'web',
                 idempotencyKey: "opening:bot:{$bot->id}",
                 adminUserId: auth()->id(),
-                note: 'Initial converted gold from newly created bot'
+                note: 'Initial converted gold from newly created bot',
+                beforeNrjBars: 0,
+                afterNrjBars: (int) $bot->nrj_gold_bar_qty
             );
 
             return $bot;
@@ -187,6 +192,7 @@ class BotController extends Controller
             'server_id' => 'required|exists:servers,id',
             'server_game_id' => 'required|exists:server_game_login,id',
             'gold_bar_qty' => 'nullable|integer|min:0',
+            'nrj_gold_bar_qty' => 'nullable|integer|between:0,999',
             'gold_qty' => 'nullable|integer|min:0',
             'map_name' => 'nullable|string|max:255',
             'map_id' => 'required|string|max:255',
@@ -215,7 +221,7 @@ class BotController extends Controller
             $updateData['account_password'] = $validated['account_password'];
         }
 
-        foreach (['gold_bar_qty', 'gold_qty'] as $field) {
+        foreach (['gold_bar_qty', 'nrj_gold_bar_qty', 'gold_qty'] as $field) {
             if (isset($validated[$field])) {
                 $updateData[$field] = $validated[$field];
             }
@@ -225,7 +231,7 @@ class BotController extends Controller
             $bot = Bot::whereKey($bot->id)->lockForUpdate()->firstOrFail();
             if (\App\Models\GoldTransaction::where('bot_id', $bot->id)->where('status', 'processing')->exists()
                 || \App\Services\TradingV3\GoldTradingService::activeTransfers($bot->id)->isNotEmpty()) {
-                foreach (['gold_qty','gold_bar_qty','server_id','server_game_id','account_name','account_password','type'] as $field) {
+                foreach (['gold_qty','gold_bar_qty','nrj_gold_bar_qty','server_id','server_game_id','account_name','account_password','type'] as $field) {
                     if (array_key_exists($field, $updateData) && (string) $updateData[$field] !== (string) $bot->$field) {
                         throw \Illuminate\Validation\ValidationException::withMessages([$field=>'Bot đang giữ giao dịch chưa đối chiếu; chưa thể thay đổi tồn, tài khoản, server hoặc vai trò.']);
                     }
@@ -234,6 +240,7 @@ class BotController extends Controller
             $oldServerId = (int) $bot->server_id;
             $oldGold = (int) $bot->gold_qty;
             $oldBars = (int) $bot->gold_bar_qty;
+            $oldNrjBars = (int) $bot->nrj_gold_bar_qty;
             $oldData = $bot->only([
                 'name',
                 'account_name',
@@ -242,6 +249,7 @@ class BotController extends Controller
                 'server_id',
                 'server_game_id',
                 'gold_bar_qty',
+                'nrj_gold_bar_qty',
                 'gold_qty',
                 'map_name',
                 'map_id',
@@ -264,6 +272,7 @@ class BotController extends Controller
                 'server_id',
                 'server_game_id',
                 'gold_bar_qty',
+                'nrj_gold_bar_qty',
                 'gold_qty',
                 'map_name',
                 'map_id',
@@ -286,7 +295,9 @@ class BotController extends Controller
                     source: 'web',
                     adminUserId: auth()->id(),
                     note: 'Gold bot moved to another server',
-                    serverId: $oldServerId
+                    serverId: $oldServerId,
+                    beforeNrjBars: $oldNrjBars,
+                    afterNrjBars: 0
                 );
                 InventoryMovementService::recordGoldChange(
                     bot: $bot,
@@ -297,7 +308,9 @@ class BotController extends Controller
                     movementType: 'transfer_in',
                     source: 'web',
                     adminUserId: auth()->id(),
-                    note: 'Gold bot moved from another server'
+                    note: 'Gold bot moved from another server',
+                    beforeNrjBars: 0,
+                    afterNrjBars: (int) $bot->nrj_gold_bar_qty
                 );
             } else {
                 InventoryMovementService::recordGoldChange(
@@ -309,7 +322,9 @@ class BotController extends Controller
                     movementType: 'manual_adjustment',
                     source: 'web',
                     adminUserId: auth()->id(),
-                    note: 'Admin changed converted gold balance'
+                    note: 'Admin changed converted gold balance',
+                    beforeNrjBars: $oldNrjBars,
+                    afterNrjBars: (int) $bot->nrj_gold_bar_qty
                 );
             }
 
@@ -403,7 +418,7 @@ class BotController extends Controller
      */
     public function destroy(Bot $bot)
     {
-        if ((int) $bot->gold_qty > 0 || (int) $bot->gold_bar_qty > 0) {
+        if ((int) $bot->gold_qty > 0 || (int) $bot->gold_bar_qty > 0 || (int) $bot->nrj_gold_bar_qty > 0) {
             return back()->with('error', 'Không thể xóa bot còn vàng. Hãy chuyển hoặc điều chỉnh tài sản về 0 trước.');
         }
 

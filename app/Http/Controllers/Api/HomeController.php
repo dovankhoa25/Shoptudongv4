@@ -23,7 +23,7 @@ class HomeController extends Controller
             $includeInactive ? 30 : 120,
             function () use ($includeInactive) {
                 $servers = Server::query()->when(!$includeInactive, fn ($query) => $query->active())
-                    ->with(['currentGoldPrice', 'currentGemPrice'])
+                    ->with(['currentGoldPrice', 'currentGemPrice', 'goldTradingPolicies'])
                     ->withSum('activeGemBots as total_available_gems', 'gem_qty')
                     ->get();
 
@@ -49,7 +49,7 @@ class HomeController extends Controller
             120,
             function () use ($serverId) {
                 $server = Server::active()
-                    ->with(['currentGoldPrice', 'currentGemPrice'])
+                    ->with(['currentGoldPrice', 'currentGemPrice', 'goldTradingPolicies'])
                     ->withSum('activeGemBots as total_available_gems', 'gem_qty')
                     ->findOrFail($serverId);
 
@@ -68,7 +68,7 @@ class HomeController extends Controller
     public function index()
     {
         $servers = Server::active()
-            ->with(['currentGoldPrice', 'currentGemPrice'])
+            ->with(['currentGoldPrice', 'currentGemPrice', 'goldTradingPolicies'])
             ->withSum('activeGemBots as total_available_gems', 'gem_qty')
             ->get();
 

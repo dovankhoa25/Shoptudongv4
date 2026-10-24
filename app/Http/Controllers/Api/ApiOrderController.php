@@ -8,6 +8,7 @@ use App\Models\GoldPrice;
 use App\Models\GoldTransaction;
 use App\Models\User;
 use App\Services\GoldBarOrderQuoteService;
+use App\Services\GoldTradingPolicyService;
 use App\Services\TransactionService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -59,14 +60,14 @@ class ApiOrderController extends Controller
         ]);
     }
 
-    public function store(Request $request, GoldBarOrderQuoteService $quoteService)
+    public function store(Request $request, GoldBarOrderQuoteService $quoteService, GoldTradingPolicyService $policies)
     {
         $validated = $request->validate([
             'server_id' => 'required|exists:servers,id',
             'character_name' => 'required|string|min:3|max:191',
             'money_amount' => 'required|integer|min:5000',
-            // Giữ field để frontend cũ vẫn tương thích, nhưng production chỉ nhận thỏi.
-            'gold_type' => 'sometimes|in:bar',
+            'gold_type' => 'sometimes|in:bar,pure',
+            'gold_bar_template_id' => 'sometimes|integer|in:457,2032',
         ]);
 
         $user = $request->user();
@@ -108,10 +109,17 @@ class ApiOrderController extends Controller
             ], 422);
         }
 
+        $goldType = $validated['gold_type'] ?? 'bar';
+        $policies->assertSaleAllowed((int) $validated['server_id'], $goldType === 'pure'
+            ? 'pure' : GoldTradingPolicyService::barAsset((int) ($validated['gold_bar_template_id'] ?? 457)));
+
         try {
-            $quote = $quoteService->quote(
+            $quote = $goldType === 'pure'
+                ? $quoteService->quotePure((int) $validated['money_amount'], (string) $goldPrice->price)
+                : $quoteService->quote(
                 requestedAmount: (int) $validated['money_amount'],
                 pricePerVnd: (string) $goldPrice->price,
+                goldBarTemplateId: (int)($validated['gold_bar_template_id']??457),
             );
         } catch (\InvalidArgumentException $exception) {
             throw ValidationException::withMessages([
@@ -119,7 +127,7 @@ class ApiOrderController extends Controller
             ]);
         }
 
-        if ($quote['gold_bar_qty'] < 1) {
+        if ($goldType === 'bar' && $quote['gold_bar_qty'] < 1) {
             $message = 'Số tiền chưa đủ mua 1 thỏi. Vui lòng nhập tối thiểu '
                 .number_format($quote['minimum_amount'], 0, ',', '.').' VNĐ.';
 
@@ -139,7 +147,7 @@ class ApiOrderController extends Controller
         }
 
         try {
-            $result = DB::transaction(function () use ($user, $validated, $characterName, $quote): array {
+            $result = DB::transaction(function () use ($user, $validated, $characterName, $quote, $goldType): array {
                 $lockedUser = User::query()->whereKey($user->id)->lockForUpdate()->firstOrFail();
                 // Recheck after serializing purchases for this user; the earlier check can be stale.
                 $pending = GoldTransaction::query()->where('user_id', $lockedUser->id)
@@ -174,7 +182,8 @@ class ApiOrderController extends Controller
                     'amount_vnd' => $chargedAmount,
                     'gold_qty' => $quote['actual_gold'],
                     'gold_bar_qty' => $quote['gold_bar_qty'],
-                    'pure_gold_qty' => 0,
+                    'gold_bar_template_id' => $quote['gold_bar_template_id'],
+                    'pure_gold_qty' => $goldType === 'pure' ? $quote['actual_gold'] : 0,
                     'price_at_transaction' => $quote['price_per_vnd'],
                     'status' => GoldTransaction::STATUS_PENDING,
                     'bot_id' => null,
@@ -185,7 +194,8 @@ class ApiOrderController extends Controller
                     userId: $lockedUser->id,
                     type: 'mua vàng',
                     amount: -$chargedAmount,
-                    description: "Mua {$quote['gold_bar_qty']} thỏi vàng #{$order->id} - Nhân vật: {$validated['character_name']}",
+                    description: ($goldType === 'pure' ? "Mua {$quote['actual_gold']} vàng tươi" : "Mua {$quote['gold_bar_qty']} thỏi vàng")
+                        ." #{$order->id} - Nhân vật: {$validated['character_name']}",
                     performedBy: $lockedUser->id,
                     related: $order,
                     relatedId: $order->id,
@@ -201,6 +211,8 @@ class ApiOrderController extends Controller
                         'unused_amount' => $quote['unused_amount'],
                         'gold_qty' => $quote['actual_gold'],
                         'gold_bar_qty' => $quote['gold_bar_qty'],
+                        'gold_bar_template_id' => $quote['gold_bar_template_id'],
+                        'gold_type' => $goldType,
                     ],
                 );
 
@@ -220,7 +232,7 @@ class ApiOrderController extends Controller
 
         return response()->json([
             'success' => true,
-            'message' => 'Tạo đơn mua thỏi vàng thành công.',
+            'message' => $goldType === 'pure' ? 'Tạo đơn mua vàng tươi thành công.' : 'Tạo đơn mua thỏi vàng thành công.',
             'data' => [
                 'order_id' => (int) $order->id,
                 'status' => (string) $order->status,
@@ -229,20 +241,22 @@ class ApiOrderController extends Controller
                 'unused_amount' => $quote['unused_amount'],
                 'balance_after' => (int) $result['balance_after'],
                 'price_at_transaction' => $quote['price_per_vnd'],
-                'gold_per_bar' => GoldBarOrderQuoteService::GOLD_PER_BAR,
+                'gold_per_bar' => $quote['gold_per_bar'],
+                'gold_bar_template_id' => $quote['gold_bar_template_id'],
+                'gold_type' => $goldType,
                 'gold_bars' => $quote['gold_bar_qty'],
                 'actual_gold' => $quote['actual_gold'],
                 'next_bar_amount' => $quote['next_bar_amount'],
                 // Alias giữ tương thích cho client cũ.
                 'gold_total' => $quote['actual_gold'],
-                'pure_gold' => 0,
+                'pure_gold' => $goldType === 'pure' ? $quote['actual_gold'] : 0,
             ],
         ], 201);
     }
 
     /**
      * Bản mua vàng tươi/thỏi cũ để đối chiếu khi cần rollback.
-     * Không gắn route production vì game hiện không cho giao dịch vàng tươi.
+     * Không gắn route; store() xử lý vàng tươi opt-in và thỏi theo cấu hình server.
      */
     private function storeLegacy(Request $request)
     {

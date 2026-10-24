@@ -25,6 +25,11 @@ class Server extends Model
         return $this->hasMany(GoldPrice::class);
     }
 
+    public function goldTradingPolicies(): HasMany
+    {
+        return $this->hasMany(GoldTradingPolicy::class);
+    }
+
     public function currentGoldPrice(): HasOne
     {
         return $this->hasOne(GoldPrice::class)->ofMany(

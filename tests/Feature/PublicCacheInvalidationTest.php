@@ -27,7 +27,8 @@ class PublicCacheInvalidationTest extends TestCase
         DB::enableQueryLog();
         $first = app(HomeController::class)->getServerPrices();
         $this->assertCount(12, $first['data']);
-        $this->assertCount(3, DB::getQueryLog());
+        // One eager-load query for all per-server gold options; no query per server.
+        $this->assertCount(4, DB::getQueryLog());
         $this->assertSame(50, $first['data'][11]['total_available_gems']);
         DB::flushQueryLog();
         $this->assertSame($first, app(HomeController::class)->getServerPrices());

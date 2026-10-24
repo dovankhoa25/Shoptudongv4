@@ -14,7 +14,9 @@ class GoldController extends Controller {
         return GoldBotResource::collection(GoldTradingService::prefetchReadStock($bots))->additional(['success'=>true]);
     }
     public function updateBot(GoldBotUpdateRequest $r,Bot $bot,GoldTradingService $service) {
-        return (new GoldBotResource($service->updateBot($bot->id,$r->validated())))->additional(['success'=>true]);
+        $updated=$service->updateBot($bot->id,$r->validated());
+        GoldTradingService::prefetchReadStock(collect([$updated]));
+        return (new GoldBotResource($updated))->additional(['success'=>true]);
     }
     public function orders(Request $r) {
         $r->validate(['worker_id'=>['nullable','uuid'],'server_id'=>['nullable','integer','min:1']]);

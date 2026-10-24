@@ -190,10 +190,6 @@ class ImportController extends Controller
     {
         DB::transaction(function () use ($orderId, $newStatus, $cancelReason, $note): void {
             $order = GoldTransaction::query()->lockForUpdate()->findOrFail($orderId);
-            if ($order->hasDeliveryCheckpoint()) {
-                throw \Illuminate\Validation\ValidationException::withMessages(['status'=>'Tool v3 đang giữ biên nhận giao dịch; hãy để tool tự đối chiếu trước.']);
-            }
-
             if ($order->type !== GoldTransaction::TYPE_IMPORT) {
                 throw ValidationException::withMessages([
                     'order' => 'Giao dịch này không phải đơn nhập vàng.',
@@ -221,6 +217,7 @@ class ImportController extends Controller
             }
 
             $order->update([
+                ...\App\Services\TradingV3\ManualOrderResolution::attributes($order, $newStatus, auth()->id(), $cancelReason ?? $note),
                 'status' => $newStatus,
                 'updated_by' => 'web',
                 'last_synced_at' => now(),
@@ -236,6 +233,7 @@ class ImportController extends Controller
                 action: 'gold_import.status_updated',
                 adminUserId: auth()->id(),
                 meta: [
+                    'manual_resolution' => $order->delivery_data['manual_resolution'] ?? null,
                     'previous_status' => $previousStatus,
                     'new_status' => $newStatus,
                     'cancel_reason' => $cancelReason,

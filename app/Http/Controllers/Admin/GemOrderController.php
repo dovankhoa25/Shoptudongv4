@@ -129,14 +129,13 @@ class GemOrderController extends Controller
 
         $result = DB::transaction(function () use ($order, $validated): array {
             $lockedOrder = GemTransaction::query()->lockForUpdate()->findOrFail($order->id);
-            if($lockedOrder->status==='processing') throw ValidationException::withMessages(['status'=>'Đơn đang được xử lý. Cần xác nhận thao tác đã dừng trước khi hoàn tiền.']);
-
             if (! in_array($lockedOrder->status, [
                 GemTransaction::STATUS_PENDING,
                 GemTransaction::STATUS_PROCESSING,
+                GemTransaction::STATUS_CANCELLED,
             ], true) || $lockedOrder->refunded_at !== null) {
                 throw ValidationException::withMessages([
-                    'status' => 'Chỉ có thể hoàn tiền cho đơn ngọc đang chờ hoặc đang xử lý.',
+                    'status' => 'Chỉ có thể hoàn tiền cho đơn ngọc đang chờ, đang xử lý hoặc đã hủy và chưa hoàn tiền.',
                 ]);
             }
 
@@ -158,10 +157,12 @@ class GemOrderController extends Controller
             );
 
             $lockedOrder->forceFill([
+                ...\App\Services\TradingV3\ManualOrderResolution::attributes($lockedOrder, 'refunded', auth()->id(), $validated['refund_reason']),
                 'status' => GemTransaction::STATUS_REFUNDED,
                 'updated_by' => 'web',
                 'last_synced_at' => now(),
                 'refunded_at' => now(),
+                'cancel_requested_at' => null,
             ])->save();
             $lockedOrder->refresh();
 
@@ -174,6 +175,7 @@ class GemOrderController extends Controller
                 action: 'gem_order.refund',
                 adminUserId: auth()->id(),
                 meta: [
+                    'manual_resolution' => $lockedOrder->delivery_data['manual_resolution'],
                     'refund_reason' => $validated['refund_reason'],
                     'refund_amount' => $refundAmount,
                     'balance_before' => $balances['before'],
@@ -396,7 +398,6 @@ class GemOrderController extends Controller
         ?string $note,
         string $action,
     ): GemTransaction {
-        if($order->status==='processing'&&$order->hasDeliveryCheckpoint()) throw ValidationException::withMessages(['status'=>'Đơn đang được xử lý. Cần đối soát biên nhận trước khi đổi trạng thái thủ công.']);
         if (! $this->canTransitionStatus($order, $targetStatus)) {
             throw ValidationException::withMessages([
                 'status' => "Không thể chuyển trạng thái từ {$order->status} sang {$targetStatus}.",
@@ -406,6 +407,7 @@ class GemOrderController extends Controller
         $oldData = $order->historySnapshot();
         $previousStatus = $order->status;
         $order->forceFill([
+            ...\App\Services\TradingV3\ManualOrderResolution::attributes($order, $targetStatus, auth()->id(), $cancelReason ?? $note),
             'status' => $targetStatus,
             'updated_by' => 'web',
             'last_synced_at' => now(),
@@ -426,6 +428,7 @@ class GemOrderController extends Controller
                 'new_status' => $targetStatus,
                 'note' => $note,
                 'cancel_reason' => $cancelReason,
+                'manual_resolution' => $order->delivery_data['manual_resolution'] ?? null,
             ], static fn ($value) => $value !== null),
             note: 'Admin cập nhật trạng thái đơn mua ngọc',
         );
@@ -486,7 +489,8 @@ class GemOrderController extends Controller
 
     private function canTransitionStatus(GemTransaction $order, string $targetStatus): bool
     {
-        if ($order->refunded_at !== null || $order->status === GemTransaction::STATUS_REFUNDED) {
+        if ($order->refunded_at !== null || $order->status === GemTransaction::STATUS_REFUNDED
+            || !empty($order->delivery_data['manual_resolution'])) {
             return false;
         }
 

@@ -64,6 +64,29 @@ class TradingV3Test extends TestCase {
             ->assertJsonPath('data.0.status',false)->assertJsonPath('data.0.server_id',$b->server_id)
             ->assertJsonPath('data.0.login.ip','test.example')->assertJsonPath('data.0.login.port',14445);
     }
+    public function test_manual_completed_detail_is_readonly_with_stale_delivery_progress(): void {
+        $b=$this->bot(false);$beforeBot=$b->fresh()->getAttributes();
+        foreach(['gift_ticket'=>'gifting','consignment'=>'giving_item'] as $method=>$phase) {
+            $o=$this->order($b,$method);
+            $o->forceFill(['bot_id'=>$b->id,'status'=>'completed','delivery_phase'=>$phase,
+                'completed_at'=>null,'bot_gem_spent_qty'=>0,'delivered_gem_qty'=>0,'tickets_used_qty'=>0])->save();
+            $before=$o->fresh()->getAttributes();$wallet=$o->user->fresh()->getAttributes();
+            $this->callSigned('GET',"/app/v3/gem-transactions/{$o->id}")->assertOk()
+                ->assertHeader('Cache-Control','no-store, private')
+                ->assertJsonPath('data.id',$o->id)->assertJsonPath('data.bot_id',$b->id)
+                ->assertJsonPath('data.server_id',$b->server_id)->assertJsonPath('data.character_name','lezit1')
+                ->assertJsonPath('data.delivery_method',$method)->assertJsonPath('data.gem_qty',20)
+                ->assertJsonPath('data.status','completed')->assertJsonPath('data.delivery_phase',$phase)
+                ->assertJsonPath('data.completed_at',null)->assertJsonPath('data.bot_gem_spent_qty',0)
+                ->assertJsonPath('data.delivered_gem_qty',0)->assertJsonPath('data.tickets_used_qty',0);
+            $this->assertSame($before,$o->fresh()->getAttributes());
+            $this->assertSame($wallet,$o->user->fresh()->getAttributes());
+        }
+        $this->callSigned('GET','/app/v3/gem-transactions')->assertOk()->assertJsonCount(0,'data');
+        $this->callSigned('GET','/app/v3/gem-transactions/999999999')->assertNotFound();
+        $this->assertSame($beforeBot,$b->fresh()->getAttributes());
+        $this->assertDatabaseCount('inventory_movements',0);
+    }
     public function test_tool_cannot_overwrite_web_target_or_status(): void {
         $b=$this->bot();$this->lease($b);
         $this->callSigned('PUT',"/app/v3/gem/bots/{$b->id}",['worker_id'=>$this->worker,'action'=>'lease','map_id'=>1,'coordinates'=>'0-0','status'=>false])->assertUnprocessable();
@@ -285,15 +308,18 @@ class TradingV3Test extends TestCase {
         $this->assertSame(0,(int)InventoryMovement::where('movement_type','sync_correction')->where('asset_type','gem')->sum('quantity_delta'));
         $this->assertSame('completed',$equipment->refresh()->status);$this->assertSame('completed',$gift->refresh()->status);
     }
-    public function test_admin_cannot_refund_or_complete_a_claimed_v3_order_during_reconciliation(): void {
+    public function test_admin_can_resolve_a_claimed_v3_order_without_rewriting_bot_inventory(): void {
         $b=$this->bot();$this->lease($b);$o=$this->order($b);$this->claim($b,$o);
         \Spatie\Permission\Models\Role::findOrCreate('super-admin','web');
         $admin=User::factory()->create();$admin->assignRole('super-admin');$this->actingAs($admin);
-        $this->post('/admin/gem-orders/'.$o->id.'/refund',['refund_reason'=>'test'])->assertSessionHasErrors('status');
+        $this->post('/admin/gem-orders/'.$o->id.'/refund',['refund_reason'=>'test'])->assertSessionHasNoErrors();
         $this->patch('/admin/gem-orders/'.$o->id.'/status',['action'=>'complete'])->assertSessionHasErrors('status');
-        $this->assertSame('processing',$o->fresh()->status);$this->assertNull($o->fresh()->refunded_at);$this->assertSame(100,(int)$b->fresh()->gem_qty);
+        $this->assertSame('refunded',$o->fresh()->status);$this->assertNotNull($o->fresh()->refunded_at);$this->assertSame(100,(int)$b->fresh()->gem_qty);
         $resource=(new \App\Http\Resources\GemOrder\GemOrderResource($o->fresh()))->resolve();
         $this->assertFalse($resource['can_refund']);$this->assertFalse($resource['can_complete']);$this->assertFalse($resource['can_cancel']);
+        $other=$this->order($b);$this->claim($b,$other);
+        $this->patch('/admin/gem-orders/'.$other->id.'/status',['action'=>'complete'])->assertSessionHasNoErrors();
+        $this->assertSame('manual_completed',$other->fresh()->delivery_phase);$this->assertSame(100,(int)$b->fresh()->gem_qty);
     }
 }
 
