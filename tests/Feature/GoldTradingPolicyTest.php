@@ -206,7 +206,7 @@ class GoldTradingPolicyTest extends TestCase
         $this->assertDatabaseCount('gold_trading_policies', 3);
         $this->assertSame(3700, (int) GoldPrice::sole()->price);
         $this->get('/admin/gold-prices')->assertOk()->assertInertia(fn (Assert $page) => $page
-            ->component('Admin/GoldPrices/Index')->has('tradingPolicies', 3)->has('tradingAssets', 3));
+            ->component('Admin/GoldPrices/Index')->has('tradingPolicies', 3)->has('tradingAssets', 4));
     }
 
     public function test_read_only_admin_cannot_change_policy_and_invalid_config_is_atomic(): void

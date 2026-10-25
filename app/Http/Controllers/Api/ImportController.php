@@ -19,7 +19,7 @@ class ImportController extends Controller
             'character_name' => 'required|string|min:3|max:191',
             'pure_gold_qty' => 'nullable|integer|min:0|max:900000000',    // Vàng tươi (từ frontend)
             'gold_bar_qty' => 'nullable|integer|min:0|max:999',          // Số thỏi vàng
-            'gold_bar_template_id' => 'sometimes|integer|in:457,2032',
+            'gold_bar_template_id' => 'sometimes|integer|in:457,2032,281',
         ]);
 
         $user = $request->user();

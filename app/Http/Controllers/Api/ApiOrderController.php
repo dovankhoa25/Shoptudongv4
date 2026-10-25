@@ -67,7 +67,7 @@ class ApiOrderController extends Controller
             'character_name' => 'required|string|min:3|max:191',
             'money_amount' => 'required|integer|min:5000',
             'gold_type' => 'sometimes|in:bar,pure',
-            'gold_bar_template_id' => 'sometimes|integer|in:457,2032',
+            'gold_bar_template_id' => 'sometimes|integer|in:457,2032,281',
         ]);
 
         $user = $request->user();
@@ -126,6 +126,8 @@ class ApiOrderController extends Controller
                 'money_amount' => $exception->getMessage(),
             ]);
         }
+
+        if (($quote['gold_bar_template_id']??457)===281) $policies->assertRadarSaleQuantity((int)$validated['server_id'],(int)$quote['gold_bar_qty']);
 
         if ($goldType === 'bar' && $quote['gold_bar_qty'] < 1) {
             $message = 'Số tiền chưa đủ mua 1 thỏi. Vui lòng nhập tối thiểu '

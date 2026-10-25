@@ -21,7 +21,7 @@ final class PublicCacheObserver
         Models\AttributeOption::class => ['public:nick'],
         Models\Server::class => ['public:servers', 'public:server-prices', 'public:bots', 'public:gembot', 'public:nro-metadata'],
         Models\GoldPrice::class => ['public:servers', 'public:server-prices'],
-        Models\GoldTradingPolicy::class => ['public:servers', 'public:server-prices'],
+        Models\GoldTradingPolicy::class => ['public:servers', 'public:server-prices', 'public:bots'],
         Models\GemPrice::class => ['public:servers', 'public:server-prices'],
         Models\Bot::class => ['public:bots'],
         Models\GemBot::class => ['public:gembot', 'public:server-prices'],
@@ -34,7 +34,7 @@ final class PublicCacheObserver
         Models\CardType::class => ['public:card-types'],
     ];
 
-    private const BOT_FIELDS = ['name', 'server_id', 'type', 'map_name', 'map_id', 'area_number', 'status'];
+    private const BOT_FIELDS = ['name', 'server_id', 'type', 'map_name', 'map_id', 'area_number', 'status', 'radar_qty', 'bag_capacity', 'bag_free_slots'];
     private const GEM_FIELDS = ['name', 'server_id', 'map_name', 'map_id', 'area_number', 'coordinates', 'status', 'gem_qty'];
 
     public function created(Model $model): void

@@ -1,0 +1,48 @@
+RADA CẤP 12 — SUPER 1, 2, 3
+
+PHẠM VI
+Rada template 281, quy đổi 37.500.000 vàng/rada. Mỗi rada chiếm một ô hành trang.
+Chế độ này phải bật riêng từng server tại Admin > Giá vàng > Cấu hình nhập/bán.
+Hai nút bán/nhập độc lập; giới hạn tồn nhập có thể để trống.
+Server khác mặc định giữ chế độ vàng tươi/thỏi thường/NRJ hiện tại.
+
+DB BỔ SUNG
+Migration: 2026_10_24_000001_add_radar_trading_inventory.php
+servers.gold_radar_enabled: boolean, mặc định false.
+bots.radar_qty: số rada quan sát được, mặc định 0.
+bots.bag_capacity: tổng ô hành trang thực tế, nullable khi chưa biết.
+bots.bag_free_slots: ô thực sự còn trống sau khi tính mọi vật phẩm, nullable khi chưa biết.
+Cấu hình asset_type=radar dùng bảng gold_trading_policies hiện có.
+Không thêm bảng worker, owner, lease hoặc hệ thống đơn/ledger khác.
+
+TỒN VÀ SỨC CHỨA
+Tồn bán công khai = rada của selling_main + selling_sub đang bật, đúng server game.
+Sức chứa nhập công khai = ô trống của import_main + import_sub đang bật, đúng server game.
+Phải có bot chính cho hướng tương ứng. Bot chưa báo đủ hành trang đóng góp 0 ô.
+Nếu cấu hình max tồn, số được nhập còn bị chặn bởi max trừ tồn của TẤT CẢ bot trong server,
+kể cả bot tắt. Không trừ đơn mua chờ, không cộng đơn nhập chờ.
+Số trên web là lần quan sát tồn gần nhất; hai đơn cùng lúc có thể cùng được nhận.
+
+TOOL
+Tool vẫn chạy trực tiếp trong QLTK. Không cần queue worker hoặc quyền giữ bot trên hosting.
+Bot chính giữ điểm giao dịch; phụ đi đến chính. Phụ đăng nhập/di chuyển không giữ bot chính.
+Rada giao theo từng vật phẩm, tối đa 20 ô mỗi lượt và không vượt chỗ trống thực tế.
+Đơn lớn tiếp tục trên cùng bot chính: nhập -> cất sang import_sub -> nhận lượt tiếp;
+bán thiếu -> lấy từ selling_sub -> giao tiếp. Kho phụ đầy thì bot nhập giữ rada và chờ chỗ.
+Bơm/cất rada lưu journal trước xác nhận game và gửi receipt sau thành công;
+không gọi web claim/lease trước giao dịch. Receipt nền giữ UUID để gửi lại không ghi trùng.
+Đơn khách vẫn chuyển processing trên web trước tác động tài sản đầu tiên để tránh cron hoàn nhầm.
+Kết quả game chưa rõ phải đối chiếu đúng journal; không xóa journal để chạy lại.
+
+CẬP NHẬT
+1. Sao lưu database và thư mục tool/data hiện dùng; chỉ chạy một bản tool.
+2. Cập nhật backend, chạy php artisan migrate --force, làm mới cache cấu hình/router khi deploy.
+   Nếu chưa có migration gold_trading_policies ngày 23/10, migration đó cũng phải chạy.
+3. Build/deploy admin và VangHHP client; cập nhật tool protected, giữ nguyên data/settings/journal.
+4. Kiểm tra server login ID/endpoint: SP1=15/dragon11.teamobi.com:14446;
+   SP2=16/dragonsuper.teamobi.com:17001; SP3=17/dragonsuper3.teamobi.com:17001.
+5. Bật rada cho Super 2 trước, chọn vai trò chính/phụ và để tool đồng bộ hành trang thật.
+   Chỉ mở bán/nhập khi số tồn và ô trống đã đúng. Bật SP1/SP3 sau khi có test riêng.
+
+Đây là hướng dẫn deploy. Phiên triển khai local không tự chạy migration hoặc deploy production.
+Kết quả kiểm thử cụ thể nằm trong RADAR-VALIDATION-20261024.txt của tool.

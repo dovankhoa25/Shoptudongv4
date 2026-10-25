@@ -18,6 +18,8 @@ class ApiBotResource extends JsonResource
             // Giữ nguyên shape cho frontend public nhưng không lộ tồn kho thật.
             'gold_bar_qty' => 0,
             'gold_qty' => 0,
+            ...((bool)$this->radar_enabled ? ['radar_qty'=>(int)$this->radar_qty,
+                'radar_receive_room'=>\App\Services\RadarTradingService::room($this->resource)] : []),
             'map_name' => $this->map_name,
             'map_id' => $this->map_id,
             'area_number' => $this->area_number,

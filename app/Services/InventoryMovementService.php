@@ -9,9 +9,9 @@ class InventoryMovementService
 {
     public const GOLD_PER_BAR = 37_000_000;
 
-    public static function convertedGold(int $goldQty, int $goldBarQty, int $nrjGoldBarQty=0): int
+    public static function convertedGold(int $goldQty, int $goldBarQty, int $nrjGoldBarQty=0, int $radarQty=0): int
     {
-        return $goldQty + ($goldBarQty * self::GOLD_PER_BAR) + ($nrjGoldBarQty * GoldBarAsset::value(GoldBarAsset::NRJ));
+        return $goldQty + ($goldBarQty * self::GOLD_PER_BAR) + ($nrjGoldBarQty * GoldBarAsset::value(GoldBarAsset::NRJ)) + $radarQty * GoldBarAsset::value(GoldBarAsset::RADAR);
     }
 
     public static function recordGemChange(
@@ -70,8 +70,8 @@ class InventoryMovementService
             botId: (int) $bot->id,
             botType: 'bot',
             assetType: 'pure_gold',
-            before: self::convertedGold($beforeGold, $beforeBars, $beforeNrjBars),
-            after: self::convertedGold($afterGold, $afterBars, $afterNrjBars),
+            before: self::convertedGold($beforeGold, $beforeBars, $beforeNrjBars, (int)$bot->radar_qty),
+            after: self::convertedGold($afterGold, $afterBars, $afterNrjBars, (int)$bot->radar_qty),
             movementType: $movementType,
             source: $source,
             transactionId: $transactionId,

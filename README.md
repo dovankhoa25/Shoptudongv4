@@ -20,3 +20,6 @@
 
 0.2.4
 - nhập bán thỏi ssj
+
+0.2.5
+- update bán vàng sp123

@@ -10,6 +10,9 @@ class GoldBotUpdateRequest extends FormRequest {
             'gold_qty'=>['required_if:action,stock','integer','min:0','max:9000000000000000'],
             'gold_bar_qty'=>['required_if:action,stock','integer','between:0,999'],
             'nrj_gold_bar_qty'=>['sometimes','integer','between:0,999'],
+            'radar_qty'=>['sometimes','integer','between:0,255'],
+            'bag_capacity'=>['sometimes','integer','between:0,255'],
+            'bag_free_slots'=>['sometimes','integer','between:0,255'],
             'name'=>['nullable','string','max:191'],
         ];
         foreach (['map_name','map_id','area_number','coordinates','status','server_id','server_game_id','server_login_id','account_name','account_password','proxy','type'] as $field) $rules[$field]=['prohibited'];

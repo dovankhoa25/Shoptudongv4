@@ -49,7 +49,8 @@ class TradingV3ReadHotPathTest extends TestCase
         return GoldTransaction::create(['bot_id' => $bot->id, 'server_id' => $bot->server_id, 'user_id' => User::factory()->create()->id,
             'type' => $type, 'status' => $status, 'character_name' => 'read-buyer', 'gold_bar_qty' => $bars, 'pure_gold_qty' => $pure,
             'gold_qty' => $bars * 37000000 + $pure, 'amount_vnd' => 10000, 'price_at_transaction' => 1000,
-            'delivery_data' => ['progress' => $progress]]);
+            // These fixtures exercise active V3 reservations, not passive legacy orders without a checkpoint.
+            'delivery_data' => ['progress' => $progress, 'claim' => []]]);
     }
 
     private function transfer(Bot $from, Bot $to, int $bars, int $pure, string $status = 'claimed'): void

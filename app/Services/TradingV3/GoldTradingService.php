@@ -2,7 +2,7 @@
 namespace App\Services\TradingV3;
 
 use App\Models\{Bot,GoldTransaction,InventoryMovement,Transaction,User};
-use App\Services\{BotHistoryService,GoldBarAsset,InventoryMovementService,TransactionService,UserRealtimeNotifier};
+use App\Services\{BotHistoryService,GoldBarAsset,InventoryMovementService,TransactionService,UserRealtimeNotifier,RadarTradingService};
 use App\Support\ApiCache;
 use Illuminate\Support\Facades\DB;
 
@@ -47,6 +47,8 @@ class GoldTradingService {
         foreach($byId as $id=>$bot) $stock[$id]=[
             'available'=>['bars'=>(int)$bot->gold_bar_qty,'pure'=>(int)$bot->gold_qty],
             'nrj_available'=>['bars'=>(int)$bot->nrj_gold_bar_qty,'pure'=>(int)$bot->gold_qty],
+            'radar_available'=>['bars'=>(int)$bot->radar_qty,'pure'=>(int)$bot->gold_qty],
+            'radar_receive_room'=>RadarTradingService::room($bot),
             'receive_room'=>self::BAR_CAPACITY-(int)$bot->gold_bar_qty,
             'nrj_receive_room'=>self::BAR_CAPACITY-(int)$bot->nrj_gold_bar_qty,
         ];
@@ -56,29 +58,31 @@ class GoldTradingService {
         foreach($orders as $order) {
             if(self::settledStockWait($order) || self::passiveLegacyWait($order)) continue;
             $remaining=self::remaining($order);$id=(int)$order->bot_id;
-            $nrj=self::orderTemplate($order)===GoldBarAsset::NRJ;
+            $prefix=match(self::orderTemplate($order)){281=>'radar_',2032=>'nrj_',default=>''};
             if($order->type==='order') {
-                $stock[$id][$nrj?'nrj_available':'available']['bars']-=$remaining['bars'];
+                $stock[$id][$prefix.'available']['bars']-=$remaining['bars'];
                 $stock[$id]['available']['pure']-=$remaining['pure'];
                 $stock[$id]['nrj_available']['pure']-=$remaining['pure'];
-            } else $stock[$id][$nrj?'nrj_receive_room':'receive_room']-=$remaining['bars'];
+            } else $stock[$id][$prefix.'receive_room']-=$remaining['bars'];
         }
         $transfers=InventoryMovement::where('transaction_type','gold_transfer')->where('movement_type','reservation')
             ->where('meta->status','claimed')
             ->where(fn($q)=>$q->whereIn('meta->from_bot_id',$ids)->orWhereIn('meta->to_bot_id',$ids))->get(['meta']);
         foreach($transfers as $transfer) {
             $meta=$transfer->meta;$from=(int)$meta['from_bot_id'];$to=(int)$meta['to_bot_id'];
-            $nrj=($meta['gold_bar_template_id']??457)===GoldBarAsset::NRJ;
+            $prefix=match((int)($meta['gold_bar_template_id']??457)){281=>'radar_',2032=>'nrj_',default=>''};
             if(isset($stock[$from])) {
-                $stock[$from][$nrj?'nrj_available':'available']['bars']-=(int)$meta['bars_qty'];
+                $stock[$from][$prefix.'available']['bars']-=(int)$meta['bars_qty'];
                 $stock[$from]['available']['pure']-=(int)$meta['pure_gold_qty'];
                 $stock[$from]['nrj_available']['pure']-=(int)$meta['pure_gold_qty'];
             }
-            if(isset($stock[$to])) $stock[$to][$nrj?'nrj_receive_room':'receive_room']-=(int)$meta['bars_qty'];
+            if(isset($stock[$to])) $stock[$to][$prefix.'receive_room']-=(int)$meta['bars_qty'];
         }
         foreach($bots as $bot) {
             $read=$stock[$bot->id];$read['available']=array_map(fn($qty)=>max(0,$qty),$read['available']);
             $read['nrj_available']=array_map(fn($qty)=>max(0,$qty),$read['nrj_available']);
+            $read['radar_available']=array_map(fn($qty)=>max(0,$qty),$read['radar_available']);
+            $read['radar_receive_room']=max(0,$read['radar_receive_room']);
             $read['receive_room']=max(0,$read['receive_room']);
             $read['nrj_receive_room']=max(0,$read['nrj_receive_room']);
             $bot->setRelation('tradingV3ReadStock',$read);
@@ -100,7 +104,7 @@ class GoldTradingService {
         return ['bars'=>max(0,$bars),'pure'=>max(0,$pure)];
     }
     public static function receiveRoom(Bot $bot,?int $exceptOrder=null,?string $exceptTransfer=null,int $template=457): int {
-        $room=self::BAR_CAPACITY-(int)$bot->{GoldBarAsset::field($template)};
+        $room=$template===281?RadarTradingService::room($bot):self::BAR_CAPACITY-(int)$bot->{GoldBarAsset::field($template)};
         foreach(GoldTransaction::where('bot_id',$bot->id)->where('type','import')->where('status','processing')->get() as $o) {
             if($o->id!==$exceptOrder && self::orderTemplate($o)===$template && !self::settledStockWait($o) && !self::passiveLegacyWait($o)) $room-=self::remaining($o)['bars'];
         }
@@ -130,6 +134,7 @@ class GoldTradingService {
             abort_if($transfers->isNotEmpty(),409,'Unfinished gold transfers must be reconciled first.');
             foreach($orders as $order) abort_unless(self::passiveLegacyWait($order) || ($this->hasCheckpoint($order)
                 && (self::settledTransferWait($order) || !empty($order->delivery_data['stock_refresh_pending_step_id']))),409,'Stock correction requires a settled waiting-stock boundary.');
+            if($bot->server?->gold_radar_enabled) { RadarTradingService::assertBot($bot,281); $this->assertRadarSnapshot($d); }
             $this->applySnapshot($bot,$d,'sync_correction',null,null);
             foreach($orders as $order) if(!empty($order->delivery_data['stock_refresh_pending_step_id'])) {
                 $data=$order->delivery_data;unset($data['stock_refresh_pending_step_id']);$order->forceFill(['delivery_data'=>$data])->save();
@@ -241,13 +246,15 @@ class GoldTradingService {
                     return $order;
                 }
                 $this->assertEnabled($bot);
+                RadarTradingService::assertBot($bot,$template);
                 $role=$order->type==='order'?'selling_main':'import_main';
                 abort_unless(in_array($role,self::types($bot),true) && in_array($order->type,['order','import'],true),422,'Bot role does not match order direction.');
                 $this->assertCustomerBoundary($bot,$id);
                 $terms=$this->validatedTerms($order);
                 $a=self::available($bot,$id,template:$template);
-                $nextBars=min($terms['bars'],self::BAR_CAPACITY);$nextPure=min($terms['pure'],2147483647);
-                $waiting=$order->type==='order' ? ($a['bars']<$nextBars || $a['pure']<$nextPure) : (self::receiveRoom($bot,$id,template:$template)<$nextBars);
+                $nextBars=min($terms['bars'],GoldBarAsset::roundLimit($template));
+                if($template===281) $nextBars=min($nextBars,$order->type==='order'?$a['bars']:self::receiveRoom($bot,$id,template:$template));$nextPure=min($terms['pure'],2147483647);
+                $waiting=($template===281 && $nextBars===0) || ($order->type==='order' ? ($a['bars']<$nextBars || $a['pure']<$nextPure) : (self::receiveRoom($bot,$id,template:$template)<$nextBars));
                 abort_unless(!isset($d['phase']) || $d['phase']==='waiting_customer',422,'Invalid initial delivery phase.');
                 $order->forceFill(['bot_id'=>$bot->id,'status'=>'processing','character_id'=>$d['character_id']??null,'delivery_phase'=>$waiting?'waiting_stock':'waiting_customer',
                     'delivery_data'=>['claim'=>$terms,'progress'=>['bars'=>0,'pure'=>0],...($waiting?['stock_wait_settled'=>true]:[])],
@@ -315,6 +322,7 @@ class GoldTradingService {
             abort_if(self::settledStockWait($order),409,'A parked order must resume before a new delivery receipt.');
             abort_if(self::activeTransfers($bot->id)->isNotEmpty(),409,'Receipt cannot overlap an unsettled transfer.');
             $bars=(int)$d['bars_qty'];$pure=(int)$d['pure_gold_qty'];$r=self::remaining($order);
+            abort_if($template===281 && ($pure!==0 || $bars>20),422,'Radar receipts contain only radar, at most 20 slots.');
             abort_unless(($bars>0 || $pure>0) && $bars<=$r['bars'] && $pure<=$r['pure'],422,'Receipt exceeds remaining order quantities.');
             $kind=$order->type==='import'?'import':'sale';
             abort_unless($d['evidence']['kind']===$kind,422,'Receipt direction differs from order.');
@@ -354,6 +362,7 @@ class GoldTradingService {
     }
     private static function validatedTerms(GoldTransaction $order): array {
         $terms=self::terms($order);$unit=GoldBarAsset::value($terms['gold_bar_template_id']);
+        abort_if($terms['gold_bar_template_id']===281 && $terms['pure']!==0,422,'Radar orders cannot include pure gold.');
         abort_unless($terms['bars']>=0 && $terms['pure']>=0 && ($terms['bars']>0 || $terms['pure']>0)
             && $terms['bars']<=intdiv(PHP_INT_MAX-$terms['pure'],$unit)
             && (int)$order->gold_qty===$terms['bars']*$unit+$terms['pure'],422,'Order component quantities do not match converted gold.');
@@ -377,7 +386,8 @@ class GoldTradingService {
     }
     private function canFulfil(Bot $bot,GoldTransaction $order): bool {
         $remaining=self::remaining($order);$template=self::orderTemplate($order);$available=self::available($bot,$order->id,template:$template);
-        $bars=min($remaining['bars'],self::BAR_CAPACITY);$pure=min($remaining['pure'],2147483647);
+        $bars=min($remaining['bars'],GoldBarAsset::roundLimit($template));$pure=min($remaining['pure'],2147483647);
+        if($template===281) return $remaining['bars']>0 && ($order->type==='order'?$available['bars']:self::receiveRoom($bot,$order->id,template:$template))>0;
         return $order->type==='order'
             ? $available['bars']>=$bars && $available['pure']>=$pure
             : self::receiveRoom($bot,$order->id,template:$template)>=$bars;
@@ -419,21 +429,43 @@ class GoldTradingService {
                         && hash_equals((string)($row->meta['payload_hash']??''),$this->digest($d)),409,'Transfer is terminal or acknowledged body differs.');
                     return $row->meta;
                 }
+            } elseif($template===281 && $d['action']==='receipt') {
+                // Radar is decided and journaled locally by the single tool. No web claim/lease precedes the game trade.
+                $intent=$d['evidence']['intent']??[];
+                $fromRoles=array_map('trim',explode(',',(string)($intent['from_roles']??'')));
+                $toRoles=array_map('trim',explode(',',(string)($intent['to_roles']??'')));
+                $storage=in_array('import_main',$fromRoles,true) && in_array('import_sub',$toRoles,true);
+                $refill=in_array('selling_sub',$fromRoles,true) && in_array('selling_main',$toRoles,true);
+                abort_unless($terms['bars_qty']>0 && $terms['bars_qty']<=20 && $terms['pure_gold_qty']===0
+                    && (int)$from->server_id===(int)$to->server_id && (int)($d['server_id']??0)===(int)$from->server_id
+                    && (int)($intent['server_id']??0)===(int)$from->server_id
+                    && ($intent['id']??null)===$d['step_id'] && ($intent['transfer_id']??null)===$id
+                    && (int)($intent['from_character_id']??0)>0 && (int)($intent['to_character_id']??0)>0
+                    && ($storage||$refill) && RadarTradingService::supportedBot($from) && RadarTradingService::supportedBot($to)
+                    && (int)$from->server_game_id === (int)$to->server_game_id,422,'Radar receipt must identify its original local transfer and Super endpoint.');
+                $meta=[...$terms,'status'=>'claimed','direction'=>$storage?'storage':'refill','local_radar'=>true,
+                    'from_before'=>$from->only(['gold_qty','gold_bar_qty','nrj_gold_bar_qty','radar_qty','stock_version']),
+                    'to_before'=>$to->only(['gold_qty','gold_bar_qty','nrj_gold_bar_qty','radar_qty','stock_version']),
+                    'created_at'=>now()->toIso8601String()];
+                $this->workflow($from,$key,'reservation',null,'gold_transfer',$meta);
+                $row=InventoryMovement::where('idempotency_key',$key)->lockForUpdate()->firstOrFail();
             } else abort_unless($d['action']==='claim',404,'Transfer reservation was not found.');
             if($d['action']==='claim') {
                 abort_if($from->isChecker() || $to->isChecker(),422,'Checker bots do not transfer inventory.');
                 $this->assertEnabled($from);$this->assertEnabled($to);
+                RadarTradingService::assertBot($from,$template);RadarTradingService::assertBot($to,$template);
+                abort_if($template===281 && ($terms['pure_gold_qty']!==0 || $terms['bars_qty']>20),422,'Radar transfer must use verified item slots only.');
                 abort_unless((int)$from->server_id===(int)$to->server_id,422,'Transfer business servers differ.');
-                $storage=in_array('import_main',self::types($from),true) && self::auxiliary($to);
-                $refill=self::auxiliary($from) && in_array('selling_main',self::types($to),true);
+                $storage=in_array('import_main',self::types($from),true) && self::auxiliary($to) && ($template!==281 || in_array('import_sub',self::types($to),true));
+                $refill=self::auxiliary($from) && in_array('selling_main',self::types($to),true) && ($template!==281 || in_array('selling_sub',self::types($from),true));
                 abort_unless($storage || $refill,422,'Transfer direction is not importer-to-storage or storage-to-seller.');
                 $this->assertTransferBoundary($from);$this->assertTransferBoundary($to);
                 $a=self::available($from,null,$id,$template);
                 abort_unless(($terms['bars_qty']>0 || $terms['pure_gold_qty']>0) && $a['bars']>=$terms['bars_qty'] && $a['pure']>=$terms['pure_gold_qty'],409,'Transfer source has insufficient unreserved stock.');
                 abort_unless(self::receiveRoom($to,null,$id,$template)>=$terms['bars_qty'],409,'Transfer receiver lacks reserved account room.');
                 $meta=[...$terms,'status'=>'claimed','direction'=>$storage?'storage':'refill',
-                    'from_before'=>['gold_qty'=>(int)$from->gold_qty,'gold_bar_qty'=>(int)$from->gold_bar_qty,'nrj_gold_bar_qty'=>(int)$from->nrj_gold_bar_qty,'stock_version'=>(int)$from->stock_version],
-                    'to_before'=>['gold_qty'=>(int)$to->gold_qty,'gold_bar_qty'=>(int)$to->gold_bar_qty,'nrj_gold_bar_qty'=>(int)$to->nrj_gold_bar_qty,'stock_version'=>(int)$to->stock_version],
+                    'from_before'=>['gold_qty'=>(int)$from->gold_qty,'gold_bar_qty'=>(int)$from->gold_bar_qty,'nrj_gold_bar_qty'=>(int)$from->nrj_gold_bar_qty,'radar_qty'=>(int)$from->radar_qty,'stock_version'=>(int)$from->stock_version],
+                    'to_before'=>['gold_qty'=>(int)$to->gold_qty,'gold_bar_qty'=>(int)$to->gold_bar_qty,'nrj_gold_bar_qty'=>(int)$to->nrj_gold_bar_qty,'radar_qty'=>(int)$to->radar_qty,'stock_version'=>(int)$to->stock_version],
                     'created_at'=>now()->toIso8601String()];
                 $this->workflow($from,$key,'reservation',null,'gold_transfer',$meta);return $meta;
             }
@@ -470,8 +502,9 @@ class GoldTradingService {
     }
     private function applyReceiptSnapshot(Bot $bot,array $s,string $reason,?GoldTransaction $order,string $key,int $barsDelta,int $pureDelta,array $meta,bool $pending,int $template=457): void {
         $this->validateSnapshot($s);
-        abort_unless($template===457 || array_key_exists('nrj_gold_bar_qty',$s),422,'NRJ receipt requires its observed NRJ inventory.');
-        $fields=['gold_qty','gold_bar_qty','nrj_gold_bar_qty','name'];$old=$bot->only($fields);
+        abort_unless($template!==2032 || array_key_exists('nrj_gold_bar_qty',$s),422,'NRJ receipt requires its observed NRJ inventory.');
+        if($template===281) $this->assertRadarSnapshot($s);
+        $fields=['gold_qty','gold_bar_qty','nrj_gold_bar_qty','radar_qty','bag_capacity','bag_free_slots','name'];$old=$bot->only($fields);
         $apply=!$pending && (int)$s['stock_version']>(int)$bot->stock_version;
         $watermark=$pending && (int)$s['stock_version']>(int)$bot->stock_version;
         $meta=[...$meta,'reported_snapshot'=>$s,'previous_stock_version'=>(int)$bot->stock_version,
@@ -482,43 +515,51 @@ class GoldTradingService {
         // Keep late pre-effect uploads below the receipt's version barrier, including
         // each transfer endpoint, while leaving unobserved inventory quantities alone.
         elseif($watermark) $bot->forceFill(['stock_version'=>(int)$s['stock_version']])->save();
-        $before=InventoryMovementService::convertedGold((int)$old['gold_qty'],(int)$old['gold_bar_qty'],(int)($old['nrj_gold_bar_qty']??0));
-        $after=InventoryMovementService::convertedGold((int)$bot->gold_qty,(int)$bot->gold_bar_qty,(int)$bot->nrj_gold_bar_qty);
+        $before=InventoryMovementService::convertedGold((int)$old['gold_qty'],(int)$old['gold_bar_qty'],(int)($old['nrj_gold_bar_qty']??0),(int)($old['radar_qty']??0));
+        $after=InventoryMovementService::convertedGold((int)$bot->gold_qty,(int)$bot->gold_bar_qty,(int)$bot->nrj_gold_bar_qty,(int)$bot->radar_qty);
         $delta=$pureDelta+$barsDelta*GoldBarAsset::value($template);
         $barsCorrection=(int)$bot->gold_bar_qty-(int)$old['gold_bar_qty']-($template===457?$barsDelta:0);
         $nrjCorrection=(int)$bot->nrj_gold_bar_qty-(int)($old['nrj_gold_bar_qty']??0)-($template===2032?$barsDelta:0);
+        $radarCorrection=(int)$bot->radar_qty-(int)($old['radar_qty']??0)-($template===281?$barsDelta:0);
         $pureCorrection=(int)$bot->gold_qty-(int)$old['gold_qty']-$pureDelta;
         ReceiptInventoryLedger::record(['server_id'=>$bot->server_id,'bot_id'=>$bot->id,'bot_type'=>'bot','asset_type'=>'pure_gold',
             'movement_type'=>$reason,'transaction_id'=>$order?->id,'transaction_type'=>$order?'gold_transaction':'gold_transfer',
             'idempotency_key'=>$key,'source'=>$order?'order':'app','meta'=>[...$meta,'gold_bar_template_id'=>$template,'gold_per_bar'=>GoldBarAsset::value($template),
                 'operation_bars_delta'=>$barsDelta,'operation_pure_delta'=>$pureDelta,
-                'reconciliation_bars_delta'=>$barsCorrection,'reconciliation_nrj_bars_delta'=>$nrjCorrection,'reconciliation_pure_delta'=>$pureCorrection,
+                'reconciliation_bars_delta'=>$barsCorrection,'reconciliation_nrj_bars_delta'=>$nrjCorrection,'reconciliation_radar_delta'=>$radarCorrection,'reconciliation_pure_delta'=>$pureCorrection,
                 'before_gold_qty'=>(int)$old['gold_qty'],'before_gold_bar_qty'=>(int)$old['gold_bar_qty'],
-                'before_nrj_gold_bar_qty'=>(int)($old['nrj_gold_bar_qty']??0),
-                'after_gold_qty'=>(int)$bot->gold_qty,'after_gold_bar_qty'=>(int)$bot->gold_bar_qty,'after_nrj_gold_bar_qty'=>(int)$bot->nrj_gold_bar_qty],
-            'note'=>'V3 confirmed gold operation quantity','occurred_at'=>now()],$before,$after,$delta,$barsCorrection!==0 || $nrjCorrection!==0 || $pureCorrection!==0);
+                'before_nrj_gold_bar_qty'=>(int)($old['nrj_gold_bar_qty']??0),'before_radar_qty'=>(int)($old['radar_qty']??0),
+                'after_gold_qty'=>(int)$bot->gold_qty,'after_gold_bar_qty'=>(int)$bot->gold_bar_qty,'after_nrj_gold_bar_qty'=>(int)$bot->nrj_gold_bar_qty,'after_radar_qty'=>(int)$bot->radar_qty],
+            'note'=>'V3 confirmed gold operation quantity','occurred_at'=>now()],$before,$after,$delta,$barsCorrection!==0 || $nrjCorrection!==0 || $radarCorrection!==0 || $pureCorrection!==0);
         if($apply) BotHistoryService::logUpdate('bot',$bot,$old,$bot->only($fields),'app',category:'runtime',
             transactionId:$order?->id,transactionType:$order?'gold_transaction':null,note:'Inventory observed with confirmed receipt');
     }
     private function applySnapshot(Bot $bot,array $s,string $reason,?GoldTransaction $order,?string $key,array $meta=[]): void {
         abort_unless((int)$s['stock_version']>(int)$bot->stock_version,409,'Stock snapshot is stale.');
         $this->validateSnapshot($s);
-        $fields=['gold_qty','gold_bar_qty','nrj_gold_bar_qty','name'];$old=$bot->only($fields);
-        $before=InventoryMovementService::convertedGold((int)$bot->gold_qty,(int)$bot->gold_bar_qty,(int)$bot->nrj_gold_bar_qty);
+        $fields=['gold_qty','gold_bar_qty','nrj_gold_bar_qty','radar_qty','bag_capacity','bag_free_slots','name'];$old=$bot->only($fields);
+        $before=InventoryMovementService::convertedGold((int)$bot->gold_qty,(int)$bot->gold_bar_qty,(int)$bot->nrj_gold_bar_qty,(int)$bot->radar_qty);
         $bot->forceFill([...array_intersect_key($s,array_flip($fields)),'stock_version'=>(int)$s['stock_version'],'updated_by'=>'app','last_synced_at'=>now()])->save();
-        $after=InventoryMovementService::convertedGold((int)$bot->gold_qty,(int)$bot->gold_bar_qty,(int)$bot->nrj_gold_bar_qty);
+        $after=InventoryMovementService::convertedGold((int)$bot->gold_qty,(int)$bot->gold_bar_qty,(int)$bot->nrj_gold_bar_qty,(int)$bot->radar_qty);
         InventoryMovement::create(['server_id'=>$bot->server_id,'bot_id'=>$bot->id,'bot_type'=>'bot','asset_type'=>'pure_gold',
             'movement_type'=>$reason,'quantity_delta'=>$after-$before,'balance_before'=>$before,'balance_after'=>$after,
             'transaction_id'=>$order?->id,'transaction_type'=>$order?'gold_transaction':($reason==='transfer_in' || $reason==='transfer_out'?'gold_transfer':null),
             'idempotency_key'=>$key,'source'=>$order?'order':'app','meta'=>[...$meta,'gold_per_bar'=>37000000,
                 'before_gold_qty'=>(int)$old['gold_qty'],'before_gold_bar_qty'=>(int)$old['gold_bar_qty'],
-                'before_nrj_gold_bar_qty'=>(int)($old['nrj_gold_bar_qty']??0),
-                'after_gold_qty'=>(int)$bot->gold_qty,'after_gold_bar_qty'=>(int)$bot->gold_bar_qty,'after_nrj_gold_bar_qty'=>(int)$bot->nrj_gold_bar_qty],
+                'before_nrj_gold_bar_qty'=>(int)($old['nrj_gold_bar_qty']??0),'before_radar_qty'=>(int)($old['radar_qty']??0),
+                'after_gold_qty'=>(int)$bot->gold_qty,'after_gold_bar_qty'=>(int)$bot->gold_bar_qty,'after_nrj_gold_bar_qty'=>(int)$bot->nrj_gold_bar_qty,'after_radar_qty'=>(int)$bot->radar_qty],
             'note'=>'Trading v3 confirmed gold inventory','occurred_at'=>now()]);
         BotHistoryService::logUpdate('bot',$bot,$old,$bot->only($fields),$order?'order':'app',category:'runtime',
             transactionId:$order?->id,transactionType:$order?'gold_transaction':null,note:'Trading v3 gold stock update');
     }
+    private function assertRadarSnapshot(array $s): void {
+        abort_unless(isset($s['radar_qty'],$s['bag_capacity'],$s['bag_free_slots'])
+            && is_int($s['radar_qty']) && is_int($s['bag_capacity']) && is_int($s['bag_free_slots'])
+            && $s['bag_capacity']>=1 && $s['bag_capacity']<=255 && $s['radar_qty']>=0 && $s['bag_free_slots']>=0
+            && $s['radar_qty']+$s['bag_free_slots']<=$s['bag_capacity'],422,'Radar requires a complete observed bag capacity.');
+    }
     private function validateSnapshot(array $s): void {
+        if(array_key_exists('radar_qty',$s) || array_key_exists('bag_capacity',$s) || array_key_exists('bag_free_slots',$s)) $this->assertRadarSnapshot($s);
         abort_unless((int)$s['gold_bar_qty']>=0 && (int)$s['gold_bar_qty']<=self::BAR_CAPACITY && (int)$s['gold_qty']>=0
             && (!isset($s['nrj_gold_bar_qty']) || ((int)$s['nrj_gold_bar_qty']>=0 && (int)$s['nrj_gold_bar_qty']<=self::BAR_CAPACITY)),422,'Invalid bag account inventory.');
     }

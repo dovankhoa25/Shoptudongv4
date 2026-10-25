@@ -114,7 +114,7 @@ class TradingV3BatchHeartbeatTest extends TestCase
         InventoryMovement::create(['server_id'=>$gold->server_id,'bot_id'=>$gold->id,'bot_type'=>'bot','asset_type'=>'gold_bar',
             'movement_type'=>'reservation','quantity_delta'=>0,'balance_before'=>10,'balance_after'=>10,
             'transaction_type'=>'gold_transfer','idempotency_key'=>'batch-transfer-test','source'=>'app','occurred_at'=>now(),
-            'meta'=>['status'=>'claimed','from_bot_id'=>$gold->id,'to_bot_id'=>$gold->id+1]]);
+            'meta'=>['status'=>'claimed','from_bot_id'=>$gold->id,'to_bot_id'=>$gold->id+1,'bars_qty'=>0,'pure_gold_qty'=>0]]);
         $beforeBots=[$gem->fresh()->getRawOriginal(),$gold->fresh()->getRawOriginal()];
         $beforeOrders=[$gemOrder->fresh()->getRawOriginal(),$goldOrder->fresh()->getRawOriginal()];
         foreach([['gem',$gem],['gold',$gold]] as [$type,$bot]) {

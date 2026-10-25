@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 class Server extends Model
 {
     use HasFactory;
+    protected $casts = ['gold_radar_enabled' => 'boolean'];
 
     protected $fillable = [
         'name',
