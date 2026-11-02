@@ -59,9 +59,13 @@ class AdminAccessService
 
     public function applies(User $user): bool
     {
-        return $this->approvalRequired()
-            && ($user->roleLevel() > 0 || $user->getAllPermissions()->isNotEmpty()
-                || in_array((string) $user->id, config('sso.admin_user_ids', []), true));
+        return $this->approvalRequired() && $this->isPrivileged($user);
+    }
+
+    public function isPrivileged(User $user): bool
+    {
+        return $user->roleLevel() > 0 || $user->getAllPermissions()->isNotEmpty()
+            || in_array((string) $user->id, config('sso.admin_user_ids', []), true);
     }
 
     public function deviceHash(Request $request, bool $enroll = false): ?string

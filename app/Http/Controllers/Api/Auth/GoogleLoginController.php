@@ -56,7 +56,7 @@ class GoogleLoginController extends Controller
             ], 401);
         }
 
-        if (! $googleUser['email_verified']) {
+        if (($googleUser['email_verified'] ?? null) !== true) {
             $this->recordAttempt($request, null, false, 'google_email_unverified', $googleUser['email']);
 
             return response()->json([
