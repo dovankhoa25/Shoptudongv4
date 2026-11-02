@@ -21,6 +21,13 @@ class HandleInertiaRequests extends Middleware
 
         return [
             ...parent::share($request),
+            // Runtime props keep websocket/auth bootstrap working with older
+            // deployed Blade templates. Never send the private Ably key.
+            'realtime' => fn () => [
+                'public_key' => explode(':', (string) (config('broadcasting.connections.ably.public_key')
+                    ?: config('broadcasting.connections.ably.key', '')))[0],
+                'csrf_token' => $request->hasSession() ? $request->session()->token() : null,
+            ],
             // JSON endpoints and redirects do not render shared page props. Defer
             // balance locking, media/role queries and the realtime lease until needed.
             'auth' => fn () => [

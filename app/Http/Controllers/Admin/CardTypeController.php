@@ -75,7 +75,7 @@ class CardTypeController extends Controller
         } catch (\Exception $e) {
             Log::error('UPDATE ERROR: '.$e->getMessage());
 
-            return redirect()->back()->with('error', 'Lỗi: '.$e->getMessage());
+            return redirect()->back()->with('error', \App\Support\PublicError::message($e));
         }
     }
 

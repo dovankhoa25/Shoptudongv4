@@ -91,4 +91,14 @@ class TradingActivityBroadcastTest extends TestCase
         $this->assertSame(10000, $driver->getAbly()->options->httpRequestTimeout);
         $this->assertSame(3, $driver->getAbly()->options->httpMaxRetryCount);
     }
+
+    public function test_overview_signal_uses_existing_public_channel_without_bot_credentials(): void
+    {
+        $this->broadcast->publishOverviewChanged();
+        $this->assertCount(1, $this->client->calls);
+        $this->assertSame('/channels/public%3ATrading.Bots/messages', $this->client->calls[0]['url']);
+        $message = $this->client->calls[0]['body'];
+        $this->assertSame('TradingBotOverviewUpdated', $message['name']);
+        $this->assertSame(['refresh' => true], json_decode($message['data'], true));
+    }
 }

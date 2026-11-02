@@ -2,10 +2,12 @@
 
 namespace App\Services\Chat;
 
+use App\Exceptions\ChatRealtimeValidationUnavailable;
 use App\Models\ChatRealtimeSession;
 use App\Models\User;
 use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Contracts\Encryption\Encrypter;
+use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Crypt;
@@ -117,7 +119,15 @@ class ChatRealtimeChannel
             ->whereNull('revoked_at')
             ->where('expires_at', '>', now())
             ->get(['user_id', 'credential_hash', 'session_locator', 'admin_access_device_id'])
-            ->filter(fn (ChatRealtimeSession $session): bool => $this->webSessionIsAuthenticated($session))
+            ->filter(function (ChatRealtimeSession $session): bool {
+                try {
+                    return $this->webSessionIsAuthenticated($session);
+                } catch (ChatRealtimeValidationUnavailable) {
+                    // An unverifiable web recipient stays silent; other valid
+                    // web/API recipients must still receive the same message.
+                    return false;
+                }
+            })
             ->map(fn (ChatRealtimeSession $session): string => self::name(
                 (int) $session->user_id,
                 'web-'.$session->credential_hash,
@@ -270,13 +280,24 @@ class ChatRealtimeChannel
         }
         try {
             $sessionId = Crypt::decryptString($lease->session_locator);
-            $payload = $this->readCanonicalSession($sessionId);
+        } catch (DecryptException) {
+            return false;
+        } catch (Throwable $exception) {
+            throw new ChatRealtimeValidationUnavailable($exception);
+        }
 
+        // A backend outage is not evidence that a stored credential was revoked.
+        // Admin views preserve their lease on this 503 and publish no protected data.
+        $payload = $this->readCanonicalSession($sessionId);
+
+        try {
             if ((bool) config('session.encrypt', false) && $payload !== '') {
                 $payload = app(Encrypter::class)->decrypt($payload);
             }
-        } catch (Throwable) {
+        } catch (DecryptException) {
             return false;
+        } catch (Throwable $exception) {
+            throw new ChatRealtimeValidationUnavailable($exception);
         }
 
         if ($payload === '') {
@@ -307,13 +328,17 @@ class ChatRealtimeChannel
 
         if ($driver === 'database') {
             $connection = config('session.connection') ?: config('database.default');
-            $payload = DB::connection($connection)
-                ->table((string) config('session.table', 'sessions'))
-                ->where('id', $sessionId)
-                ->where('last_activity', '>=', now()
-                    ->subMinutes(max(1, (int) config('session.lifetime', 120)))
-                    ->getTimestamp())
-                ->value('payload');
+            try {
+                $payload = DB::connection($connection)
+                    ->table((string) config('session.table', 'sessions'))
+                    ->where('id', $sessionId)
+                    ->where('last_activity', '>=', now()
+                        ->subMinutes(max(1, (int) config('session.lifetime', 120)))
+                        ->getTimestamp())
+                    ->value('payload');
+            } catch (Throwable $exception) {
+                throw new ChatRealtimeValidationUnavailable($exception);
+            }
 
             if (! is_string($payload)) {
                 return '';
@@ -324,8 +349,14 @@ class ChatRealtimeChannel
 
         try {
             $payload = app('session')->driver()->getHandler()->read($sessionId);
-        } catch (Throwable) {
-            return '';
+        } catch (Throwable $exception) {
+            throw new ChatRealtimeValidationUnavailable($exception);
+        }
+
+        // SessionHandlerInterface uses false for a read error; only an empty
+        // string means that the session is known to be absent.
+        if ($payload === false) {
+            throw new ChatRealtimeValidationUnavailable(new \RuntimeException('Canonical session handler reported a read failure.'));
         }
 
         return is_string($payload) ? $payload : '';

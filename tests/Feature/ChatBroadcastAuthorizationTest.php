@@ -24,26 +24,17 @@ use Laravel\Passport\Passport;
 use Laravel\Passport\Token;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
-use Tests\TestCase;
+use Tests\Support\AblyAuthorizationTestCase;
 
-class ChatBroadcastAuthorizationTest extends TestCase
+class ChatBroadcastAuthorizationTest extends AblyAuthorizationTestCase
 {
     use RefreshDatabase;
 
     protected function setUp(): void
     {
-        putenv('BROADCAST_CONNECTION=ably');
-        putenv('ABLY_KEY=test.key:secret');
-        $_ENV['BROADCAST_CONNECTION'] = 'ably';
-        $_ENV['ABLY_KEY'] = 'test.key:secret';
-        $_SERVER['BROADCAST_CONNECTION'] = 'ably';
-        $_SERVER['ABLY_KEY'] = 'test.key:secret';
-
         parent::setUp();
 
         config()->set('session.driver', 'database');
-        config()->set('broadcasting.default', 'ably');
-        config()->set('broadcasting.connections.ably.key', 'test.key:secret');
         $this->app['session']->forgetDrivers();
 
         foreach ([AppPermission::ChatsView, AppPermission::ChatsReply] as $permission) {
@@ -51,18 +42,6 @@ class ChatBroadcastAuthorizationTest extends TestCase
         }
         Role::findOrCreate('admin', 'web');
         Role::findOrCreate('ctv', 'web');
-    }
-
-    protected function tearDown(): void
-    {
-        putenv('BROADCAST_CONNECTION=null');
-        putenv('ABLY_KEY');
-        $_ENV['BROADCAST_CONNECTION'] = 'null';
-        unset($_ENV['ABLY_KEY']);
-        $_SERVER['BROADCAST_CONNECTION'] = 'null';
-        unset($_SERVER['ABLY_KEY']);
-
-        parent::tearDown();
     }
 
     public function test_each_user_can_only_authorize_their_own_chat_delivery_channel(): void

@@ -1,5 +1,6 @@
 <?php
 namespace App\Services\AdminLive;
+use App\Exceptions\ChatRealtimeValidationUnavailable;
 use App\Events\AdminViewPatched;
 use App\Models\User;
 use Illuminate\Support\Facades\Cache;
@@ -22,8 +23,13 @@ class Updates {
             DB::table('admin_live_views')->where('expires_at','<=',now())->delete();
             // Share a projection only within this flush and the same user/session/filter.
             $projections=[];
-            foreach(DB::table('admin_live_views')->where('expires_at','>',now())->get() as $view) {
-                if(!array_intersect($resources,json_decode($view->resources,true)))continue;
+            // Leave unrelated screens in the database instead of fetching every
+            // active subscription whenever any resource changes.
+            $views=DB::table('admin_live_views')->where('expires_at','>',now())
+                ->where(function($query)use($resources) {
+                    foreach($resources as $resource)$query->orWhereJsonContains('resources',$resource);
+                })->get();
+            foreach($views as $view) {
                 try {$this->refresh($view,$projections);}catch(\Throwable $e){Log::warning('Admin live view update failed',['view'=>$view->id,'error'=>$e->getMessage()]);}
             }
         }catch(\Throwable $e){Log::warning('Admin live update failed',['error'=>$e->getMessage()]);}
@@ -45,13 +51,33 @@ class Updates {
         Cache::lock('admin-live:lock:'.$view->id,30)->block(5,function()use($view,&$projections) {
             if(!DB::table('admin_live_views')->where('id',$view->id)->where('expires_at','>',now())->exists())return;
             $user=User::find($view->user_id);
+            $validation='account';
             try {
-                abort_unless($user && !$user->isLocked() && app(\App\Services\Chat\ChatRealtimeChannel::class)->webCredentialIsActive((int)$view->user_id,$view->credential_hash),403);
+                abort_unless($user && !$user->isLocked(),403);
+                $validation='session';
+                abort_unless(app(\App\Services\Chat\ChatRealtimeChannel::class)->webCredentialIsActive((int)$view->user_id,$view->credential_hash),403);
+                $validation='projection';
                 $key=hash('sha256',json_encode([$view->user_id,$view->credential_hash,$view->url,$view->mode],JSON_THROW_ON_ERROR));
                 $data=$projections[$key] ??= app(Reader::class)->read($user,$view->url,$view->mode);
             }
+            catch(ChatRealtimeValidationUnavailable $e) {
+                // A session-store outage is not proof that this staff session was
+                // revoked. Publish nothing until validation can succeed again.
+                Log::warning('Admin live session validation temporarily unavailable',[
+                    'view'=>$view->id,'user_id'=>$view->user_id,
+                    'cause'=>$e->getPrevious() ? $e->getPrevious()::class : null,
+                ]);
+                // No projection or session details leave this boundary. The
+                // already subscribed tab can retry its authorized snapshot.
+                broadcast(new AdminViewPatched($view->id,['viewId'=>$view->id,'retry'=>true]));
+                return;
+            }
             catch(\Symfony\Component\HttpKernel\Exception\HttpExceptionInterface $e) {
                 if(in_array($e->getStatusCode(),[401,403,404])) {
+                    Log::notice('Admin live view authorization revoked',[
+                        'view'=>$view->id,'user_id'=>$view->user_id,
+                        'check'=>$validation,'status'=>$e->getStatusCode(),
+                    ]);
                     broadcast(new AdminViewPatched($view->id,['revoked'=>true,'viewId'=>$view->id]));
                     DB::table('admin_live_views')->where('id',$view->id)->delete();Cache::forget('admin-live:state:'.$view->id);return;
                 }throw $e;

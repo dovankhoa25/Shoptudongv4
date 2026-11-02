@@ -2521,7 +2521,7 @@ export default function ChatWorkspace({
                 setRealtimeStatus(current => current === 'connected' ? current : 'connecting');
                 return;
             }
-            setRealtimeStatus(state === 'connecting' || state === 'initialized' || state === 'unavailable'
+            setRealtimeStatus(state === 'connecting' || state === 'initialized'
                 ? 'connecting'
                 : 'disconnected');
         };

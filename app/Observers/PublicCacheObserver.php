@@ -34,8 +34,8 @@ final class PublicCacheObserver
         Models\CardType::class => ['public:card-types'],
     ];
 
-    private const BOT_FIELDS = ['name', 'server_id', 'type', 'map_name', 'map_id', 'area_number', 'status', 'radar_qty', 'bag_capacity', 'bag_free_slots'];
-    private const GEM_FIELDS = ['name', 'server_id', 'map_name', 'map_id', 'area_number', 'coordinates', 'status', 'gem_qty'];
+    private const BOT_FIELDS = ['name', 'server_id', 'server_game_id', 'type', 'map_name', 'map_id', 'area_number', 'status', 'radar_qty', 'bag_capacity', 'bag_free_slots'];
+    private const GEM_FIELDS = ['name', 'server_id', 'map_name', 'map_id', 'area_number', 'coordinates', 'status', 'gem_qty', 'gift_ticket_qty', 'consign_item_qty'];
 
     public function created(Model $model): void
     {

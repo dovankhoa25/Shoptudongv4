@@ -61,12 +61,7 @@ const ImageSection = memo<ImageSectionProps>(({
                                 <span className="text-sm">Upload ảnh từ máy</span>
                             </span>
                         </Radio>
-                        <Radio value="url" className="w-full">
-                            <span className="flex items-center gap-2">
-                                <span className="flex-shrink-0">🔗</span>
-                                <span className="text-sm">Nhập URL ảnh</span>
-                            </span>
-                        </Radio>
+
                     </Space>
                 </Radio.Group>
             </Form.Item>
@@ -502,7 +497,7 @@ export default function NickCreatePage() {
                     <Button onClick={() => router.visit('/admin/games/accounts/media-publications')}>Theo dõi đăng nick</Button>
                 </Space>
                 {backgroundMode && <Alert type="info" showIcon message="Ảnh được tải lên ngay khi chọn. Nick chỉ mở bán khi xử lý đủ ảnh."
-                    description={submissionLocked ? 'Đang giữ nguyên nội dung yêu cầu để kiểm tra kết quả, tránh đăng trùng. Bạn có thể bấm Lưu lại hoặc xem danh sách xử lý.' : 'Với ảnh từ máy, hãy đợi tải lên hoàn tất trước khi lưu và rời trang. Với URL, server sẽ tải ảnh sau khi nhận bản đăng.'} />}
+                    description={submissionLocked ? 'Đang giữ nguyên nội dung yêu cầu để kiểm tra kết quả, tránh đăng trùng. Bạn có thể bấm Lưu lại hoặc xem danh sách xử lý.' : 'Hãy đợi ảnh tải lên hoàn tất trước khi lưu và rời trang.'} />}
                 {backgroundMode && imageMode === 'upload' && uploads.entries.length > 0 && <div className="rounded border p-3 dark:border-gray-700">
                     <div className="mb-2 flex items-center justify-between gap-2">
                         <span>Đã tải {uploads.entries.filter(entry => entry.status === 'ready').length}/{uploads.entries.length} ảnh</span>

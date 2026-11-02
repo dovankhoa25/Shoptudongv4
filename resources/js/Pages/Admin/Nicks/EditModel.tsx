@@ -513,11 +513,7 @@ const EditModal: React.FC<EditModalProps> = ({ onClose, nickId }) => {
                                                                 Upload ảnh từ máy
                                                             </span>
                                                         </Radio>
-                                                        <Radio value="url" className="w-full mt-2">
-                                                            <span className="flex items-center gap-2">
-                                                                🔗 Nhập URL ảnh
-                                                            </span>
-                                                        </Radio>
+
                                                     </Radio.Group>
                                                 </Form.Item>
 

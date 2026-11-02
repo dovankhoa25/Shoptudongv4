@@ -23,3 +23,6 @@
 
 0.2.5
 - update bán vàng sp123
+
+0.2.6
+- bỏ poling

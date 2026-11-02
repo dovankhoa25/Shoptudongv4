@@ -35,7 +35,7 @@ class SpinRewardController extends Controller
             'reward_type' => 'required|in:text,coin,gem,nick,item',
             'reward_value' => 'required|string|max:255',
             'image_file' => 'nullable|image|max:5120',
-            'image_url' => 'nullable|url',
+            'image_url' => 'prohibited',
             'probability' => 'required|numeric|min:0|max:100',
         ]);
 
@@ -79,7 +79,7 @@ class SpinRewardController extends Controller
             'reward_type' => 'required|in:text,coin,gem,nick,item',
             'reward_value' => 'required|string|max:255',
             'image_file' => 'nullable|image|max:5120',
-            'image_url' => 'nullable|url',
+            'image_url' => 'prohibited',
             'probability' => 'required|numeric|min:0|max:100',
         ]);
 

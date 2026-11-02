@@ -238,7 +238,7 @@ class NickController extends Controller
         } catch (\Exception $e) {
             DB::rollBack();
 
-            return redirect()->back()->with('error', 'Error: '.$e->getMessage());
+            return redirect()->back()->with('error', \App\Support\PublicError::message($e));
         }
     }
 
@@ -451,7 +451,7 @@ class NickController extends Controller
         } catch (\Exception $e) {
             DB::rollBack();
 
-            return redirect()->back()->with('error', 'Error: '.$e->getMessage());
+            return redirect()->back()->with('error', \App\Support\PublicError::message($e));
         }
     }
 
@@ -707,7 +707,7 @@ class NickController extends Controller
 
             return response()->json([
                 'message' => 'Có lỗi khi hoàn tiền',
-                'error' => $e->getMessage(),
+                'error' => \App\Support\PublicError::message($e),
             ], 500);
         }
     }

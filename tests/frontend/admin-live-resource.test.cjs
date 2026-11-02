@@ -51,7 +51,15 @@ function harness(t, options = {}) {
     };
     const h = {
         url: '/admin/nro-shop/orders?page=1', auth: { user: { id: 1 }, realtime_channel: 'credential-a' },
-        calls: [], gets: [], channels: [], snapshots: { data: [{ id: 2 }], total: 1 }, ...options,
+        calls: [], gets: [], syncs: [], channels: [], snapshots: { data: [{ id: 2 }], total: 1 }, ...options,
+    };
+    const connectionListeners = new Map();
+    h.connection = { state: 'connected', bind: (event, fn) => connectionListeners.set(event, fn),
+        unbind: (event, fn) => { if (connectionListeners.get(event) === fn) connectionListeners.delete(event); } };
+    h.connect = state => {
+        h.connection.state = state;
+        if (state !== 'connected') h.channels.forEach(channel => { channel.subscription.subscribed = false; });
+        connectionListeners.get('state_change')?.({ current: state });
     };
     const http = {
         get(url, config) {
@@ -66,19 +74,21 @@ function harness(t, options = {}) {
                 return { data: { id, channel: `Admin.View.${id}` } };
             }
             if (h.syncError) throw h.syncError;
-            return { data: { revision: 1, data: h.snapshots } };
+            if (h.deferSync) return new Promise((resolve, reject) => h.syncs.push({ url, resolve: data => resolve({ data }), reject }));
+            return { data: { revision: h.snapshotRevision ?? 1, data: h.snapshots } };
         },
-        async patch(url) { h.calls.push(['patch', url]); },
+        async patch(url) { h.calls.push(['patch', url]); if (h.renewError) throw h.renewError; },
         async delete(url) { h.calls.push(['delete', url]); },
     };
     const socket = {
         private(name) {
             if (h.socketError) throw h.socketError;
-            const channel = { name, listen(event, fn) { this.receive = fn; }, on(event, fn) { this.subscribed = fn; },
+            const channel = { name, subscription: { subscribed: false }, listen(event, fn) { this.receive = fn; },
+                on(event, fn) { this.subscribed = () => { this.subscription.subscribed = true; fn(); }; },
                 error(fn) { this.fail = fn; }, stopListening() {} };
             h.channels.push(channel); return channel;
         },
-        leave() {}, connector: { pusher: { connection: { bind() {}, unbind() {} } } },
+        leave() {}, connector: { pusher: { connection: h.connection } },
     };
     const dependencies = { react, '@inertiajs/react': { usePage: () => ({ props: { auth: h.auth } }) },
         axios: { default: http }, '@laravel/echo-react': { echo: () => socket }, './liveDelta': load('liveDelta.ts', {}) };
@@ -191,4 +201,262 @@ test('429 obeys Retry-After even when visibility, network and manual retry fire'
 test('socket setup failure releases its lease instead of leaking registered views', async t => {
     const h = harness(t, { raw: true, socketError: new Error('missing configuration') }); await h.flush();
     assert.equal(h.value.status, 'offline'); assert.equal(h.count('delete', '/1'), 1);
+});
+
+test('transient subscription failure retries within a bounded recovery incident, never during healthy idle', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 100000 });
+    const h = harness(t, { raw: true }); await h.flush();
+    h.channels[0].fail({ status: 503 }); await h.flush();
+    assert.equal(h.value.status, 'offline'); assert.equal(h.count('delete', '/1'), 1);
+    t.mock.timers.tick(29999); await h.flush(); assert.equal(h.channels.length, 1);
+    t.mock.timers.tick(1); await h.flush(); assert.equal(h.channels.length, 2);
+    h.channels[1].subscribed(); await h.flush(); assert.equal(h.value.status, 'live');
+    t.mock.timers.tick(60000); await h.flush();
+    assert.equal(h.channels.length, 2); assert.equal(h.count('post', '/2/sync'), 1);
+});
+
+test('expired lease re-registers after a 404 sync without reloading page data', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 100000 });
+    const h = harness(t, { raw: true, syncError: { response: { status: 404 } } }); await h.flush();
+    h.channels[0].subscribed(); await h.flush(); assert.equal(h.value.status, 'offline');
+    h.syncError = null; t.mock.timers.tick(1000); await h.flush();
+    assert.equal(h.channels.length, 2);
+    h.channels[1].subscribed(); await h.flush(); assert.equal(h.value.status, 'live');
+    assert.equal(h.gets.length, 0); assert.equal(h.count('post', '/2/sync'), 1);
+});
+
+test('reconnect during cooldown recovers once after the deadline without bypassing Retry-After', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 100000 });
+    const h = harness(t, { raw: true }); await h.flush(); h.channels[0].subscribed(); await h.flush();
+    h.syncError = { response: { status: 429, headers: { 'retry-after': '42' } } };
+    h.value.sync(); await h.flush(); assert.equal(h.value.status, 'offline');
+    h.syncError = null; h.connect('unavailable'); h.connect('connected'); h.channels[0].subscribed(); await h.flush();
+    assert.equal(h.count('post', '/1/sync'), 2);
+    t.mock.timers.tick(41999); await h.flush(); assert.equal(h.count('post', '/1/sync'), 2);
+    t.mock.timers.tick(1); await h.flush();
+    assert.equal(h.value.status, 'live'); assert.equal(h.count('post', '/1/sync'), 3);
+});
+
+test('recovery attempts stop after three failures and security denials never retry automatically', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 100000 });
+    const h = harness(t, { raw: true, registrationError: { response: { status: 503 } } }); await h.flush();
+    for (let i = 0; i < 5; i++) { t.mock.timers.tick(30000); await h.flush(); }
+    assert.equal(h.count('post', '/live-views'), 3);
+    h.registrationError = forbidden; h.value.sync(); await h.flush();
+    assert.equal(h.value.status, 'denied'); const deniedCalls = h.calls.length;
+    for (let i = 0; i < 5; i++) {
+        t.mock.timers.tick(60000); h.connect('unavailable'); h.connect('connected');
+        h.hide(); h.show(); window.dispatchEvent(new Event('online')); await h.flush();
+    }
+    assert.equal(h.calls.length, deniedCalls);
+});
+
+test('hidden or unmounted views do not issue scheduled recovery requests', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 100000 });
+    const h = harness(t, { raw: true, registrationError: { response: { status: 503 } } }); await h.flush();
+    h.hide(); t.mock.timers.tick(30000); await h.flush();
+    assert.equal(h.count('post', '/live-views'), 1);
+    h.registrationError = null; h.show(); await h.flush(); assert.equal(h.channels.length, 1);
+    h.channels[0].fail({ status: 503 }); await h.flush(); h.unmount();
+    const requests = h.calls.length; t.mock.timers.tick(120000); await h.flush(); assert.equal(h.calls.length, requests);
+});
+
+test('socket reconnect reconciles an existing lease without waiting for another page or focus event', async t => {
+    const h = harness(t, { raw: true }); await h.flush(); h.channels[0].subscribed(); await h.flush();
+    h.connect('unavailable'); await h.flush(); assert.equal(h.value.status, 'offline');
+    h.connect('connected'); await h.flush();
+    assert.equal(h.value.status, 'live'); assert.equal(h.count('post', '/1/sync'), 2);
+    assert.equal(h.count('post', '/live-views'), 1);
+});
+
+test('message deltas stay live; a revision gap followed by temporary sync503 recovers once', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 100000 });
+    const h = harness(t, { raw: true }); await h.flush(); h.channels[0].subscribed(); await h.flush();
+    const message = (base, revision, body) => h.channels[0].receive({ viewId: '1', batch: `message-${revision}`, base, revision,
+        part: 0, total: 1, chunk: Buffer.from(JSON.stringify([{ op: 'set', path: ['data', 0, 'body'], value: body }])).toString('base64') });
+    message(1, 2, 'Tin mới từ khách 😃'); await h.flush();
+    message(1, 2, 'Replay cũ'); await h.flush();
+    assert.equal(h.value.status, 'live'); assert.equal(h.data.data[0].body, 'Tin mới từ khách 😃');
+    assert.equal(h.count('post', '/1/sync'), 1);
+    h.syncError = { response: { status: 503 } };
+    message(4, 5, 'Missed revisions'); await h.flush(); assert.equal(h.value.status, 'offline');
+    h.syncError = null; h.snapshotRevision = 5; h.snapshots = { data: [{ id: 2, body: 'Đã đồng bộ bù' }] };
+    t.mock.timers.tick(30000); await h.flush();
+    assert.equal(h.value.status, 'live'); assert.equal(h.data.data[0].body, 'Đã đồng bộ bù');
+    assert.equal(h.count('post', '/1/sync'), 3);
+    message(5, 6, 'Tin kế tiếp'); await h.flush();
+    assert.equal(h.data.data[0].body, 'Tin kế tiếp'); assert.equal(h.value.status, 'live');
+    t.mock.timers.tick(60000); await h.flush(); assert.equal(h.count('post', '/1/sync'), 3);
+});
+
+test('expired renewal replaces its lease and revoked frames stop all automatic recovery', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 100000 });
+    const h = harness(t, { raw: true }); await h.flush(); h.channels[0].subscribed(); await h.flush();
+    h.renewError = { response: { status: 404 } };
+    t.mock.timers.tick(15 * 60000); await h.flush(); assert.equal(h.value.status, 'offline');
+    t.mock.timers.tick(1000); await h.flush(); assert.equal(h.channels.length, 2);
+    h.channels[1].subscribed(); await h.flush(); assert.equal(h.value.status, 'live');
+    h.channels[1].receive({ viewId: '2', revoked: true }); await h.flush(); assert.equal(h.value.status, 'denied');
+    const requests = h.calls.length;
+    t.mock.timers.tick(120000); h.connect('unavailable'); h.connect('connected'); await h.flush();
+    assert.equal(h.calls.length, requests);
+});
+
+test('successful recovery sync re-arms lease renewal after a failed PATCH', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 100000 });
+    const h = harness(t, { raw: true }); await h.flush(); h.channels[0].subscribed(); await h.flush();
+    h.renewError = { response: { status: 503 } };
+    t.mock.timers.tick(15 * 60000); await h.flush(); assert.equal(h.value.status, 'offline');
+    assert.equal(h.count('patch', '/1'), 1);
+    h.renewError = null; t.mock.timers.tick(30000); await h.flush(); assert.equal(h.value.status, 'live');
+    assert.equal(h.count('post', '/1/sync'), 2);
+    t.mock.timers.tick(15 * 60000); await h.flush(); assert.equal(h.count('patch', '/1'), 2);
+    assert.equal(h.count('post', '/live-views'), 1);
+});
+
+test('subscription success during reconnect snapshot queues one catch-up after authorization', async t => {
+    const h = harness(t, { raw: true }); await h.flush(); h.channels[0].subscribed(); await h.flush();
+    h.connect('unavailable'); await h.flush(); h.deferSync = true; h.connect('connected'); await h.flush();
+    assert.equal(h.syncs.length, 1);
+    // The first HTTP snapshot may precede authorization: changes in this gap need another read.
+    h.channels[0].subscribed(); await h.flush(); assert.equal(h.syncs.length, 1);
+    h.syncs[0].resolve({ revision: 2, data: { data: [{ id: 2, body: 'Before private subscription' }] } }); await h.flush();
+    assert.equal(h.syncs.length, 2);
+    h.syncs[1].resolve({ revision: 3, data: { data: [{ id: 2, body: 'Message sent in authorization gap' }] } }); await h.flush();
+    assert.equal(h.value.status, 'live'); assert.equal(h.data.data[0].body, 'Message sent in authorization gap');
+    assert.equal(h.count('post', '/live-views'), 1); assert.equal(h.count('post', '/1/sync'), 3);
+});
+
+test('a genuine network recovery starts a new bounded incident after exhausted retries', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 100000 });
+    const h = harness(t, { raw: true, registrationError: { response: { status: 503 } } }); await h.flush();
+    for (let i = 0; i < 5; i++) { t.mock.timers.tick(30000); await h.flush(); }
+    assert.equal(h.count('post', '/live-views'), 3);
+    h.registrationError = null; h.connect('unavailable'); h.connect('connected'); await h.flush();
+    assert.equal(h.channels.length, 1);
+    h.channels[0].subscribed(); await h.flush(); assert.equal(h.value.status, 'live');
+    t.mock.timers.tick(60000); await h.flush(); assert.equal(h.count('post', '/live-views'), 4);
+});
+
+test('projection retry controls recover the last missed message after five seconds and coalesce duplicates', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 100000 });
+    const h = harness(t, { raw: true }); await h.flush(); h.channels[0].subscribed(); await h.flush();
+    for (let i = 0; i < 20; i++) h.channels[0].receive({ viewId: '1', retry: true });
+    await h.flush(); assert.equal(h.value.status, 'offline'); assert.equal(h.count('post', '/1/sync'), 1);
+    h.snapshotRevision = 2; h.snapshots = { data: [{ id: 2, body: 'Last customer message after storage recovery' }] };
+    t.mock.timers.tick(4999); await h.flush(); assert.equal(h.count('post', '/1/sync'), 1);
+    t.mock.timers.tick(1); await h.flush();
+    assert.equal(h.value.status, 'live'); assert.equal(h.count('post', '/1/sync'), 2);
+    assert.equal(h.data.data[0].body, 'Last customer message after storage recovery');
+    t.mock.timers.tick(60000); await h.flush(); assert.equal(h.count('post', '/1/sync'), 2);
+    h.channels[0].receive({ viewId: '1', revoked: true }); await h.flush();
+    const requests = h.calls.length; h.channels[0].receive({ viewId: '1', retry: true });
+    t.mock.timers.tick(60000); await h.flush(); assert.equal(h.value.status, 'denied'); assert.equal(h.calls.length, requests);
+});
+
+test('retry control during an in-flight snapshot queues the final missed-message reconciliation', async t => {
+    const h = harness(t, { raw: true, deferSync: true }); await h.flush(); h.channels[0].subscribed(); await h.flush();
+    assert.equal(h.syncs.length, 1);
+    for (let i = 0; i < 20; i++) h.channels[0].receive({ viewId: '1', retry: true });
+    await h.flush(); assert.equal(h.syncs.length, 1);
+    h.syncs[0].resolve({ revision: 1, data: { data: [{ id: 2, body: 'Snapshot before message' }] } }); await h.flush();
+    assert.equal(h.syncs.length, 2);
+    h.syncs[1].resolve({ revision: 2, data: { data: [{ id: 2, body: 'Last customer message' }] } }); await h.flush();
+    assert.equal(h.data.data[0].body, 'Last customer message'); assert.equal(h.value.status, 'live');
+    assert.equal(h.count('post', '/1/sync'), 2);
+});
+
+test('hidden duplicate retry controls do not exhaust recovery without making any requests', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 100000 });
+    const h = harness(t, { raw: true }); await h.flush(); h.channels[0].subscribed(); await h.flush(); h.hide();
+    for (let i = 0; i < 10; i++) h.channels[0].receive({ viewId: '1', retry: true });
+    t.mock.timers.tick(6000); await h.flush();
+    for (let i = 0; i < 10; i++) h.channels[0].receive({ viewId: '1', retry: true });
+    assert.equal(h.count('post', '/1/sync'), 1);
+    h.snapshots = { data: [{ id: 2, body: 'Hidden update recovered' }] }; h.show(); await h.flush();
+    assert.equal(h.value.status, 'live'); assert.equal(h.count('post', '/1/sync'), 2);
+    assert.equal(h.data.data[0].body, 'Hidden update recovered');
+});
+
+test('a fresh protected revision gap restarts capped recovery once but replayed frames do not', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 100000 });
+    const h = harness(t, { raw: true }); await h.flush(); h.channels[0].subscribed(); await h.flush();
+    h.syncError = { response: { status: 503 } }; h.value.sync(); await h.flush();
+    for (let i = 0; i < 2; i++) { t.mock.timers.tick(30000); await h.flush(); }
+    const frame = (base, revision) => ({ viewId: '1', batch: `revision-${revision}`, base, revision, part: 0, total: 1,
+        chunk: Buffer.from(JSON.stringify([{ op: 'set', path: ['data', 0, 'body'], value: 'New server state' }])).toString('base64') });
+    assert.equal(h.count('post', '/1/sync'), 4); assert.equal(h.value.status, 'offline');
+    t.mock.timers.tick(30000); h.channels[0].receive(frame(4, 5)); await h.flush();
+    assert.equal(h.count('post', '/1/sync'), 5);
+    for (let i = 0; i < 2; i++) { t.mock.timers.tick(30000); await h.flush(); }
+    assert.equal(h.count('post', '/1/sync'), 7);
+    t.mock.timers.tick(30000);
+    for (let i = 0; i < 20; i++) h.channels[0].receive(frame(4, 5));
+    h.channels[0].receive({ ...frame(5, 6), base: 6 });
+    h.channels[0].receive({ ...frame(5, 6), chunk: Buffer.from('{}').toString('base64') });
+    await h.flush(); assert.equal(h.count('post', '/1/sync'), 7);
+    h.syncError = null; h.snapshotRevision = 6; h.snapshots = { data: [{ id: 2, body: 'Gap recovered' }] };
+    h.channels[0].receive(frame(5, 6)); await h.flush();
+    assert.equal(h.value.status, 'live'); assert.equal(h.count('post', '/1/sync'), 8);
+    assert.equal(h.data.data[0].body, 'Gap recovered');
+});
+
+test('an applied fresh frame restores capped status and promptly repairs a lost renewal timer', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 100000 });
+    const h = harness(t, { raw: true }); await h.flush(); h.channels[0].subscribed(); await h.flush();
+    h.renewError = { response: { status: 503 } }; h.syncError = { response: { status: 503 } };
+    t.mock.timers.tick(15 * 60000); await h.flush();
+    for (let i = 0; i < 2; i++) { t.mock.timers.tick(30000); await h.flush(); }
+    assert.equal(h.value.status, 'offline'); assert.equal(h.count('patch', '/1'), 1);
+    t.mock.timers.tick(30000); h.renewError = null; h.syncError = null;
+    h.snapshotRevision = 2; h.snapshots = { data: [{ id: 2, body: 'Protected frame recovered' }] };
+    const frame = revision => ({ viewId: '1', batch: `matching-${revision}`, base: revision - 1, revision, part: 0, total: 1,
+        chunk: Buffer.from(JSON.stringify([{ op: 'set', path: ['data', 0, 'body'], value: 'Protected frame recovered' }])).toString('base64') });
+    h.channels[0].receive(frame(2)); await h.flush();
+    assert.equal(h.value.status, 'live'); assert.equal(h.data.data[0].body, 'Protected frame recovered');
+    assert.equal(h.count('post', '/1/sync'), 4);
+    h.channels[0].receive(frame(3)); await h.flush(); assert.equal(h.count('post', '/1/sync'), 4);
+    t.mock.timers.tick(15 * 60000); await h.flush(); assert.equal(h.count('patch', '/1'), 2);
+});
+
+test('fresh recovery evidence preserves the remaining Retry-After deadline', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 100000 });
+    const h = harness(t, { raw: true }); await h.flush(); h.channels[0].subscribed(); await h.flush();
+    h.syncError = { response: { status: 503, headers: { 'retry-after': '42' } } }; h.value.sync(); await h.flush();
+    for (let i = 0; i < 2; i++) { t.mock.timers.tick(42000); await h.flush(); }
+    assert.equal(h.count('post', '/1/sync'), 4);
+    h.syncError = null; h.snapshotRevision = 5; h.snapshots = { data: [{ id: 2, body: 'After throttle deadline' }] };
+    const chunk = Buffer.from(JSON.stringify([{ op: 'set', path: ['data', 0, 'body'], value: 'Fresh gap' }])).toString('base64');
+    for (let i = 0; i < 20; i++) h.channels[0].receive({ viewId: '1', batch: 'throttled-gap', base: 4, revision: 5, part: 0, total: 1, chunk });
+    await h.flush(); assert.equal(h.count('post', '/1/sync'), 4);
+    t.mock.timers.tick(41999); await h.flush(); assert.equal(h.count('post', '/1/sync'), 4);
+    t.mock.timers.tick(1); await h.flush();
+    assert.equal(h.count('post', '/1/sync'), 5); assert.equal(h.value.status, 'live');
+});
+
+test('fresh private frames recover a hidden view once it becomes visible without hidden HTTP', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 100000 });
+    const h = harness(t, { raw: true }); await h.flush(); h.channels[0].subscribed(); await h.flush();
+    h.renewError = { response: { status: 503 } }; h.syncError = { response: { status: 503 } };
+    t.mock.timers.tick(15 * 60000); await h.flush();
+    for (let i = 0; i < 2; i++) { t.mock.timers.tick(30000); await h.flush(); }
+    t.mock.timers.tick(30000); h.syncError = null; h.renewError = null; h.hide();
+    h.snapshotRevision = 2; h.snapshots = { data: [{ id: 2, body: 'Hidden fresh update' }] };
+    const chunk = Buffer.from(JSON.stringify([{ op: 'set', path: ['data', 0, 'body'], value: 'Hidden fresh update' }])).toString('base64');
+    h.channels[0].receive({ viewId: '1', batch: 'hidden-fresh', base: 1, revision: 2, part: 0, total: 1, chunk });
+    await h.flush(); assert.equal(h.count('post', '/1/sync'), 3);
+    h.show(); await h.flush(); assert.equal(h.value.status, 'live'); assert.equal(h.count('post', '/1/sync'), 4);
+});
+
+test('an applied protected frame cannot bypass a 429 HTTP cooldown', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 100000 });
+    const h = harness(t, { raw: true }); await h.flush(); h.channels[0].subscribed(); await h.flush();
+    h.syncError = { response: { status: 429, headers: { 'retry-after': '42' } } }; h.value.sync(); await h.flush();
+    h.syncError = null; h.snapshotRevision = 2; h.snapshots = { data: [{ id: 2, body: 'Fresh direct update' }] };
+    const chunk = Buffer.from(JSON.stringify([{ op: 'set', path: ['data', 0, 'body'], value: 'Fresh direct update' }])).toString('base64');
+    h.channels[0].receive({ viewId: '1', batch: '429-fresh', base: 1, revision: 2, part: 0, total: 1, chunk });
+    await h.flush(); assert.equal(h.value.status, 'live'); assert.equal(h.count('post', '/1/sync'), 2);
+    h.value.sync(); await h.flush(); assert.equal(h.count('post', '/1/sync'), 2);
+    t.mock.timers.tick(41999); await h.flush(); assert.equal(h.count('post', '/1/sync'), 2);
+    t.mock.timers.tick(1); await h.flush(); assert.equal(h.count('post', '/1/sync'), 3);
 });

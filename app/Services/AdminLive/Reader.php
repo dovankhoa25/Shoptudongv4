@@ -12,23 +12,22 @@ class Reader {
     public function read(User $user,string $url,string $mode='page'): array {
         $view=Views::resolve($url,$mode);abort_unless($view && !$user->isLocked(),403);
         $parts=parse_url($url);parse_str($parts['query'] ?? '',$query);
+        $chatLoadedRows=null;
         if(($parts['path'] ?? '')==='/admin/chat/conversations' && (int)($query['live_pages'] ?? 1)>1) {
-            $pages=min(100,(int)$query['live_pages']);unset($query['live_pages']);$combined=null;
-            for($page=1;$page<=$pages;$page++) {
-                $result=$this->read($user,$parts['path'].'?'.http_build_query([...$query,'page'=>$page]),$mode);
-                if($combined===null)$combined=$result;else $combined['data']=[...$combined['data'],...$result['data']];
-                $combined['meta']['current_page']=$page;
-                if($page>=($result['meta']['last_page'] ?? 1))break;
-            }
-            return $combined;
+            // One bounded projection, not one controller/aggregate pass per loaded page.
+            // The controller still validates the original per_page and all filters.
+            $pages=min(100,(int)$query['live_pages']);
+            $chatLoadedRows=min(5000,$pages*max(1,min(50,(int)($query['per_page'] ?? 30))));
         }
         $original=app('request');$default=Auth::getDefaultDriver();$guard=Auth::guard('web');$previous=$guard->getUser();
         $factory=app(\Inertia\ResponseFactory::class);$shared=$factory->getShared();
         $request=Request::create(rtrim(config('app.url'),' /').$url,'GET');
         $request->headers->set('X-Inertia','true');$request->headers->set('Accept','application/json');
         $request->setUserResolver(fn()=>$user);$request->attributes->set('admin_live_props',$view['props']);
-        if($original->hasSession()) $request->setLaravelSession($original->session());
-        else $request->setLaravelSession(new \Illuminate\Session\Store('live-read',new \Illuminate\Session\ArraySessionHandler(30)));
+        if($chatLoadedRows!==null)$request->attributes->set('admin_live_chat_loaded_rows',$chatLoadedRows);
+        // A customer's message may refresh another user's admin view. Never
+        // borrow the triggering request's session for that user's projection.
+        $request->setLaravelSession(new \Illuminate\Session\Store('live-read',new \Illuminate\Session\ArraySessionHandler(30)));
         try {
             Auth::shouldUse('web');$guard->setUser($user);app()->instance('request',$request);$factory->flushShared();
             $router=app(Router::class);$route=clone $router->getRoutes()->match($request);$route->bind($request);$request->setRouteResolver(fn()=>$route);
@@ -38,7 +37,8 @@ class Reader {
             // before every publication. A synthetic projection has no browser cookie or peer IP.
             $skip=[\Illuminate\Cookie\Middleware\EncryptCookies::class,\Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse::class,
                 \App\Http\Middleware\RequireApprovedAdminDevice::class,\App\Http\Middleware\EnforceIpBlock::class,
-                \Illuminate\Session\Middleware\StartSession::class,\Illuminate\View\Middleware\ShareErrorsFromSession::class,
+                \Illuminate\Session\Middleware\StartSession::class,\Illuminate\Session\Middleware\AuthenticateSession::class,
+                \Illuminate\View\Middleware\ShareErrorsFromSession::class,
                 \Illuminate\Foundation\Http\Middleware\ValidateCsrfToken::class,\Illuminate\Foundation\Http\Middleware\VerifyCsrfToken::class,
                 \App\Http\Middleware\HandleInertiaRequests::class,\Illuminate\Http\Middleware\AddLinkHeadersForPreloadedAssets::class,
                 \Illuminate\Routing\Middleware\ThrottleRequests::class,\Illuminate\Routing\Middleware\ThrottleRequestsWithRedis::class];

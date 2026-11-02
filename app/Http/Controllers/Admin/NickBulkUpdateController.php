@@ -287,7 +287,7 @@ class NickBulkUpdateController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'Có lỗi xảy ra: '.$e->getMessage(),
+                'message' => \App\Support\PublicError::message($e),
             ], 500);
         }
     }
@@ -342,7 +342,7 @@ class NickBulkUpdateController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Có lỗi xảy ra: '.$e->getMessage(),
+                'message' => \App\Support\PublicError::message($e),
             ], 500);
         }
     }
@@ -373,7 +373,7 @@ class NickBulkUpdateController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Có lỗi xảy ra: '.$e->getMessage(),
+                'message' => \App\Support\PublicError::message($e),
             ], 500);
         }
     }

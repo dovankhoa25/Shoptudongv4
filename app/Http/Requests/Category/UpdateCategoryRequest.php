@@ -23,9 +23,10 @@ class UpdateCategoryRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'image_url' => 'prohibited',
             'game_type_id' => 'required|exists:game_types,id',
             'name' => 'required|string|max:255|unique:categories,name,' . $this->route('category')->id,
-            'image' => 'nullable|string|max:255',
+            'image' => 'nullable|file|mimes:jpeg,png,jpg,gif,webp|max:2048',
             'template' => 'nullable|string',
             'is_public' => 'boolean',
             'status' => 'in:active,inactive,maintenance',

@@ -34,9 +34,10 @@ class RechargeController extends Controller
                 $request->safe()->only(['amount', 'card_code', 'card_serial']),
             );
         } catch (RuntimeException $exception) {
+            report($exception);
             return response()->json([
                 'success' => false,
-                'message' => $exception->getMessage(),
+                'message' => 'Chưa thể xác nhận nạp thẻ. Vui lòng kiểm tra lịch sử nạp thẻ trước khi gửi lại.',
             ], 503);
         }
 
@@ -70,9 +71,10 @@ class RechargeController extends Controller
                 'message' => 'Card not found',
             ], 404);
         } catch (RuntimeException $exception) {
+            report($exception);
             return response()->json([
                 'success' => false,
-                'message' => $exception->getMessage(),
+                'message' => 'Tạm thời chưa thể xử lý callback.',
             ], 503);
         }
 

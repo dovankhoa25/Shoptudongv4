@@ -24,7 +24,7 @@ class StoreCategoryRequest extends FormRequest
             'game_type_id' => 'required|exists:game_types,id',
             'name' => 'required|string|max:255|unique:categories,name',
             'image' => 'nullable|file|mimes:jpeg,png,jpg,gif,webp|max:2048',
-            'image_url' => 'nullable|url',
+            'image_url' => 'prohibited',
             'template' => 'nullable|string',
             'is_public' => 'boolean',
             'status' => 'in:active,inactive,maintenance',

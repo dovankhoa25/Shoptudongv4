@@ -4,7 +4,7 @@ namespace App\Services\TradingV3;
 
 use Ably\AblyRest;
 use Ably\Models\Message;
-use App\Events\{TradingBotActivity, UserEvent};
+use App\Events\{TradingBotActivity, TradingBotOverviewUpdated, UserEvent};
 use Illuminate\Broadcasting\BroadcastManager;
 use Illuminate\Broadcasting\Broadcasters\AblyBroadcaster;
 use Illuminate\Support\Carbon;
@@ -50,5 +50,14 @@ class TradingActivityBroadcast
         if (!$broadcaster instanceof AblyBroadcaster) { event($event); return; }
         $message = new Message(); $message->name = $event->broadcastAs(); $message->data = $event->broadcastWith();
         $this->client($broadcaster)->channels->get('private:User.'.$notice['user_id'])->publish($message);
+    }
+
+    public function publishOverviewChanged(): void
+    {
+        $event = new TradingBotOverviewUpdated();
+        $broadcaster = app(BroadcastManager::class)->connection();
+        if (!$broadcaster instanceof AblyBroadcaster) { event($event); return; }
+        $message = new Message(); $message->name = $event->broadcastAs(); $message->data = $event->broadcastWith();
+        $this->client($broadcaster)->channels->get('public:Trading.Bots')->publish($message);
     }
 }

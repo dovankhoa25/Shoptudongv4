@@ -6,6 +6,7 @@ const Module = require('node:module');
 const ts = require('typescript');
 const React = require('react');
 const { renderToStaticMarkup } = require('react-dom/server');
+const vm = require('node:vm');
 
 function load(file, overrides = {}) {
     const filename = path.resolve(__dirname, '../../resources/js/Features/Chat', file);
@@ -23,6 +24,50 @@ function load(file, overrides = {}) {
 const { clipboardImages, continuesMessageGroup, latestReadCustomerMessageId } = load('chatUi.ts');
 const { ChatAvatar, ReadReceipt, MessageActions } = load('MessageTools.tsx');
 const item = file => ({ kind: 'file', type: file.type, getAsFile: () => file });
+
+test('unavailable chat transport reports disconnected until a private subscription succeeds', () => {
+    const filename = path.resolve(__dirname, '../../resources/js/Features/Chat/ChatWorkspace.tsx');
+    const source = ts.createSourceFile(filename, fs.readFileSync(filename, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    let connectionEffect, subscribedCallback;
+    function visit(node) {
+        if (ts.isCallExpression(node) && node.expression.getText(source) === 'useEffect'
+            && node.arguments[0]?.getText(source).includes('type PusherConnection')) connectionEffect = node.arguments[0];
+        if (ts.isVariableDeclaration(node) && node.name.getText(source) === 'handleRealtimeSubscribed') subscribedCallback = node.initializer.arguments[0];
+        ts.forEachChild(node, visit);
+    }
+    visit(source);
+    assert.ok(connectionEffect); assert.ok(subscribedCallback);
+    const listeners = new Map();
+    let status = 'connecting', recoveries = 0;
+    const connection = { state: 'connected', bind: (event, callback) => listeners.set(event, callback),
+        unbind: (event, callback) => { if (listeners.get(event) === callback) listeners.delete(event); } };
+    const context = {
+        echo: () => ({ connector: { pusher: { connection } } }),
+        setRealtimeStatus: next => { status = typeof next === 'function' ? next(status) : next; },
+        scheduleConversationRefresh() {}, flushPendingRead() {}, refreshInternalNotes() {},
+        recoverMissingMessages: () => { recoveries++; },
+    };
+    const execute = node => vm.runInNewContext(ts.transpileModule(`(${node.getText(source)})`, {
+        compilerOptions: { target: ts.ScriptTarget.ES2022 },
+    }).outputText, context);
+    const cleanup = execute(connectionEffect)();
+    const subscribed = execute(subscribedCallback);
+    // A connected WebSocket does not prove the private chat channel was authorized.
+    assert.equal(status, 'connecting');
+    subscribed(); assert.equal(status, 'connected'); assert.equal(recoveries, 1);
+    listeners.get('connected')(); assert.equal(status, 'connected');
+    listeners.get('state_change')({ current: 'unavailable' });
+    assert.equal(status, 'disconnected');
+    for (const current of ['initialized', 'connecting']) {
+        listeners.get('state_change')({ current }); assert.equal(status, 'connecting');
+    }
+    listeners.get('connected')(); assert.equal(status, 'connecting');
+    subscribed(); assert.equal(status, 'connected'); assert.equal(recoveries, 2);
+    for (const current of ['failed', 'disconnected']) {
+        listeners.get('state_change')({ current }); assert.equal(status, 'disconnected');
+    }
+    cleanup(); assert.equal(listeners.size, 0);
+});
 
 test('plain text and URL paste are left to the browser', () => {
     assert.deepEqual(clipboardImages({ items: [{ kind: 'string', type: 'text/plain' }], files: [] }), []);

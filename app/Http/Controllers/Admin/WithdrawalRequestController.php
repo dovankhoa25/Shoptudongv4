@@ -226,7 +226,7 @@ class WithdrawalRequestController extends Controller
         } catch (\Exception $e) {
             DB::rollBack();
 
-            return back()->with('error', $e->getMessage());
+            return back()->with('error', \App\Support\PublicError::message($e));
         }
     }
 
@@ -294,7 +294,7 @@ class WithdrawalRequestController extends Controller
         } catch (\Exception $e) {
             DB::rollBack();
 
-            return back()->with('error', 'Có lỗi xảy ra: '.$e->getMessage());
+            return back()->with('error', \App\Support\PublicError::message($e));
         }
     }
 

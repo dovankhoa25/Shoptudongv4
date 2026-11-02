@@ -72,6 +72,13 @@ final class ApiCache
         // DEL is allowed during Redis maxmemory OOM and invalidates the old generation.
         // A connection outage may also stop DEL; public values still have their original short TTL.
         if (!$available || $written===false) self::cacheOperation(fn()=>Cache::forget($key),'invalidate-forget',$available);
+        if (in_array($group, ['public:bots', 'public:gembot'], true)) {
+            // Runs after commit, including bulk writes. Coalesce after cache eviction.
+            \Illuminate\Support\defer(function (): void {
+                try { app(\App\Services\TradingV3\TradingActivityBroadcast::class)->publishOverviewChanged(); }
+                catch (\Throwable $e) { Log::warning('Public bot overview realtime delivery failed.'); }
+            }, 'trading-bot-overview-updated', always: true);
+        }
     }
     private static function cacheOperation(callable $operation,string $phase,bool &$available): mixed
     {

@@ -42,6 +42,104 @@ class AdminLiveViewTest extends TestCase {
         $this->assertSame(['accountStats'],array_keys($data));$this->assertSame($request,app('request'));
         $this->assertFalse(collect($queries)->contains(fn($q)=>str_contains(strtolower($q['query']),'from "nicks"')));
     }
+    public function test_chat_projection_from_another_users_request_preserves_the_callers_session(): void {
+        $admin=$this->admin();$customer=User::factory()->create(['password'=>bcrypt('customer-password')]);
+        $session=new \Illuminate\Session\Store('customer-test',new \Illuminate\Session\ArraySessionHandler(120));
+        $session->put([\Illuminate\Support\Facades\Auth::guard('web')->getName()=>$customer->id,'password_hash_web'=>$customer->getAuthPassword()]);
+        $outer=\Illuminate\Http\Request::create('/chat/conversations/1/messages','POST');
+        $outer->setLaravelSession($session);$outer->setUserResolver(fn()=>$customer);
+        $original=app('request');app()->instance('request',$outer);
+        \Illuminate\Support\Facades\Auth::guard('web')->setUser($customer);
+        $before=$session->all();
+        try {
+            $data=app(Reader::class)->read($admin,'/admin/chat/conversations?view=active');
+            $this->assertArrayHasKey('data',$data);
+            $this->assertSame($before,$session->all());
+            $this->assertSame($customer,\Illuminate\Support\Facades\Auth::guard('web')->getUser());
+            $this->assertSame($outer,app('request'));
+        } finally {app()->instance('request',$original);}
+    }
+    public function test_customer_triggered_chat_publication_does_not_revoke_a_valid_staff_view(): void {
+        $admin=$this->admin();$customer=User::factory()->create(['password'=>bcrypt('different-customer-password')]);
+        $conversation=\App\Models\ChatConversation::create(['customer_id'=>$customer->id,'category'=>'general','status'=>'waiting_agent','priority'=>'normal']);
+        $this->actingAs($admin);
+        $id=$this->postJson('/admin/live-views',['url'=>'/admin/chat/conversations?view=active'])->assertOk()->json('id');
+        $this->postJson('/admin/live-views/'.$id.'/sync')->assertOk();
+        app(Updates::class)->flush();
+        $view=DB::table('admin_live_views')->where('id',$id)->first();
+        $this->assertTrue(app(\App\Services\Chat\ChatRealtimeChannel::class)->webCredentialIsActive($admin->id,$view->credential_hash));
+        $session=new \Illuminate\Session\Store('customer-trigger',new \Illuminate\Session\ArraySessionHandler(120));
+        $session->put([\Illuminate\Support\Facades\Auth::guard('web')->getName()=>$customer->id,'password_hash_web'=>$customer->getAuthPassword()]);
+        $outer=\Illuminate\Http\Request::create('/chat/conversations/'.$conversation->id.'/messages','POST');
+        $outer->setLaravelSession($session);$outer->setUserResolver(fn()=>$customer);
+        $original=app('request');app()->instance('request',$outer);
+        \Illuminate\Support\Facades\Auth::guard('web')->setUser($customer);$before=$session->all();
+        try {
+            \App\Models\ChatMessage::create(['conversation_id'=>$conversation->id,'sender_id'=>$customer->id,'sender_kind'=>'customer','body'=>'Tin mới từ khách','client_message_id'=>(string)\Illuminate\Support\Str::uuid()]);
+            $conversation->update(['last_message_at'=>now()]);
+            Event::fake([AdminViewPatched::class]);
+            $updates=app(Updates::class);$updates->changed('chat');$updates->flush();
+            Event::assertNotDispatched(AdminViewPatched::class,fn($event)=>($event->frame['revoked'] ?? false)===true);
+            Event::assertDispatched(AdminViewPatched::class,fn($event)=>$event->viewId===$id && isset($event->frame['chunk']));
+            $this->assertDatabaseHas('admin_live_views',['id'=>$id]);
+            $this->assertSame($before,$session->all());
+            $this->assertSame($customer,\Illuminate\Support\Facades\Auth::guard('web')->getUser());
+        } finally {app()->instance('request',$original);}
+    }
+    public function test_bearer_customer_message_keeps_the_staff_chat_view_active(): void {
+        $admin=$this->admin();$customer=User::factory()->create();
+        $conversation=\App\Models\ChatConversation::create(['customer_id'=>$customer->id,'category'=>'general','status'=>'waiting_agent','priority'=>'normal']);
+        $this->actingAs($admin);
+        $id=$this->postJson('/admin/live-views',['url'=>'/admin/chat/conversations?view=active'])->assertOk()->json('id');
+        $this->postJson('/admin/live-views/'.$id.'/sync')->assertOk();
+        app(Updates::class)->flush();Event::fake([AdminViewPatched::class]);
+        \Laravel\Passport\Passport::actingAs($customer,['*'],'api');
+        $this->postJson('/api/chat/conversations/'.$conversation->id.'/messages',[
+            'body'=>'Tin qua API từ web client','client_message_id'=>(string)\Illuminate\Support\Str::uuid(),
+        ])->assertCreated();
+        app(Updates::class)->flush();
+        Event::assertNotDispatched(AdminViewPatched::class,fn($event)=>($event->frame['revoked'] ?? false)===true);
+        Event::assertDispatched(AdminViewPatched::class,fn($event)=>$event->viewId===$id && isset($event->frame['chunk']));
+        $this->assertDatabaseHas('admin_live_views',['id'=>$id]);
+        $view=DB::table('admin_live_views')->where('id',$id)->first();
+        $this->assertTrue(app(\App\Services\Chat\ChatRealtimeChannel::class)->webCredentialIsActive($admin->id,$view->credential_hash));
+    }
+    public function test_temporary_session_validation_failure_preserves_the_view_and_catches_up_on_the_next_change(): void {
+        $admin=$this->admin();$customer=User::factory()->create();
+        $conversation=\App\Models\ChatConversation::create(['customer_id'=>$customer->id,'category'=>'general','status'=>'waiting_agent','priority'=>'normal']);
+        $this->actingAs($admin);
+        $id=$this->postJson('/admin/live-views',['url'=>'/admin/chat/conversations?view=active'])->assertOk()->json('id');
+        $this->postJson('/admin/live-views/'.$id.'/sync')->assertOk();app(Updates::class)->flush();
+        $state=Cache::get('admin-live:state:'.$id);
+        $credentials=app(\App\Services\Chat\ChatRealtimeChannel::class);$attempts=0;
+        $this->partialMock(\App\Services\Chat\ChatRealtimeChannel::class,function($mock)use($credentials,&$attempts) {
+            $mock->shouldReceive('webCredentialIsActive')->twice()->andReturnUsing(function($userId,$hash)use($credentials,&$attempts) {
+                if(++$attempts===1)throw new \App\Exceptions\ChatRealtimeValidationUnavailable(new \RuntimeException('Temporary session storage outage'));
+                return $credentials->webCredentialIsActive($userId,$hash);
+            });
+        });
+        \App\Models\ChatMessage::create(['conversation_id'=>$conversation->id,'sender_id'=>$customer->id,'sender_kind'=>'customer','body'=>'Tin trong lúc kho phiên lỗi','client_message_id'=>(string)\Illuminate\Support\Str::uuid()]);
+        $conversation->update(['last_message_at'=>now()]);Event::fake([AdminViewPatched::class]);
+        $updates=app(Updates::class);$updates->changed('chat');$updates->flush();
+        Event::assertDispatched(AdminViewPatched::class,fn($event)=>$event->viewId===$id && $event->frame===['viewId'=>$id,'retry'=>true]);
+        Event::assertNotDispatched(AdminViewPatched::class,fn($event)=>isset($event->frame['chunk']) || ($event->frame['revoked'] ?? false));
+        $this->assertDatabaseHas('admin_live_views',['id'=>$id,'revision'=>$state['revision']]);
+        $this->assertSame($state,Cache::get('admin-live:state:'.$id));
+        $updates->changed('chat');$updates->flush();
+        Event::assertDispatched(AdminViewPatched::class,fn($event)=>$event->viewId===$id && isset($event->frame['chunk']) && $event->frame['base']===$state['revision']);
+        Event::assertNotDispatched(AdminViewPatched::class,fn($event)=>($event->frame['revoked'] ?? false)===true);
+        $this->assertDatabaseHas('admin_live_views',['id'=>$id]);
+    }
+    public function test_snapshot_reports_a_temporary_session_store_error_without_revoking_the_view(): void {
+        config(['app.debug'=>false]);$this->actingAs($this->admin());
+        $id=$this->postJson('/admin/live-views',['url'=>'/admin/users'])->assertOk()->json('id');
+        $this->partialMock(\App\Services\Chat\ChatRealtimeChannel::class,function($mock) {
+            $mock->shouldReceive('webCredentialIsActive')->once()->andThrow(new \App\Exceptions\ChatRealtimeValidationUnavailable(new \RuntimeException('Private storage failure detail')));
+        });
+        $response=$this->postJson('/admin/live-views/'.$id.'/sync')->assertStatus(503)->assertHeader('Retry-After','5');
+        $this->assertStringNotContainsString('Private storage failure detail',$response->getContent());
+        $this->assertDatabaseHas('admin_live_views',['id'=>$id]);
+    }
     public function test_changes_publish_private_deltas_only_to_relevant_views_and_deduplicate_state(): void {
         $admin=$this->admin();$this->actingAs($admin);$row=User::factory()->create(['username'=>'patch-target']);
         $view=$this->postJson('/admin/live-views',['url'=>'/admin/users?search=patch-target'])->assertOk()->json('id');

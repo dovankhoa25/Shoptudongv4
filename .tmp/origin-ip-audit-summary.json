@@ -1,0 +1,171 @@
+{
+  "checkedAt": "2026-11-02T11:54:57.440Z",
+  "scope": {
+    "repositories": [
+      "wegamenew-backend",
+      "123nick.com v4",
+      "shophhp.net v4",
+      "vanghhp.vn v4"
+    ],
+    "publicHttpChecks": 102,
+    "liveJavaScriptBundles": 38,
+    "dnsBaseQueries": 60,
+    "certificateDomains": [
+      {
+        "domain": "shophhp.vn",
+        "names": [
+          "www.shophhp.vn",
+          "admin.shophhp.vn",
+          "api.shophhp.vn"
+        ]
+      },
+      {
+        "domain": "vanghhp.vn",
+        "error": "HTTP 404"
+      },
+      {
+        "domain": "shophhp.net",
+        "names": [
+          "api.shophhp.net",
+          "backup.shophhp.net",
+          "www.shophhp.net"
+        ]
+      },
+      {
+        "domain": "123nick.com",
+        "names": [
+          "api.123nick.com",
+          "www.123nick.com",
+          "acczin.123nick.com",
+          "cpanel.123nick.com",
+          "mail.123nick.com",
+          "webdisk.123nick.com",
+          "webmail.123nick.com",
+          "www.acczin.123nick.com",
+          "muangoc.123nick.com",
+          "www.muangoc.123nick.com",
+          "shop123nick.123nick.com",
+          "www.shop123nick.123nick.com"
+        ]
+      }
+    ],
+    "additionalSubdomainIPv6Queries": 47,
+    "archiveEntriesInspected": 311
+  },
+  "conclusion": "No confirmed origin-server IP disclosure was found in the inspected public responses, current DNS, local source or sampled public build archive. This is not proof that the origin is unreachable or absent from historical DNS.",
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "medium",
+      "status": "source-confirmed; origin-IP equivalence not established",
+      "title": "Remote image imports connect directly to user-supplied public image hosts",
+      "evidence": [
+        "app/Services/SafeImageDownloader.php:31",
+        "app/Http/Controllers/Admin/NickController.php:218",
+        "routes/web.php:414"
+      ],
+      "details": "The configured downloader explicitly disables a proxy. The destination operator can observe the outbound source IP. Triggering the image import requires the relevant admin/catalog/nick creation permission. That outbound address may equal the hosting origin IP, but NAT/egress topology was not verified. No live image import was triggered.",
+      "recommendation": "Use an isolated import worker or configured egress proxy if outbound origin anonymity is required; alternatively accept uploaded files only."
+    },
+    {
+      "id": "F2",
+      "severity": "medium",
+      "status": "source-confirmed; no production disclosure reproduced",
+      "title": "Several exception handlers return raw internal error messages",
+      "evidence": [
+        "app/Http/Controllers/Api/RechargeController.php:39",
+        "app/Http/Controllers/Api/RechargeController.php:75",
+        "app/Http/Controllers/AppAuto/AppGoldTransactionController.php:255",
+        "app/Http/Controllers/AppAuto/VersionTwo/AppGoldTransactionVersionTwoController.php:376"
+      ],
+      "details": "Infrastructure exceptions can expose hostnames, IPs, SQL details or filesystem information when caught by these handlers, even with APP_DEBUG=false. Tool routes require an application key; recharge submission requires authentication. Only relevant failed conditions would expose the details.",
+      "recommendation": "Return approved business errors or generic error codes to callers and keep raw exceptions in private logs."
+    },
+    {
+      "id": "F3",
+      "severity": "low",
+      "status": "publicly confirmed",
+      "title": "A build ZIP remains publicly downloadable on backup.shophhp.net",
+      "url": "https://backup.shophhp.net/build.zip",
+      "archiveSummary": {
+        "url": "https://backup.shophhp.net/build.zip",
+        "status": 200,
+        "bytes": 1127588,
+        "entryCount": 313,
+        "scanned": 311,
+        "sourceMaps": 0,
+        "secretFilenames": [],
+        "ipUrls": [],
+        "hosts": [
+          "shophhp.net",
+          "www.shophhp.net",
+          "shophhp.vn"
+        ],
+        "entryExamples": [
+          {
+            "name": "build/",
+            "bytes": 0
+          },
+          {
+            "name": "build/assets/",
+            "bytes": 0
+          },
+          {
+            "name": "build/assets/AccountDetailModal-DewJPxVd.js",
+            "bytes": 8038
+          },
+          {
+            "name": "build/assets/AccountEditModals-CBARCN9j.js",
+            "bytes": 4992
+          },
+          {
+            "name": "build/assets/AccountsTab-SDxDhJmD.js",
+            "bytes": 12132
+          },
+          {
+            "name": "build/assets/AddAccountModal-ClhREwMA.js",
+            "bytes": 7445
+          },
+          {
+            "name": "build/assets/addEventListener-dr63Ft59.js",
+            "bytes": 297
+          },
+          {
+            "name": "build/assets/AddSelectionModal-fz5CJ78k.js",
+            "bytes": 1692
+          },
+          {
+            "name": "build/assets/AdminLayout-CSLD-SfQ.js",
+            "bytes": 39351
+          },
+          {
+            "name": "build/assets/adminTableSearch-DeHfcO4W.js",
+            "bytes": 2991
+          }
+        ]
+      },
+      "details": "The 1,127,588-byte archive contains frontend build assets. No origin IP URL, source maps or suspicious configuration filenames were found. Public access to this archive is not itself confirmed origin-IP disclosure.",
+      "recommendation": "Remove deployment archives from the public web root."
+    }
+  ],
+  "verified": {
+    "currentPublicIpUrls": [],
+    "publicDns": "Inspected active records resolve to Cloudflare or Vercel infrastructure; no naked hosting origin address identified.",
+    "localProductionDebug": false,
+    "storageBase": "Local .env.production uses the public api.shophhp.net hostname, not an IP literal.",
+    "legacyBackupHostname": "Present in older local build output; current live home pages and 38 live bundles use api.shophhp.net. backup.shophhp.net itself is currently proxied by Cloudflare.",
+    "sensitivePaths": "No actual .env, Git HEAD, phpinfo or Laravel log content observed in sampled responses. Some frontend paths return HTML with HTTP 206 rather than a real sensitive file."
+  },
+  "limitations": [
+    "Origin firewall/webserver and the complete Cloudflare DNS zone were not inspected.",
+    "Historical/passive DNS IP history was not available; certificate transparency enumeration was used only to identify additional hostnames.",
+    "api.shophhp.net public API paths returned HTTP 404 during checks; backup.shophhp.net API paths mostly returned generic HTTP 500. Therefore successful authenticated/runtime API payloads were not inspected.",
+    "admin.shophhp.net HTTPS requests failed from this environment.",
+    "No live financial action, account creation, image import or configuration change was performed."
+  ],
+  "evidenceFiles": [
+    "origin-ip-audit-results.json",
+    "origin-ip-audit-extra.json",
+    "origin-ip-audit-passive.json"
+  ]
+}

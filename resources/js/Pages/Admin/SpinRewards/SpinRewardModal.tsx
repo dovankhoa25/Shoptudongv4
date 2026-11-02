@@ -511,11 +511,7 @@ const SpinRewardModal: React.FC<SpinRewardModalProps> = ({
                                                 Upload từ máy
                                             </span>
                                         </Radio>
-                                        <Radio value="url" className="w-full mt-2">
-                                            <span className="flex items-center gap-2">
-                                                🔗 Nhập URL
-                                            </span>
-                                        </Radio>
+
                                     </Radio.Group>
                                 </Form.Item>
 

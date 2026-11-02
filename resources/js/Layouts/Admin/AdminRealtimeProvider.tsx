@@ -24,5 +24,5 @@ export default function AdminRealtimeProvider({children}:{children:React.ReactNo
         const afterWrite=()=>{if(live.status!=='live')router.reload();};window.addEventListener('admin:refresh-if-offline',afterWrite);
         return ()=>{window.removeEventListener('admin:nro-tab',tab);window.removeEventListener('admin:live-sync',sync);window.removeEventListener('admin:refresh-if-offline',afterWrite);};
     },[path,live.sync,live.status]);
-    return <>{eligible && ['offline','denied'].includes(live.status) && <div role="status" className="px-4 py-1 text-xs text-amber-600">Cập nhật trực tiếp đang gián đoạn. <button className="underline mr-3" onClick={()=>router.reload()}>Làm mới dữ liệu</button><button className="underline" onClick={live.sync}>Kết nối lại</button></div>}{children}</>;
+    return <>{children}</>;
 }

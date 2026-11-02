@@ -44,18 +44,8 @@ class StoreNickRequest extends FormRequest
             'images' => 'nullable|array|max:20',
             'images.*' => 'file|image|max:5120', // max 5MB mỗi file
 
-            // Hoặc URL upload:
-            'image_urls' => ['bail', 'nullable', 'json', function ($attribute, $value, $fail) {
-                $urls = json_decode($value, true);
-                if (! is_array($urls) || ! array_is_list($urls)) {
-                    $fail('Danh sách URL ảnh phải là một mảng JSON.');
-                    return;
-                }
-                $images = $this->file('images', []);
-                if (count($urls) + (is_array($images) ? count($images) : 0) > 20) {
-                    $fail('Mỗi nick được đăng tối đa 20 ảnh, tính cả file và URL.');
-                }
-            }],
+            // Uploaded files only; old clients must not trigger remote imports.
+            'image_urls' => 'prohibited',
         ];
     }
 
@@ -72,7 +62,7 @@ class StoreNickRequest extends FormRequest
             'images.*.image' => 'Tệp tải lên phải là hình ảnh.',
             'images.*.max' => 'Mỗi tệp ảnh tối đa 5MB.',
             'images.max' => 'Mỗi nick được đăng tối đa 20 ảnh.',
-            'image_urls.json' => 'Danh sách URL ảnh phải là JSON hợp lệ.',
+            'image_urls.prohibited' => \App\Services\SafeImageDownloader::DISABLED_MESSAGE,
         ];
     }
 

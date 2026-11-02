@@ -23,6 +23,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Storage;
@@ -131,9 +132,24 @@ class ChatController extends Controller
             ->orderByDesc('last_message_at')
             ->orderByDesc('id');
 
-        $paginator = $query->paginate((int) ($validated['per_page'] ?? 30));
+        $perPage = (int) ($validated['per_page'] ?? 30);
+        $loadedRows = $request->attributes->get('admin_live_chat_loaded_rows');
+        $loadedProjection = $request->routeIs('admin.chat.conversations.index') && is_int($loadedRows) && $loadedRows > 0;
+        if ($loadedProjection) {
+            // Only Reader's synthetic request can request a loaded-page window.
+            // Reuse the exact visibility, filters and ordering with one metrics pass.
+            $limit = min(5000, $loadedRows);
+            $total = (clone $query)->toBase()->getCountForPagination();
+            $rows = $query->limit($limit)->get();
+            $currentPage = min((int) ceil($limit / $perPage), max(1, (int) ceil($total / $perPage)));
+            $paginator = new LengthAwarePaginator($rows, $total, $perPage, $currentPage, [
+                'path' => $request->url(), 'query' => $request->query(),
+            ]);
+        } else {
+            $paginator = $query->paginate($perPage);
+        }
 
-        return ChatConversationResource::collection($paginator)
+        $resource = ChatConversationResource::collection($paginator)
             ->additional([
                 'view' => $view,
                 'period' => $period,
@@ -141,6 +157,17 @@ class ChatController extends Controller
                 'unread_counts' => $this->groupedConversationCounts($unreadCounts),
                 'unread_total' => $unreadTotal,
             ]);
+        if ($loadedProjection) {
+            $response = $resource->response($request);
+            $payload = $response->getData(true);
+            // This window contains pages 1..current_page, while per_page and
+            // last_page retain their ordinary HTTP pagination meaning.
+            $payload['meta']['from'] = $rows->isEmpty() ? null : 1;
+            $payload['meta']['to'] = $rows->isEmpty() ? null : $rows->count();
+            return $response->setData($payload);
+        }
+
+        return $resource;
     }
 
     public function resolve(Request $request): JsonResponse

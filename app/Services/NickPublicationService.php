@@ -236,13 +236,16 @@ class NickPublicationService
                     'processing_at' => null, 'error' => null]);
             });
         } catch (Throwable $e) {
+            // Old URL jobs must fail without connecting or repeatedly retrying.
+            $blockedUrl = ! $claimed->path && $e instanceof ValidationException;
             $updated = NickMediaFile::whereKey($id)->where('claim_token', $token)->update([
-                'status' => $claimed->attempts >= 3 ? 'failed' : 'pending',
-                'error' => $e instanceof ValidationException ? 'Ảnh không hợp lệ hoặc nguồn URL không cho phép tải.' : 'Không tải/lưu được ảnh. Có thể thử lại.',
+                'status' => $blockedUrl || $claimed->attempts >= 3 ? 'failed' : 'pending',
+                'error' => $blockedUrl ? SafeImageDownloader::DISABLED_MESSAGE
+                    : ($e instanceof ValidationException ? 'Ảnh không hợp lệ.' : 'Không tải/lưu được ảnh. Có thể thử lại.'),
                 'claim_token' => null, 'processing_at' => null, 'queued_at' => null,
                 'available_at' => now()->addSeconds(15 * $claimed->attempts),
             ]);
-            $retry = $updated === 1 && $claimed->attempts < 3;
+            $retry = ! $blockedUrl && $updated === 1 && $claimed->attempts < 3;
             Log::warning('Nick media processing failed', ['file_id' => $id, 'exception' => $e::class]);
         } finally {
             if ($download && is_file($download)) {

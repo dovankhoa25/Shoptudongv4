@@ -139,7 +139,7 @@ class RandomNickController extends Controller
             DB::rollback();
 
             return redirect()->back()
-                ->with('error', 'Có lỗi xảy ra khi tạo nick: '.$e->getMessage());
+                ->with('error', \App\Support\PublicError::message($e));
         }
     }
 

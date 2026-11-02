@@ -272,7 +272,7 @@ class ServiceOrderController extends Controller
 
             return redirect()->back()->with('success', 'Huỷ đơn thành công & hoàn tiền cho khách!');
         } catch (\Exception $e) {
-            return redirect()->back()->with('error', $e->getMessage());
+            return redirect()->back()->with('error', \App\Support\PublicError::message($e));
         }
     }
 }

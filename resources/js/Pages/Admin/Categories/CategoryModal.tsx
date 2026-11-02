@@ -4,7 +4,7 @@ import { ICategory } from "@/InterFaces/category";
 import { IGameType } from "@/InterFaces/gametype";
 import { useToast } from "@/Components/ToastProvider";
 import { useState, useEffect } from "react";
-import { FolderOpen, Gamepad2, Image as ImageIcon, Upload as UploadIcon, Link } from "lucide-react";
+import { FolderOpen, Gamepad2, Image as ImageIcon, Upload as UploadIcon } from "lucide-react";
 import { CustomUpload } from "@/Components/Upload/CustomUpload";
 import axios from "axios";
 
@@ -16,7 +16,7 @@ interface IProps {
 export default function CategoryModal({ onClose, category }: IProps) {
     const [gameTypes, setGameTypes] = useState<IGameType[]>([]);
     const [loadingGameTypes, setLoadingGameTypes] = useState(false);
-    const [imageType, setImageType] = useState<'url' | 'file'>('url');
+    const [imageType, setImageType] = useState<'url' | 'file'>('file');
 
     const { data, setData, post, put, processing, reset } = useForm({
         game_type_id: category?.game_type_id || null,
@@ -290,25 +290,7 @@ export default function CategoryModal({ onClose, category }: IProps) {
                             size="small"
                             className="mb-4"
                             items={[
-                                {
-                                    key: 'url',
-                                    label: (
-                                        <span className="flex items-center gap-2">
-                                            <Link className="w-4 h-4" />
-                                            Nhập URL
-                                        </span>
-                                    ),
-                                    children: (
-                                        <Input
-                                            placeholder="https://example.com/image.jpg"
-                                            value={data.image_url}
-                                            onChange={(e) => setData("image_url", e.target.value)}
-                                            size="large"
-                                            className="rounded-xl border-gray-200 hover:border-blue-400 focus:border-blue-500 transition-colors"
-                                            prefix={<ImageIcon className="w-4 h-4 text-gray-400" />}
-                                        />
-                                    )
-                                },
+
                                 {
                                     key: 'file',
                                     label: (
@@ -322,10 +304,10 @@ export default function CategoryModal({ onClose, category }: IProps) {
                                             <CustomUpload
                                                 value={data.image_file}
                                                 onChange={(file) => setData("image_file", file)}
-                                                maxSize={50}
+                                                maxSize={2}
                                             />
                                             <div className="text-xs text-gray-500">
-                                                Hỗ trợ: JPG, PNG, GIF. Kích thước tối đa: 50MB
+                                                Hỗ trợ: JPG, PNG, GIF, WebP. Kích thước tối đa: 2MB
                                             </div>
                                         </div>
                                     )
@@ -334,11 +316,11 @@ export default function CategoryModal({ onClose, category }: IProps) {
                         />
 
                         {/* Preview Section */}
-                        {((imageType === 'url' && data.image_url) || (imageType === 'file' && data.image_file)) && (
+                        {(data.image_file || data.image_url) && (
                             <div className="mt-4 p-3 bg-white rounded-lg border border-gray-200">
                                 <p className="text-sm font-medium text-gray-700 mb-2">Preview:</p>
                                 <div className="w-24 h-24 rounded-lg overflow-hidden border border-gray-200 bg-gray-100">
-                                    {imageType === 'url' && data.image_url ? (
+                                    {!data.image_file && data.image_url ? (
                                         <img
                                             src={data.image_url}
                                             alt="Preview"
@@ -378,7 +360,7 @@ export default function CategoryModal({ onClose, category }: IProps) {
                         </li>
                         <li className="flex items-start gap-2">
                             <span className="text-blue-500 mt-0.5">•</span>
-                            <span>Ảnh upload sẽ được lưu trên server, URL sẽ link trực tiếp</span>
+                            <span>Chọn ảnh từ thiết bị. Nếu không chọn ảnh mới, ảnh đang dùng được giữ nguyên.</span>
                         </li>
                         <li className="flex items-start gap-2">
                             <span className="text-blue-500 mt-0.5">•</span>

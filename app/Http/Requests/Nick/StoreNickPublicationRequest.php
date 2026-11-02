@@ -26,7 +26,7 @@ class StoreNickPublicationRequest extends FormRequest
             'attribute_cache_json.*.option_id' => 'required|integer',
             'upload_ids' => 'present|array|max:20|prohibits:urls',
             'upload_ids.*' => 'required|uuid|distinct',
-            'urls' => 'present|array|max:20|prohibits:upload_ids',
+            'urls' => 'present|array|size:0',
             'urls.*' => 'required|string|url:http,https|max:2048',
             'images' => 'prohibited',
         ];
@@ -36,7 +36,7 @@ class StoreNickPublicationRequest extends FormRequest
     {
         return [
             'upload_ids.max' => 'Mỗi nick được đăng tối đa 20 ảnh.',
-            'urls.max' => 'Mỗi nick được đăng tối đa 20 URL ảnh.',
+            'urls.size' => \App\Services\SafeImageDownloader::DISABLED_MESSAGE,
         ];
     }
 }

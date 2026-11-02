@@ -1,0 +1,27 @@
+[
+  {
+    "name": "build.zip",
+    "expected": 403,
+    "actual": 403
+  },
+  {
+    "name": "nested/backup.ZIP",
+    "expected": 403,
+    "actual": 403
+  },
+  {
+    "name": "database.sql",
+    "expected": 403,
+    "actual": 403
+  },
+  {
+    "name": "server.log",
+    "expected": 403,
+    "actual": 403
+  },
+  {
+    "name": "image.png",
+    "expected": 200,
+    "actual": 200
+  }
+]

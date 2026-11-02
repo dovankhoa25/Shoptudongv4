@@ -12,13 +12,13 @@ const { NickUploadQueue } = context.exports;
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const file = name => ({ name });
 
-test('uploads at most three files and retains selected order after out-of-order completions', async () => {
+test('respects a configured upload limit and retains selected order after out-of-order completions', async () => {
     const requests = new Map();
     let active = 0, peak = 0, view = [];
     const queue = new NickUploadQueue((file, signal, progress) => {
         active++; peak = Math.max(peak, active);
         return new Promise(resolve => requests.set(file, () => { active--; progress(100); resolve(file.name); }));
-    }, () => {}, entries => view = entries);
+    }, () => {}, entries => view = entries, 3);
     const files = ['a', 'b', 'c', 'd', 'e'].map(file);
     queue.setFiles(files);
     assert.equal(requests.size, 3);

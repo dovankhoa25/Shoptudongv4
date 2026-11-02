@@ -74,9 +74,9 @@ class CategoryController extends Controller
         ApiCache::clearGroups(['public:catalog']);
 
         // Nếu có image_file (upload) hoặc image_url
-        if ($request->hasFile('image_file')) {
+        if ($request->hasFile('image')) {
             $category->clearMediaCollection('image');
-            $category->addMediaFromRequest('image_file')->toMediaCollection('image');
+            $category->addMediaFromRequest('image')->toMediaCollection('image');
         } elseif ($request->filled('image_url') && $request->image_url !== $category->getFirstMediaUrl('image')) {
             $category->clearMediaCollection('image');
             $category->addMediaFromUrl($request->image_url)->toMediaCollection('image');

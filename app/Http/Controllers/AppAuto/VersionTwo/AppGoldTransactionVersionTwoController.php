@@ -371,9 +371,11 @@ class AppGoldTransactionVersionTwoController extends Controller
             ]);
         } catch (\Throwable $e) {
             if ($e instanceof \Symfony\Component\HttpKernel\Exception\HttpException) throw $e;
+            if ($e instanceof \Illuminate\Validation\ValidationException) throw $e;
+            report($e);
             return response()->json([
                 'success' => false,
-                'message' => $e->getMessage(),
+                'message' => 'Chưa thể xác nhận cập nhật giao dịch. Vui lòng kiểm tra trạng thái trước khi thử lại.',
             ], 422);
         }
     }

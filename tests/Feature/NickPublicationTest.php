@@ -163,7 +163,7 @@ class NickPublicationTest extends TestCase
 
     public function test_idempotency_rejects_changed_content_and_parallel_drafts_for_same_account(): void
     {
-        $payload = $this->payload(['urls' => ['https://example.com/one.png']]);
+        $payload = $this->payload(['upload_ids' => [$this->upload()]]);
         $this->postJson($this->base.'/media-publications', $payload)->assertStatus(202);
         $this->postJson($this->base.'/media-publications', $payload)->assertStatus(202);
         $this->postJson($this->base.'/media-publications', array_replace($payload, ['price' => 2]))->assertStatus(409);
@@ -293,7 +293,7 @@ class NickPublicationTest extends TestCase
         $this->app->instance(\Illuminate\Contracts\Bus\Dispatcher::class,
             \Mockery::mock(\Illuminate\Contracts\Bus\Dispatcher::class)->shouldReceive('dispatch')
                 ->andThrow(new \RuntimeException('Redis unavailable'))->getMock());
-        $this->postJson($this->base.'/media-publications', $this->payload(['urls' => ['https://example.com/a.png']]))
+        $this->postJson($this->base.'/media-publications', $this->payload(['upload_ids' => [$this->upload()]]))
             ->assertStatus(202)->assertJsonPath('publication.status', 'pending');
         $this->assertDatabaseCount('nick_publications', 1);
         $this->assertNull(NickMediaFile::first()->queued_at);
@@ -309,10 +309,10 @@ class NickPublicationTest extends TestCase
         $this->assertStringNotContainsString('payload', $response->getContent());
     }
 
-    public function test_legacy_create_and_store_still_work_without_background_jobs(): void
+    public function test_default_create_uses_background_upload_and_legacy_store_accepts_local_files(): void
     {
         $this->get($this->base.'/create')->assertOk()->assertInertia(fn (Assert $page) => $page
-            ->component('Admin/Nicks/Create')->missing('backgroundUpload'));
+            ->component('Admin/Nicks/Create')->where('backgroundUpload', true));
         $this->get($this->base.'/create-background')->assertOk()->assertInertia(fn (Assert $page) => $page
             ->component('Admin/Nicks/Create')->where('backgroundUpload', true));
         $payload = $this->payload();
@@ -338,6 +338,41 @@ class NickPublicationTest extends TestCase
         $this->assertDatabaseCount('nick_publications', 0);
     }
 
+    public function test_remote_images_are_rejected_before_creating_a_publication_or_legacy_nick(): void
+    {
+        $this->postJson($this->base.'/media-publications', $this->payload([
+            'urls' => ['https://images.example.com/track-origin.png'],
+        ]))->assertUnprocessable()->assertJsonValidationErrors('urls');
+
+        $payload = $this->payload();
+        unset($payload['request_id'], $payload['upload_ids'], $payload['urls']);
+        $payload['image_urls'] = json_encode(['https://images.example.com/track-origin.png']);
+        $this->postJson($this->base, $payload)
+            ->assertUnprocessable()->assertJsonValidationErrors('image_urls');
+
+        $this->assertDatabaseCount('nick_publications', 0);
+        $this->assertDatabaseCount('nick_media_files', 0);
+        $this->assertDatabaseCount('nicks', 0);
+        Queue::assertNothingPushed();
+    }
+
+    public function test_old_queued_url_is_blocked_permanently_without_importing_media(): void
+    {
+        // A URL draft accepted by an older release can still exist after deployment.
+        $publication = $this->service->submit($this->seller, $this->payload([
+            'urls' => ['https://images.example.com/track-origin.png'],
+        ]));
+        $file = $publication->files()->firstOrFail();
+        $this->service->processFile($file->id);
+
+        $this->assertSame('failed', $file->fresh()->status);
+        $this->assertSame(SafeImageDownloader::DISABLED_MESSAGE, $file->fresh()->error);
+        $this->assertSame('failed', $publication->fresh()->status);
+        $this->assertDatabaseCount('media', 0);
+        $this->assertDatabaseCount('nicks', 0);
+        Queue::assertPushed(ProcessNickMedia::class, 1);
+    }
+
     public function test_used_upload_cannot_be_deleted_and_cancel_releases_account_for_another_draft(): void
     {
         $upload = $this->upload();
@@ -346,7 +381,7 @@ class NickPublicationTest extends TestCase
         $this->deleteJson($this->base.'/media-uploads/'.$upload)->assertStatus(409);
         $this->deleteJson($this->base.'/media-publications/'.$publication->uuid)->assertOk();
         Storage::disk('nick-staging')->assertMissing($path);
-        $this->postJson($this->base.'/media-publications', $this->payload(['urls' => ['https://example.com/a.png']]))
+        $this->postJson($this->base.'/media-publications', $this->payload(['upload_ids' => [$this->upload()]]))
             ->assertStatus(202);
         $this->assertDatabaseCount('nicks', 0);
     }

@@ -14,6 +14,7 @@ class StoreRandomBoxRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'image_url' => 'prohibited',
             'category_id' => 'required|exists:categories,id',
             'name' => 'required|string|max:255',
             'price' => 'required|numeric|min:0|max:999999999',
