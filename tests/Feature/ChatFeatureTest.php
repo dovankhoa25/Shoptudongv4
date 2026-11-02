@@ -35,6 +35,10 @@ class ChatFeatureTest extends TestCase
     {
         parent::setUp();
 
+        // Repeated resolves here exercise workflow/idempotency; the default quota
+        // and its expiry are covered separately by ChatAbuseProtectionTest.
+        config(['chat.rate_limits.resolve_per_minute' => 12]);
+
         foreach ([
             AppPermission::ChatsView,
             AppPermission::ChatsViewAll,

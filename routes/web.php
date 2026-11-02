@@ -82,11 +82,11 @@ Route::middleware(['auth', 'unlocked.user'])->group(function () {
     Route::prefix('chat')->name('chat.')->middleware(['unlocked.user', 'throttle:chat'])->group(function (): void {
         Route::get('/realtime-channel', ChatRealtimeChannelController::class)->name('realtime-channel.show');
         Route::get('/conversations', [ChatController::class, 'index'])->name('conversations.index');
-        Route::post('/conversations/resolve', [ChatController::class, 'resolve'])->name('conversations.resolve');
+        Route::post('/conversations/resolve', [ChatController::class, 'resolve'])->middleware('throttle:chat-resolve')->name('conversations.resolve');
         Route::get('/contexts', [ChatController::class, 'contexts'])->name('contexts.index');
         Route::get('/conversations/{conversation}', [ChatController::class, 'show'])->name('conversations.show');
         Route::get('/conversations/{conversation}/messages', [ChatController::class, 'messages'])->name('messages.index');
-        Route::post('/conversations/{conversation}/messages', [ChatController::class, 'send'])->name('messages.store');
+        Route::post('/conversations/{conversation}/messages', [ChatController::class, 'send'])->middleware('throttle:chat-send')->name('messages.store');
         Route::post('/conversations/{conversation}/tips', [ChatController::class, 'tip'])
             ->middleware('throttle:10,1')
             ->name('tips.store');
@@ -908,7 +908,7 @@ Route::prefix('admin/chat')
             ->middleware(Permission::middleware(Permission::ChatsView))
             ->name('conversations.index');
         Route::post('/conversations/resolve', [ChatController::class, 'resolveForAgent'])
-            ->middleware(Permission::middleware(Permission::ChatsView, Permission::ChatsReply))
+            ->middleware([Permission::middleware(Permission::ChatsView, Permission::ChatsReply), 'throttle:chat-resolve'])
             ->name('conversations.resolve');
         Route::get('/agents', [ChatController::class, 'agents'])
             ->middleware(Permission::middleware(Permission::ChatsAssign))
@@ -926,7 +926,7 @@ Route::prefix('admin/chat')
             ->middleware(Permission::middleware(Permission::ChatsView))
             ->name('notes.index');
         Route::post('/conversations/{conversation}/messages', [ChatController::class, 'send'])
-            ->middleware(Permission::middleware(Permission::ChatsReply))
+            ->middleware([Permission::middleware(Permission::ChatsReply), 'throttle:chat-send'])
             ->name('messages.store');
         Route::patch('/conversations/{conversation}/pinned-note', [ChatController::class, 'pinNote'])
             ->middleware(Permission::middleware(Permission::ChatsManage))

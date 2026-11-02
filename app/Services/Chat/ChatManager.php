@@ -20,12 +20,12 @@ class ChatManager
 
     /**
      * @param  array<string, mixed>  $attributes
-     * @return array{0: ChatConversation, 1: bool, 2: int|null, 3: ChatMessage|null}
+     * @return array{0: ChatConversation, 1: bool, 2: int|null, 3: ChatMessage|null, 4: bool}
      */
     public function resolve(User $customer, array $attributes): array
     {
         return DB::transaction(function () use ($customer, $attributes): array {
-            [$conversation, $created, $previousAssigneeId] = $this->resolveConversation(
+            [$conversation, $created, $previousAssigneeId, $resolutionAction] = $this->resolveConversation(
                 $customer,
                 $attributes,
                 $customer,
@@ -54,7 +54,7 @@ class ChatManager
                     ]);
             }
 
-            return [$conversation->fresh(), $created, $previousAssigneeId, $welcomeMessage];
+            return [$conversation->fresh(), $created, $previousAssigneeId, $welcomeMessage, $resolutionAction !== null];
         });
     }
 
@@ -226,20 +226,26 @@ class ChatManager
                 ]);
             }
 
-            ChatParticipant::query()->updateOrCreate(
-                ['conversation_id' => $conversation->id, 'user_id' => $customer->getKey()],
-                ['role' => ChatParticipant::ROLE_CUSTOMER, 'joined_at' => now(), 'left_at' => null],
-            );
+            $this->ensureParticipant($conversation, (int) $customer->getKey(), ChatParticipant::ROLE_CUSTOMER);
 
             if ($conversation->assigned_to_id) {
-                ChatParticipant::query()->updateOrCreate(
-                    ['conversation_id' => $conversation->id, 'user_id' => $conversation->assigned_to_id],
-                    ['role' => ChatParticipant::ROLE_AGENT, 'joined_at' => now(), 'left_at' => null],
-                );
+                $this->ensureParticipant($conversation, (int) $conversation->assigned_to_id, ChatParticipant::ROLE_AGENT);
             }
 
             return [$conversation->fresh(), $created, $previousAssigneeId, $resolutionAction, $enteredActive];
         });
+    }
+
+    private function ensureParticipant(ChatConversation $conversation, int $userId, string $role): void
+    {
+        $participant = ChatParticipant::query()->firstOrCreate(
+            ['conversation_id' => $conversation->id, 'user_id' => $userId],
+            ['role' => $role, 'joined_at' => now(), 'left_at' => null],
+        );
+
+        if ($participant->role !== $role || $participant->left_at !== null) {
+            $participant->update(['role' => $role, 'joined_at' => now(), 'left_at' => null]);
+        }
     }
 
     /**
@@ -248,7 +254,7 @@ class ChatManager
      * conversation only returns that conversation and does not add noise.
      *
      * @param  array<string, mixed>  $attributes
-     * @return array{0: ChatConversation, 1: bool, 2: ChatMessage|null, 3: int|null, 4: bool}
+     * @return array{0: ChatConversation, 1: bool, 2: ChatMessage|null, 3: int|null, 4: bool, 5: bool}
      */
     public function resolveForAgent(User $actor, array $attributes): array
     {
@@ -326,6 +332,7 @@ class ChatManager
                 $attributes,
                 $actor,
             );
+            $assignmentChanged = false;
 
             if ($resolutionAction === null
                 && $conversation->status === ChatConversation::STATUS_RESOLVED) {
@@ -356,10 +363,11 @@ class ChatManager
                     : $previousAssigneeId;
                 $this->changeAssignee($conversation, $actor, (int) $actor->getKey());
                 $conversation = $conversation->fresh();
+                $assignmentChanged = true;
             }
 
             if ($resolutionAction === null) {
-                return [$conversation, false, null, $previousAssigneeId, false];
+                return [$conversation, false, null, $previousAssigneeId, false, $assignmentChanged];
             }
 
             if (! $conversation->assigned_to_id) {
@@ -420,7 +428,7 @@ class ChatManager
                 'resolved_at' => null,
             ]);
 
-            return [$conversation->fresh(), $created, $message, $previousAssigneeId, $enteredActive];
+            return [$conversation->fresh(), $created, $message, $previousAssigneeId, $enteredActive, true];
         });
     }
 

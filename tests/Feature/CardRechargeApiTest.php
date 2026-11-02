@@ -22,6 +22,8 @@ class CardRechargeApiTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // Simulate the real connection arriving through an allowed Cloudflare edge.
+        $this->withServerVariables(['REMOTE_ADDR' => '173.245.48.5']);
 
         config()->set('services.card_partner.url', 'https://partner.test/charging');
         config()->set('services.card_partner.id', 'partner-id');

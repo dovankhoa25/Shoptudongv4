@@ -20,6 +20,8 @@ class GpmPayWebhookTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // This suite also exercises the separate SePay endpoint.
+        $this->withServerVariables(['REMOTE_ADDR' => '173.245.48.5']);
 
         config([
             'services.bank_deposit.provider' => 'gpmpay',

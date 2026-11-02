@@ -13,6 +13,12 @@ class OriginIpErrorResponseTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->withServerVariables(['REMOTE_ADDR' => '173.245.48.5']);
+    }
+
     public function test_card_submission_does_not_return_infrastructure_exception_details(): void
     {
         CardType::create(['telco' => 'viettel', 'discount_rate' => 20, 'status' => true]);

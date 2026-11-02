@@ -24,6 +24,10 @@ class ChatOutboundConversationTest extends TestCase
     {
         parent::setUp();
 
+        // Allow repeated calls when testing assignment/authorization workflows.
+        // ChatAbuseProtectionTest verifies the default one-per-minute quota.
+        config(['chat.rate_limits.resolve_per_minute' => 12]);
+
         foreach ([
             AppPermission::ChatsView,
             AppPermission::ChatsReply,
@@ -94,6 +98,7 @@ class ChatOutboundConversationTest extends TestCase
         ]);
 
         Event::assertDispatchedTimes(ChatMessageSent::class, 1);
+        Event::assertDispatchedTimes(ChatInboxUpdated::class, 1);
         Event::assertDispatched(ChatMessageSent::class, fn (ChatMessageSent $event): bool => $event->conversationId === $conversationId
             && in_array($customer->id, $event->recipientIds, true)
             && $event->message['type'] === ChatMessage::TYPE_SYSTEM);

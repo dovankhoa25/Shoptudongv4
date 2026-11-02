@@ -1,0 +1,50 @@
+FINANCIAL WEBHOOK INGRESS - 2026-11-02
+
+Protected paths:
+  /api/charge/callback
+  /api/webhook/sepay
+
+RestrictFinancialWebhookIngress is the first global HTTP middleware. It checks
+the original connection address against the 22 owner-supplied Cloudflare IPv4/
+IPv6 networks before CORS origin lookup, throttling, sessions or controllers.
+Denied requests return JSON 403 without querying SQL/cache or recording traffic
+metrics. Existing callback signatures, SePay API keys and throttling still apply
+after an allowed peer passes this check. No database migration is needed.
+
+The source address comes from REMOTE_ADDR, not CF-Connecting-IP, X-Real-IP,
+X-Forwarded-For or signed storefront headers. IPv4-mapped IPv6 is supported.
+
+HOSTING REQUIREMENT
+Confirm that PHP's REMOTE_ADDR still contains the original Cloudflare connection
+address. Some hosting setups rewrite REMOTE_ADDR to the visitor/provider address
+or expose a local proxy address; those requests will be denied by default.
+If it is rewritten, ask the host to expose the original peer in a server/FastCGI
+variable such as REALIP_REMOTE_ADDR. Then set in the backend .env:
+  FINANCIAL_WEBHOOK_PEER_SERVER_KEY=REALIP_REMOTE_ADDR
+Only set this once the host confirms that variable is supplied by the server.
+HTTP_* variables are deliberately rejected because clients can spoof headers.
+Do not add localhost or private proxy ranges to the Cloudflare allowlist to work
+around this: that would let all traffic through that proxy bypass the check.
+
+DEPLOY
+1. Back up bootstrap/app.php. Copy the new app/ and config/ files into the Laravel
+   root first, then upload bootstrap/app.php last. Keep the package outside public/.
+2. Confirm the hosting requirement above before activating payment callbacks.
+3. Run: php artisan config:clear
+   This command does not flush Redis. A config cache may be rebuilt after checking
+   that the connection-peer setting is correct.
+4. Verify that disallowed direct requests get 403, and a provider callback through
+   Cloudflare still passes the existing credential/signature checks and is applied
+   only once. No live payment was sent during local validation.
+
+LIMIT
+This is a Cloudflare ingress allowlist, not an allowlist of payment-provider IPs.
+Anyone sending requests through Cloudflare also reaches PHP from a Cloudflare IP.
+To block those callers before DB access as well, obtain the full authorized
+provider IPs and enforce those at Cloudflare/WAF or with verified client-IP rules.
+
+VALIDATION
+61 local PHPUnit tests / 595 assertions passed. Coverage includes 0 SQL/cache
+activity for denied requests with monitoring enabled; IPv4, IPv6, IPv4-mapped
+IPv6; spoofed forwarding/signed headers; encoded/trailing-slash paths; and
+existing card/SePay/GPM payment authentication and duplicate callback handling.

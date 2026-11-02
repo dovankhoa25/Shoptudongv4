@@ -31,6 +31,9 @@ return Application::configure(basePath: dirname(__DIR__))
             \App\Http\Middleware\ResolveSecurityClientIp::class);
         $middleware->prepend(\App\Http\Middleware\ApplyFrontendClientCors::class);
         $middleware->prepend(\App\Http\Middleware\StartTrafficTiming::class);
+        // Must run before CORS origins, security caches and route throttling use DB/Redis.
+        $middleware->prepend(\App\Http\Middleware\RestrictFinancialWebhookIngress::class);
+        $middleware->append(\App\Http\Middleware\ThrottlePublicIngress::class);
 
         $middleware->web(append: [
             \App\Http\Middleware\EnforceIpBlock::class,

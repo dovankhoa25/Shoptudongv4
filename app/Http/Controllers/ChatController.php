@@ -190,7 +190,7 @@ class ChatController extends Controller
             ]);
         }
 
-        [$conversation, $created, $previousAssigneeId, $welcomeMessage] = $this->manager->resolve(
+        [$conversation, $created, $previousAssigneeId, $welcomeMessage, $changed] = $this->manager->resolve(
             $request->user(),
             $validated,
         );
@@ -201,12 +201,14 @@ class ChatController extends Controller
             $welcomeMessage->setRelation('conversation', $conversation);
         }
 
-        $this->realtime->inbox(
-            $created ? 'created' : 'updated',
-            $conversation,
-            $this->inboxPayload($conversation),
-            $previousAssigneeId ? [(int) $previousAssigneeId] : [],
-        );
+        if ($changed) {
+            $this->realtime->inbox(
+                $created ? 'created' : 'updated',
+                $conversation,
+                $this->inboxPayload($conversation),
+                $previousAssigneeId ? [(int) $previousAssigneeId] : [],
+            );
+        }
 
         return response()->json([
             'data' => (new ChatConversationResource($conversation))->resolve($request),
@@ -238,7 +240,7 @@ class ChatController extends Controller
             ]);
         }
 
-        [$conversation, $created, $message, $previousAssigneeId, $enteredActive] = $this->manager
+        [$conversation, $created, $message, $previousAssigneeId, $enteredActive, $changed] = $this->manager
             ->resolveForAgent($request->user(), $validated);
         $this->prepareConversation($conversation, $request->user());
         $conversationPayload = $this->inboxPayload($conversation);
@@ -257,12 +259,14 @@ class ChatController extends Controller
             );
         }
 
-        $this->realtime->inbox(
-            $previousAssigneeId ? 'assigned' : ($created ? 'created' : 'updated'),
-            $conversation,
-            $conversationPayload,
-            $previousAssigneeId ? [(int) $previousAssigneeId] : [],
-        );
+        if ($changed) {
+            $this->realtime->inbox(
+                $previousAssigneeId ? 'assigned' : ($created ? 'created' : 'updated'),
+                $conversation,
+                $conversationPayload,
+                $previousAssigneeId ? [(int) $previousAssigneeId] : [],
+            );
+        }
 
         return response()->json([
             'data' => (new ChatConversationResource($conversation))->resolve($request),

@@ -122,7 +122,7 @@ Route::prefix('chat')
             ->middleware(CheckToken::using('chat:read'))
             ->name('conversations.index');
         Route::post('/conversations/resolve', [ChatController::class, 'resolve'])
-            ->middleware(CheckToken::using(['chat:read', 'chat:write']))
+            ->middleware([CheckToken::using(['chat:read', 'chat:write']), 'throttle:chat-resolve'])
             ->name('conversations.resolve');
         Route::get('/contexts', [ChatController::class, 'contexts'])
             ->middleware(CheckToken::using('chat:read'))
@@ -137,7 +137,7 @@ Route::prefix('chat')
             ->middleware(CheckToken::using('chat:read'))
             ->name('messages.index');
         Route::post('/conversations/{conversation}/messages', [ChatController::class, 'send'])
-            ->middleware(CheckToken::using(['chat:read', 'chat:write']))
+            ->middleware([CheckToken::using(['chat:read', 'chat:write']), 'throttle:chat-send'])
             ->name('messages.store');
         Route::post('/conversations/{conversation}/tips', [ChatController::class, 'tip'])
             ->middleware([CheckToken::using(['chat:read', 'chat:write']), 'throttle:10,1'])

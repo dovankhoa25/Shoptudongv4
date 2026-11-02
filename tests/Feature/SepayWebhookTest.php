@@ -17,6 +17,7 @@ class SepayWebhookTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->withServerVariables(['REMOTE_ADDR' => '173.245.48.5']);
 
         config()->set('services.bank_deposit.provider', 'sepay');
         config()->set('services.sepay.webhook_key', 'sepay-test-key');

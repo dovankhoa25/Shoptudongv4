@@ -99,15 +99,37 @@ class AppServiceProvider extends ServiceProvider
             $group = $request->isMethod('GET') ? 'read' : 'write';
             return Limit::perMinute(60)->by('authenticated-api:'.$group.':'.($request->user()?->id ?? $request->ip()));
         });
-        RateLimiter::for('balance-deposit', fn (Request $request) => Limit::perMinute(10)
+        RateLimiter::for('balance-deposit', fn (Request $request) => Limit::perMinute(100)
             ->by('balance-deposit:'.($request->user()?->id ?? $request->ip()))
         );
         RateLimiter::for('financial-webhook', fn (Request $request) => Limit::perMinute(180)
             ->by('financial-webhook:'.$request->ip())
         );
-        RateLimiter::for('chat', fn (Request $request) => Limit::perMinute(240)
+        RateLimiter::for('health-ingress', fn (Request $request) => Limit::perMinute(60)
+            ->by('health-ingress:'.$request->ip())
+        );
+        RateLimiter::for('chat-ingress', fn (Request $request) => Limit::perMinute(max(1, (int) config('chat.rate_limits.ingress_per_minute')))
+            ->by('chat-ingress:'.$request->ip())
+        );
+        RateLimiter::for('chat', fn (Request $request) => Limit::perMinute(100)
             ->by('chat:'.($request->user()?->id ?? $request->ip()))
         );
+        RateLimiter::for('chat-resolve', fn (Request $request) => Limit::perMinute(max(1, (int) config('chat.rate_limits.resolve_per_minute')))
+            ->by('chat-resolve:'.($request->user()?->id ?? $request->ip()))
+        );
+        RateLimiter::for('chat-send', function (Request $request) {
+            $identity = $request->user()?->id ?? $request->ip();
+            $setting = $request->user()?->isChatAgent() ? 'agent_send_per_minute' : 'send_per_minute';
+            $limits = [Limit::perMinute(max(1, (int) config('chat.rate_limits.'.$setting)))
+                ->by('chat-send:'.$identity)];
+
+            if ($request->hasFile('images')) {
+                $limits[] = Limit::perMinute(max(1, (int) config('chat.rate_limits.upload_per_minute')))
+                    ->by('chat-upload:'.$identity);
+            }
+
+            return $limits;
+        });
 
         Passport::tokensCan([
             'profile:read' => 'Read your profile',

@@ -1,6 +1,15 @@
 <?php
 
 return [
+    'rate_limits' => [
+        // IP ingress is shared across accounts; leave room for offices and mobile NAT.
+        'ingress_per_minute' => (int) env('CHAT_INGRESS_PER_MINUTE', 600),
+        'resolve_per_minute' => (int) env('CHAT_RESOLVE_PER_MINUTE', 1),
+        'send_per_minute' => (int) env('CHAT_SEND_PER_MINUTE', 10),
+        'agent_send_per_minute' => (int) env('CHAT_AGENT_SEND_PER_MINUTE', 90),
+        'upload_per_minute' => (int) env('CHAT_UPLOAD_PER_MINUTE', 6),
+    ],
+
     'welcome_message' => env(
         'CHAT_WELCOME_MESSAGE',
         'Hỗ trợ viên đã sẵn sàng. Bạn cần hỗ trợ gì không?',
