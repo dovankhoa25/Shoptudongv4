@@ -5,7 +5,7 @@ use App\Http\Controllers\AppAuto\VersionThree\HeartbeatController;
 use App\Http\Controllers\AppAuto\VersionThree\ActivityController;
 use App\Http\Middleware\VersionThree\TradingHmac;
 use Illuminate\Support\Facades\Route;
-Route::middleware([TradingHmac::class, 'throttle:3000,1'])->group(function (): void {
+Route::middleware([TradingHmac::class, 'throttle:3000,1,trading-v3:'])->group(function (): void {
     Route::get('config', [GemController::class,'config']);
     Route::post('heartbeat', HeartbeatController::class);
     Route::post('activities', [ActivityController::class, 'batch']);

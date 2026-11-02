@@ -89,6 +89,12 @@ class AppServiceProvider extends ServiceProvider
             $model::observe(AdminRealtimeObserver::class);
         }
 
+        RateLimiter::for('public-ingress', function (Request $request) {
+            $bucket = $request->attributes->get('_ingress_bucket', 'web');
+
+            return Limit::perMinute(max(1, (int) config('ingress_rate_limits.per_minute.'.$bucket, 120)))
+                ->by('ingress:'.$bucket.':'.$request->ip());
+        });
         RateLimiter::for('public-read', fn (Request $request) => Limit::perMinute(60)
             ->by('public-read:'.$request->ip())
         );
@@ -111,7 +117,7 @@ class AppServiceProvider extends ServiceProvider
         RateLimiter::for('chat-ingress', fn (Request $request) => Limit::perMinute(max(1, (int) config('chat.rate_limits.ingress_per_minute')))
             ->by('chat-ingress:'.$request->ip())
         );
-        RateLimiter::for('chat', fn (Request $request) => Limit::perMinute(100)
+        RateLimiter::for('chat', fn (Request $request) => Limit::perMinute(20)
             ->by('chat:'.($request->user()?->id ?? $request->ip()))
         );
         RateLimiter::for('chat-resolve', fn (Request $request) => Limit::perMinute(max(1, (int) config('chat.rate_limits.resolve_per_minute')))

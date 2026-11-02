@@ -66,13 +66,12 @@ Route::prefix('auth')->group(function (): void {
         ->middleware('throttle:30,1');
 });
 
-Route::get('/card-types', [CardTypeController::class, 'index']);
-
 Route::post('/broadcasting/auth', function (Request $request) {
     return Broadcast::auth($request);
 })->middleware(['auth:api', 'throttle:realtime-auth']);
 
 Route::middleware('throttle:public-read')->group(function (): void {
+    Route::get('/card-types', [CardTypeController::class, 'index']);
     Route::get('/game-types-with-categories', [CategoryController::class, 'index']);
     Route::get('/categories/{slug}/nicks', [NickController::class, 'getByCategory']);
     Route::get('/nick/{id}', [NickController::class, 'show']);
@@ -91,16 +90,14 @@ Route::middleware('throttle:public-read')->group(function (): void {
     Route::get('/server-prices/{serverId}', [HomeController::class, 'getServerPriceById'])->name('api.server.price');
 });
 
+// Financial IP throttling runs once in ThrottlePublicIngress, before bindings/controllers.
 Route::post('/charge/callback', [RechargeController::class, 'callback'])
     ->middleware([
         // TEMP: comment dòng dưới sau khi kiểm tra TSR có gửi callback tới Laravel hay không.
         // LogCardPartnerCallbackAttempt::class,
-        'throttle:financial-webhook',
     ]);
-Route::post('/webhook/sepay', [WebhookController::class, 'handle'])
-    ->middleware('throttle:financial-webhook');
-Route::post('/webhook/gpmpay',GpmPayWebhookController::class)
-    ->middleware('throttle:financial-webhook');
+Route::post('/webhook/sepay', [WebhookController::class, 'handle']);
+Route::post('/webhook/gpmpay',GpmPayWebhookController::class);
 
 Route::prefix('app')->name('app.')->group(function (): void {
     Route::get('/carot/recharges/pending', [AppCarotRechargeController::class, 'pending'])->name('carot.pending');
