@@ -23,6 +23,7 @@ Route::middleware([TradingHmac::class, 'throttle:3000,1,trading-v3:'])->group(fu
     Route::get('gold-transactions/{order}', [GoldController::class,'order'])->whereNumber('order');
     Route::put('gold-transactions/{order}', [GoldController::class,'updateOrder'])->whereNumber('order');
     Route::get('gold-transfers', [GoldController::class,'transfers']);
+    Route::get('gold-transfers/{transfer}', [GoldController::class,'transfer'])->whereUuid('transfer');
     Route::put('gold-transfers/{transfer}', [GoldController::class,'updateTransfer'])->whereUuid('transfer');
 });
 

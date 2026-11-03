@@ -13,6 +13,8 @@ if (!$app->environment('testing') || config('database.default') !== 'sqlite'
     throw new RuntimeException('Refusing non-isolated database.');
 }
 if (($argv[1] ?? '') === 'restore') {
+    $loginServer = (int) (getenv('TRADING_TEST_LOGIN_SERVER') ?: 6);
+    if (!in_array($loginServer, [6, 7], true)) throw new RuntimeException('Authorized game server required.');
     if (getenv('NRO_TRADING_V3_TIMING_RESUME') !== 'true' || getenv('NRO_TRADING_V3_TIMING_METHODS') !== 'concurrent_receipt') throw new RuntimeException('Explicit concurrent resume required.');
     $orders = App\Models\GemTransaction::orderBy('id')->get();
     $gift = $orders->where('delivery_method', 'gift_ticket');
@@ -23,11 +25,11 @@ if (($argv[1] ?? '') === 'restore') {
         throw new RuntimeException('Resume requires the original completed gift and two unspent consignment orders.');
     }
     $bot = App\Models\GemBot::sole();
-    if ((int) $bot->server_game_id !== 6 || (int) $bot->map_id !== 84 || (int) $bot->area_number !== 41 || $bot->coordinates !== '652-336') throw new RuntimeException('Original SV6 point required.');
+    if ((int) $bot->server_game_id !== $loginServer || (int) $bot->map_id !== 84 || (int) $bot->area_number !== 41 || $bot->coordinates !== '652-336') throw new RuntimeException('Original game server point required.');
     $user = getenv('TRADING_TEST_BOT_USERNAME'); $password = getenv('TRADING_TEST_BOT_PASSWORD');
     if (!$user || !$password) throw new RuntimeException('Ephemeral original bot credentials required.');
     Illuminate\Support\Facades\DB::table('gem_bots')->where('id', $bot->id)->update(['account_name' => $user, 'account_password' => $password]);
-    echo "Restored original isolated SV6 credentials; all three orders, ledgers and stock versions retained.\n"; exit;
+    echo "Restored original isolated credentials; all three orders, ledgers and stock versions retained.\n"; exit;
 }
 if (($argv[1] ?? '') !== 'sanitize') throw new RuntimeException('Unknown fixture operation.');
 $redactions = json_decode((string) getenv('TRADING_TEST_REDACTIONS_JSON'), true);

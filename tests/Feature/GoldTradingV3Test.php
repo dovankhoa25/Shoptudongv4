@@ -44,7 +44,14 @@ class GoldTradingV3Test extends TestCase {
     }
     private function claim(Bot $b,GoldTransaction $o): string {
         $this->signed('PUT',"/app/v3/gold-transactions/{$o->id}",['worker_id'=>$this->worker,'bot_id'=>$b->id,'action'=>'claim'])
-            ->assertOk()->assertJsonPath('data.has_delivery_checkpoint',true);return (string)Str::uuid(); // Legacy wire field only.
+            ->assertOk()->assertJsonPath('data.has_delivery_checkpoint',true);
+        // Model the tool's explicit local inventory decision; start never derives this from web stock.
+        $b->refresh();$bars=(int)$b->{\App\Services\GoldBarAsset::field($o->gold_bar_template_id??457)};
+        if (($o->type==='import'?999-$bars:$bars)<min(999,$o->gold_bar_qty) || ($o->type==='order' && $b->gold_qty<$o->pure_gold_qty)) {
+            $this->signed('PUT',"/app/v3/gold-transactions/{$o->id}",['action'=>'phase','bot_id'=>$b->id,
+                'phase'=>'waiting_stock','step_id'=>(string)Str::uuid(),'evidence'=>['confirmed'=>true,'no_effect'=>true]])->assertOk();
+        }
+        return (string)Str::uuid(); // Legacy wire field only.
     }
     private function phase(Bot $b,GoldTransaction $o,string $token,string $phase='trading'): array {
         $d=['worker_id'=>$this->worker,'bot_id'=>$b->id,'action'=>'phase','processing_token'=>$token,'step_id'=>(string)Str::uuid(),
@@ -170,15 +177,15 @@ class GoldTradingV3Test extends TestCase {
         $this->signed('PUT',"/app/v3/gold-transactions/{$o->id}",$p)->assertOk()->assertJsonPath('ack_id',$p['step_id']);
         $this->assertSame(8,$b->refresh()->gold_bar_qty);
     }
-    public function test_server_role_disabled_and_busy_claim_guards_without_worker_ownership(): void {
+    public function test_server_role_disabled_guards_without_worker_or_busy_permission(): void {
         $b=$this->bot();$this->lease($b);$o=$this->order($b);$this->claim($b,$o);
-        $o2=$this->order($b);$this->signed('PUT',"/app/v3/gold-transactions/{$o2->id}",['worker_id'=>$this->worker,'bot_id'=>$b->id,'action'=>'claim'])->assertConflict();
+        $o2=$this->order($b);$this->signed('PUT',"/app/v3/gold-transactions/{$o2->id}",['worker_id'=>$this->worker,'bot_id'=>$b->id,'action'=>'claim'])->assertOk();
         $this->signed('GET','/app/v3/gold-transactions?worker_id='.$this->other)->assertJsonCount(2,'data');
         $this->signed('GET',"/app/v3/gold-transactions/{$o->id}?worker_id={$this->other}")->assertOk();
         $this->signed('PUT',"/app/v3/gold/bots/{$b->id}",['worker_id'=>$this->other,'action'=>'lease'])->assertOk();
         $this->signed('PUT',"/app/v3/gold-transactions/{$o->id}",['worker_id'=>$this->other,'bot_id'=>$b->id,'action'=>'claim'])->assertOk()
             ->assertJsonPath('data.has_delivery_checkpoint',true);
-        $aux=$this->bot('selling_sub');$this->lease($aux);$this->signed('PUT',"/app/v3/gold-transactions/{$o2->id}",['worker_id'=>$this->worker,'bot_id'=>$aux->id,'action'=>'claim'])->assertUnprocessable();
+        $aux=$this->bot('selling_sub');$this->lease($aux);$wrongRole=$this->order($b);$this->signed('PUT',"/app/v3/gold-transactions/{$wrongRole->id}",['worker_id'=>$this->worker,'bot_id'=>$aux->id,'action'=>'claim'])->assertUnprocessable();
         $b2=$this->bot();$this->lease($b2);$server=Server::create(['name'=>'other-test','status'=>true]);$o2->update(['server_id'=>$server->id]);
         $this->signed('PUT',"/app/v3/gold-transactions/{$o2->id}",['worker_id'=>$this->worker,'bot_id'=>$b2->id,'action'=>'claim'])->assertUnprocessable();
         $disabledOrder=$this->order($b2);
@@ -193,7 +200,7 @@ class GoldTradingV3Test extends TestCase {
         [$id,$d,$m]=$this->transfer($aux,$main,2,100000000);
         $this->signed('GET','/app/v3/gold-transfers?worker_id='.$this->worker)->assertOk()->assertJsonPath('data.0.id',$id);
         $this->signed('GET','/app/v3/gold-transfers?worker_id='.$this->other)->assertJsonCount(1,'data');
-        $this->signed('PUT',"/app/v3/gold-transactions/{$o->id}",['worker_id'=>$this->worker,'bot_id'=>$main->id,'action'=>'phase','processing_token'=>$t,'step_id'=>(string)Str::uuid(),'phase'=>'trading','character_id'=>1234])->assertConflict();
+        $this->signed('PUT',"/app/v3/gold-transactions/{$o->id}",['worker_id'=>$this->worker,'bot_id'=>$main->id,'action'=>'phase','processing_token'=>$t,'step_id'=>(string)Str::uuid(),'phase'=>'trading','character_id'=>1234])->assertOk();
         $p=$this->transferReceipt($aux,$main,$d,$m);$this->signed('PUT',"/app/v3/gold-transfers/{$id}",$p)->assertOk()->assertJsonPath('data.status','completed');
         $count=InventoryMovement::count();$this->signed('PUT',"/app/v3/gold-transfers/{$id}",$p)->assertOk();$this->assertDatabaseCount('inventory_movements',$count);
         $this->assertSame(8,$aux->refresh()->gold_bar_qty);$this->assertSame(2,$main->refresh()->gold_bar_qty);$this->assertSame(100000000,$main->gold_qty);
@@ -218,12 +225,13 @@ class GoldTradingV3Test extends TestCase {
     }
     public function test_transfer_reservation_survives_expired_lease_and_cancel_is_idempotent(): void {
         $source=$this->bot('import_main',5,0);$aux=$this->bot('selling_sub',0,0);$this->lease($source);$this->lease($aux);
+        $source->forceFill(['stock_version'=>1])->save();
         [$id,$d,$m]=$this->transfer($source,$aux,2);
         $this->signed('PUT',"/app/v3/gold/bots/{$source->id}",['worker_id'=>$this->other,'action'=>'lease'])->assertOk();
         $wrongToken=[...$d,'worker_id'=>$this->other,'action'=>'cancel','bars_qty'=>3,'step_id'=>(string)Str::uuid(),'evidence'=>['confirmed'=>true,'unchanged'=>true]];
         $this->signed('PUT',"/app/v3/gold-transfers/{$id}",$wrongToken)->assertConflict();
         $this->lease($source,$this->worker);
-        $this->signed('PUT',"/app/v3/gold/bots/{$source->id}",['worker_id'=>$this->worker,'action'=>'stock','stock_version'=>1,'gold_qty'=>0,'gold_bar_qty'=>5])->assertConflict();
+        $this->signed('PUT',"/app/v3/gold/bots/{$source->id}",['worker_id'=>$this->worker,'action'=>'stock','stock_version'=>1,'gold_qty'=>0,'gold_bar_qty'=>5])->assertOk()->assertJsonPath('data.stock_snapshot_result','already_current');
         $cancel=[...$d,'worker_id'=>$this->other,'action'=>'cancel','step_id'=>(string)Str::uuid(),'evidence'=>['confirmed'=>true,'unchanged'=>false]];
         $this->signed('PUT',"/app/v3/gold-transfers/{$id}",$cancel)->assertUnprocessable();$cancel['evidence']['unchanged']=true;
         $this->signed('PUT',"/app/v3/gold-transfers/{$id}",$cancel)->assertOk()->assertJsonPath('data.status','cancelled');
@@ -291,14 +299,14 @@ class GoldTradingV3Test extends TestCase {
         $this->assertSame(0,InventoryMovement::where('transaction_type','gold_transfer')->sum('quantity_delta'));
         $this->assertSame(2,InventoryMovement::where('transaction_type','gold_transfer')->where('asset_type','pure_gold')->count());
     }
-    public function test_waiting_stock_can_refresh_baseline_but_trading_cannot(): void {
+    public function test_waiting_stock_and_trading_allow_newer_inventory_without_changing_order_progress(): void {
         $b=$this->bot('selling_main',0,0);$this->lease($b);$o=$this->order($b,'order',2,0);$token=$this->claim($b,$o);
         $this->signed('PUT',"/app/v3/gold/bots/{$b->id}",['worker_id'=>$this->worker,'action'=>'stock','stock_version'=>1,'gold_bar_qty'=>2,'gold_qty'=>0])->assertOk();
         $this->assertSame(['bars'=>0,'pure'=>0],$o->refresh()->delivery_data['progress']);$this->phase($b,$o,$token);
-        $this->signed('PUT',"/app/v3/gold/bots/{$b->id}",['worker_id'=>$this->worker,'action'=>'stock','stock_version'=>2,'gold_bar_qty'=>2,'gold_qty'=>0])->assertConflict();
+        $this->signed('PUT',"/app/v3/gold/bots/{$b->id}",['worker_id'=>$this->worker,'action'=>'stock','stock_version'=>2,'gold_bar_qty'=>2,'gold_qty'=>0])->assertOk();
         $this->signed('PUT',"/app/v3/gold/bots/{$b->id}",['worker_id'=>$this->worker,'action'=>'release'])->assertOk();
         $this->assertTrue($o->refresh()->hasDeliveryCheckpoint());
-        $this->assertSame(1,$b->refresh()->stock_version);
+        $this->assertSame(2,$b->refresh()->stock_version);
     }
     public function test_activity_is_transient_and_admin_can_resolve_processing_checkpoints(): void {
         $b=$this->bot();$this->lease($b);$o=$this->order($b);$this->claim($b,$o);$before=$b->refresh()->getAttributes();
@@ -490,12 +498,12 @@ class GoldTradingV3Test extends TestCase {
         $this->assertSame(10,$b->refresh()->gold_bar_qty);$this->assertSame(2,$b->stock_version);
         $this->assertTrue(InventoryMovement::where('movement_type','sale')->firstOrFail()->meta['snapshot_watermark_advanced']);
         $late=['action'=>'stock','stock_version'=>1,'gold_bar_qty'=>12,'gold_qty'=>100000000];
-        $this->signed('PUT',"/app/v3/gold/bots/{$b->id}",$late)->assertConflict();
+        $this->signed('PUT',"/app/v3/gold/bots/{$b->id}",$late)->assertOk();
         $this->assertSame(10,$b->refresh()->gold_bar_qty);$this->assertSame(2,$b->stock_version);
         $stock=['action'=>'stock','stock_version'=>3,'gold_bar_qty'=>14,'gold_qty'=>99999999];
         $this->signed('PUT',"/app/v3/gold/bots/{$b->id}",$stock)->assertOk();
         $this->assertSame(14,$b->refresh()->gold_bar_qty);$this->assertArrayNotHasKey('stock_refresh_pending_step_id',$o->refresh()->delivery_data);
-        $stock['stock_version']=4;$this->signed('PUT',"/app/v3/gold/bots/{$b->id}",$stock)->assertConflict();
+        $stock['stock_version']=4;$this->signed('PUT',"/app/v3/gold/bots/{$b->id}",$stock)->assertOk();
         $count=InventoryMovement::count();$this->signed('PUT',"/app/v3/gold-transactions/{$o->id}",$p)->assertOk();$this->assertDatabaseCount('inventory_movements',$count);
         $this->assertArrayNotHasKey('stock_refresh_pending_step_id',$o->refresh()->delivery_data);
     }
@@ -514,7 +522,7 @@ class GoldTradingV3Test extends TestCase {
         $this->assertSame(2,$from->stock_version);$this->assertSame(3,$to->stock_version);
         foreach([[$from,1,2,7],[$to,2,3,3]] as [$bot,$lateVersion,$watermark,$actualBars]) {
             $late=['action'=>'stock','stock_version'=>$lateVersion,'gold_bar_qty'=>50,'gold_qty'=>0];
-            $this->signed('PUT',"/app/v3/gold/bots/{$bot->id}",$late)->assertConflict();
+            $this->signed('PUT',"/app/v3/gold/bots/{$bot->id}",$late)->assertOk();
             $this->assertSame($watermark,$bot->refresh()->stock_version);
             $late['stock_version']=$watermark+1;$late['gold_bar_qty']=$actualBars;
             $this->signed('PUT',"/app/v3/gold/bots/{$bot->id}",$late)->assertOk();
@@ -529,7 +537,7 @@ class GoldTradingV3Test extends TestCase {
         $receipt['evidence']['intent']=['id'=>$receipt['step_id'],'order_id'=>$first->id,'nested'=>['frozen'=>true,'quantities'=>[2,0]]];
         $next=$this->order($b,'order',1,0);$path="/app/v3/gold-transactions/{$next->id}";
         $claim=['action'=>'start','bot_id'=>$b->id];
-        $this->signed('PUT',$path,$claim)->assertConflict();
+        $this->signed('PUT',$path,$claim)->assertOk();
         $claim['pending_receipts']=[['order_id'=>$first->id,'payload'=>$receipt]];
         $this->signed('PUT',$path,$claim)->assertOk()->assertJsonPath('data.status','processing')
             ->assertJsonPath('receipt_acks.0.order_id',$first->id)->assertJsonPath('receipt_acks.0.step_id',$receipt['step_id'])
@@ -649,30 +657,30 @@ class GoldTradingV3Test extends TestCase {
         $this->signed('GET','/app/v3/gold/bots')->assertJsonPath('data.0.available.bars',5);
         $small=$this->order($main,'order',3,0);$this->claim($main,$small);$this->phase($main,$small,$token);
         $this->assertSame(2,GoldTradingService::available($main)['bars']);
-        $this->signed('PUT',"/app/v3/gold-transactions/{$large->id}",['action'=>'start','bot_id'=>$main->id])->assertConflict();
+        $this->signed('PUT',"/app/v3/gold-transactions/{$large->id}",['action'=>'start','bot_id'=>$main->id])->assertOk();
         $receipt=$this->receipt($main,$small,$token,3,0,true);
         $this->signed('PUT',"/app/v3/gold-transactions/{$small->id}",$receipt)->assertOk();
         $this->assertSame(2,$main->refresh()->gold_bar_qty);
         $this->signed('PUT',"/app/v3/gold-transactions/{$large->id}",['action'=>'start','bot_id'=>$main->id])->assertOk()
-            ->assertJsonPath('data.delivery_phase','waiting_stock')->assertJsonPath('data.delivery_data.stock_wait_settled',true);
+            ->assertJsonPath('data.delivery_phase','waiting_customer');
         $this->assertSame($quote,$large->refresh()->delivery_data['claim']);
         $this->assertSame(['bars'=>0,'pure'=>0],$large->delivery_data['progress']);
         $this->assertTrue(GoldTradingService::hasActiveDelivery($main)); // Legacy writes stay protected.
     }
-    public function test_parked_sale_resumes_only_after_refill_and_keeps_actual_transfer_exclusive(): void {
+    public function test_customer_status_does_not_wait_for_unrelated_transfer_acknowledgement(): void {
         $main=$this->bot('selling_main',2,0);$aux=$this->bot('import_sub',20,0);
         // The auxiliary's own waiting point is unrelated to the assigned main's destination.
         $aux->update(['map_id'=>'','area_number'=>'','coordinates'=>'']);
         $large=$this->order($main,'order',10,0);$token=$this->claim($main,$large);
         [$id,$claim,$meta]=$this->transfer($aux,$main,8);
         $small=$this->order($main,'order',1,0);
-        foreach([$small,$large] as $order) $this->signed('PUT',"/app/v3/gold-transactions/{$order->id}",['action'=>'start','bot_id'=>$main->id])->assertConflict();
+        foreach([$small,$large] as $order) $this->signed('PUT',"/app/v3/gold-transactions/{$order->id}",['action'=>'start','bot_id'=>$main->id])->assertOk();
         $receipt=$this->transferReceipt($aux,$main,$claim,$meta);
         $this->signed('PUT',"/app/v3/gold-transfers/{$id}",$receipt)->assertOk();
         $this->signed('PUT',"/app/v3/gold-transactions/{$large->id}",['action'=>'start','bot_id'=>$main->id])->assertOk()
             ->assertJsonPath('data.delivery_phase','waiting_customer');
         $this->assertArrayNotHasKey('stock_wait_settled',$large->refresh()->delivery_data);
-        $this->signed('PUT',"/app/v3/gold-transactions/{$small->id}",['action'=>'start','bot_id'=>$main->id])->assertConflict();
+        $this->signed('PUT',"/app/v3/gold-transactions/{$small->id}",['action'=>'start','bot_id'=>$main->id])->assertOk();
         $this->phase($main,$large,$token);$sale=$this->receipt($main,$large,$token,10,0,true);
         $this->signed('PUT',"/app/v3/gold-transactions/{$large->id}",$sale)->assertOk()->assertJsonPath('data.status','completed');
         $this->assertSame(0,$main->refresh()->gold_bar_qty);$this->assertSame(12,$aux->refresh()->gold_bar_qty);
@@ -699,9 +707,9 @@ class GoldTradingV3Test extends TestCase {
         $small=$this->order($main,'import',1,0);$this->claim($main,$small);$this->phase($main,$small,$token);
         $this->assertSame(0,GoldTradingService::receiveRoom($main));
         $receipt=$this->receipt($main,$small,$token,1,0,true);$this->signed('PUT',"/app/v3/gold-transactions/{$small->id}",$receipt)->assertOk();
-        $this->signed('PUT',"/app/v3/gold-transactions/{$large->id}",['action'=>'start','bot_id'=>$main->id])->assertOk()->assertJsonPath('data.delivery_phase','waiting_stock');
+        $this->signed('PUT',"/app/v3/gold-transactions/{$large->id}",['action'=>'start','bot_id'=>$main->id])->assertOk()->assertJsonPath('data.delivery_phase','waiting_customer');
         $phase=['action'=>'phase','bot_id'=>$main->id,'step_id'=>(string)Str::uuid(),'phase'=>'trading','character_id'=>1234];
-        $this->signed('PUT',"/app/v3/gold-transactions/{$large->id}",$phase)->assertConflict();
+        $this->signed('PUT',"/app/v3/gold-transactions/{$large->id}",$phase)->assertOk();
         $this->assertSame(999,$main->refresh()->gold_bar_qty);
     }
     public function test_partial_settled_wait_keeps_customer_reservation_but_can_refill(): void {
@@ -711,26 +719,29 @@ class GoldTradingV3Test extends TestCase {
         $park=['action'=>'phase','bot_id'=>$main->id,'step_id'=>(string)Str::uuid(),'phase'=>'waiting_stock','evidence'=>['confirmed'=>true,'no_effect'=>true]];
         $this->signed('PUT',"/app/v3/gold-transactions/{$order->id}",$park)->assertOk()->assertJsonPath('data.delivery_data.stock_transfer_settled',true);
         $this->assertFalse(GoldTradingService::settledStockWait($order->refresh()));$this->assertSame(0,GoldTradingService::available($main->refresh())['bars']);
-        $small=$this->order($main,'order',1,0);$this->signed('PUT',"/app/v3/gold-transactions/{$small->id}",['action'=>'start','bot_id'=>$main->id])->assertConflict();
         [$id,$claim,$meta]=$this->transfer($aux,$main,1);$transfer=$this->transferReceipt($aux,$main,$claim,$meta);
+        $small=$this->order($main,'order',1,0);$this->signed('PUT',"/app/v3/gold-transactions/{$small->id}",['action'=>'start','bot_id'=>$main->id])->assertOk();
         $this->signed('PUT',"/app/v3/gold-transfers/{$id}",$transfer)->assertOk();
         $this->phase($main,$order,$token);$final=$this->receipt($main,$order,$token,2,0,true);
         $this->signed('PUT',"/app/v3/gold-transactions/{$order->id}",$final)->assertOk()->assertJsonPath('data.status','completed');
         $this->assertSame(1,$main->refresh()->gold_bar_qty);
     }
-    public function test_stale_or_unproven_wait_cannot_release_a_customer_or_transfer_gate(): void {
+    public function test_stale_quote_blocks_its_own_resume_without_blocking_other_customers_or_stock(): void {
         $main=$this->bot('selling_main',5,0);$aux=$this->bot('selling_sub',10,0);$order=$this->order($main,'order',10,0);$this->claim($main,$order);
         $order->update(['amount_vnd'=>100001]); // Frozen quote invalidates the parked marker.
         $this->assertFalse(GoldTradingService::settledStockWait($order->refresh()));
-        $small=$this->order($main,'order',1,0);$this->signed('PUT',"/app/v3/gold-transactions/{$small->id}",['action'=>'start','bot_id'=>$main->id])->assertConflict();
+        $this->signed('PUT',"/app/v3/gold-transactions/{$order->id}",['action'=>'start','bot_id'=>$main->id])->assertConflict();
+        $small=$this->order($main,'order',1,0);$this->signed('PUT',"/app/v3/gold-transactions/{$small->id}",['action'=>'start','bot_id'=>$main->id])->assertOk();
         $this->signed('PUT','/app/v3/gold-transfers/'.Str::uuid(),['action'=>'claim','from_bot_id'=>$aux->id,'to_bot_id'=>$main->id,'bars_qty'=>1])->assertConflict();
         $order->update(['amount_vnd'=>100000]);$details=$order->delivery_data;unset($details['stock_wait_settled']);$order->update(['delivery_data'=>$details]);
-        $this->signed('PUT',"/app/v3/gold-transactions/{$small->id}",['action'=>'start','bot_id'=>$main->id])->assertConflict();
-        $this->signed('PUT',"/app/v3/gold/bots/{$main->id}",['action'=>'stock','stock_version'=>1,'gold_bar_qty'=>5,'gold_qty'=>0])->assertConflict();
+        $this->signed('PUT',"/app/v3/gold-transactions/{$small->id}",['action'=>'start','bot_id'=>$main->id])->assertOk();
+        $this->signed('PUT',"/app/v3/gold/bots/{$main->id}",['action'=>'stock','stock_version'=>1,'gold_bar_qty'=>5,'gold_qty'=>0])->assertOk();
     }
     public function test_parked_order_cannot_accept_receipt_or_pending_refund_before_resume(): void {
         $main=$this->bot('selling_main',0,0);$order=$this->order($main,'order',1,0);$token=$this->claim($main,$order);
         $this->signed('PUT',"/app/v3/gold-transactions/{$order->id}",['action'=>'start','bot_id'=>$main->id,'character_id'=>1234])->assertOk();
+        $this->signed('PUT',"/app/v3/gold-transactions/{$order->id}",['action'=>'phase','bot_id'=>$main->id,'phase'=>'waiting_stock',
+            'step_id'=>(string)Str::uuid(),'evidence'=>['confirmed'=>true,'no_effect'=>true]])->assertOk();
         $receipt=$this->receipt($main,$order,$token,1,0,true);$receipt['bot_snapshot']['gold_bar_qty']=0;
         $this->signed('PUT',"/app/v3/gold-transactions/{$order->id}",$receipt)->assertConflict();
         $order->update(['created_at'=>now()->subHours(2)]);$this->pendingRefund($main,$order)->assertConflict();
@@ -769,7 +780,7 @@ class GoldTradingV3Test extends TestCase {
         $aux=$this->bot('selling_sub',5,0);$main=$this->bot('selling_main',0,0);[$id,$claim,$meta]=$this->transfer($aux,$main,3);
         $receipt=$this->transferReceipt($aux,$main,$claim,$meta);$order=$this->order($main,'order',2,0);
         $start=['action'=>'start','bot_id'=>$main->id,'character_id'=>1234,'pending_transfers'=>[['transfer_id'=>$id,'payload'=>$receipt]]];
-        $this->signed('PUT',"/app/v3/gold-transactions/{$order->id}",['action'=>'start','bot_id'=>$main->id])->assertConflict();
+        $this->signed('PUT',"/app/v3/gold-transactions/{$order->id}",['action'=>'start','bot_id'=>$main->id])->assertOk();
         $this->signed('PUT',"/app/v3/gold-transactions/{$order->id}",$start)->assertOk()->assertJsonPath('data.delivery_phase','waiting_customer')
             ->assertJsonPath('transfer_acks.0.transfer_id',$id)->assertJsonPath('transfer_acks.0.ack_id',$receipt['step_id'])
             ->assertJsonPath('transfer_acks.0.data.status','completed');
@@ -830,10 +841,10 @@ class GoldTradingV3Test extends TestCase {
         $receipt['evidence']['intent']=['id'=>$receipt['step_id'],'from_trade_session_id'=>$session,'from_character_id'=>100,'to_character_id'=>200,'stock_snapshot_pending'=>true,
             'from_game_success'=>['intent_id'=>$receipt['step_id'],'session_id'=>$session,'character_id'=>100,'partner_id'=>200,'bars_qty'=>3,'pure_gold_qty'=>0,'offer_verified'=>true,'outcome'=>'success','observed_at'=>now()->toIso8601String()]];
         $order=$this->order($main,'order',2,0);$start=['action'=>'start','bot_id'=>$main->id,'pending_transfers'=>[['transfer_id'=>$id,'payload'=>$receipt]]];
-        $this->signed('PUT',"/app/v3/gold-transactions/{$order->id}",$start)->assertOk()->assertJsonPath('data.delivery_phase','waiting_stock');
+        $this->signed('PUT',"/app/v3/gold-transactions/{$order->id}",$start)->assertOk()->assertJsonPath('data.delivery_phase','waiting_customer');
         $this->assertSame(0,$main->refresh()->gold_bar_qty);$this->assertSame(3,$main->stock_version);$this->assertSame(2,$aux->refresh()->stock_version);
         $late=['action'=>'stock','stock_version'=>2,'gold_bar_qty'=>0,'gold_qty'=>0];
-        $this->signed('PUT',"/app/v3/gold/bots/{$main->id}",$late)->assertConflict();
+        $this->signed('PUT',"/app/v3/gold/bots/{$main->id}",$late)->assertOk();
         $late['stock_version']=4;$late['gold_bar_qty']=3;$this->signed('PUT',"/app/v3/gold/bots/{$main->id}",$late)->assertOk();
         $count=InventoryMovement::count();$this->signed('PUT',"/app/v3/gold-transfers/{$id}",$receipt)->assertOk();
         $this->signed('PUT',"/app/v3/gold-transactions/{$order->id}",$start)->assertOk()->assertJsonPath('data.delivery_phase','waiting_customer');

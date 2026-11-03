@@ -12,15 +12,14 @@ class GemTradingService {
         $bot=DB::transaction(function() use($id,$d) {
             $bot=GemBot::whereKey($id)->lockForUpdate()->firstOrFail();
             $orders=GemTransaction::where('bot_id',$id)->where('status','processing')->whereNotNull('delivery_data->claim')->get();
-            foreach($orders as $order) abort_unless(in_array($order->delivery_phase,['waiting_customer','waiting_consignment','waiting_login','ready'],true)
-                || !empty($order->delivery_data['stock_refresh_pending_step_id']),409,'Stock correction waits until active receipts are reconciled.');
-            $this->applySnapshot($bot,$d,'sync_correction',null,null);
-            foreach($orders as $order) if(!empty($order->delivery_data['stock_refresh_pending_step_id'])) {
+            $ack=StockSnapshotAcknowledgement::inspect($bot,$d,['name','gem_qty','gift_ticket_qty','consign_item_qty']);
+            if($ack['snapshot_applied'])$this->applySnapshot($bot,$d,'sync_correction',null,null);
+            foreach($orders as $order) if(!$ack['snapshot_stale'] && !empty($order->delivery_data['stock_refresh_pending_step_id'])) {
                 $data=$order->delivery_data;unset($data['stock_refresh_pending_step_id']);$order->forceFill(['delivery_data'=>$data])->save();
             }
-            return $bot->fresh('server');
+            return $bot->fresh('server')->setRelation('tradingV3StockAck',$ack);
         },3);
-        ApiCache::clearGroups(['public:gembot','public:server-prices']);
+        if($bot->getRelation('tradingV3StockAck')['snapshot_applied'])ApiCache::clearGroups(['public:gembot','public:server-prices']);
         return $bot;
     }
     public function updateOrder(int $id,array $d): GemTransaction {
@@ -87,12 +86,9 @@ class GemTradingService {
                     return $order;
                 }
                 abort_unless($bot->status && $bot->server?->status,409,'Bot is not available.');
-                $available=GemStock::available($bot,$order->id);
-                abort_unless($available['gems'] >= $order->gem_qty,409,'Gem inventory is reserved for other orders.');
                 if($order->delivery_method==='gift_ticket') {
                     abort_unless($order->gem_qty>0 && $order->gem_qty%10===0,422,'Ticket orders require multiples of 10.');
-                    abort_unless($bot->gift_ticket_qty!==null && $available['tickets'] >= $order->gem_qty/10,409,'Insufficient verified ticket stock.');
-                } else abort_unless($available['items']>0,409,'Insufficient consignment stock.');
+                }
                 $initialPhase=$d['phase']??'waiting_customer';
                 abort_unless($initialPhase==='waiting_customer' || ($order->delivery_method==='gift_ticket' && $initialPhase==='gifting'),422,'Invalid initial delivery phase.');
                 $order->forceFill(['bot_id'=>$bot->id,'status'=>'processing','character_id'=>$d['character_id']??null,

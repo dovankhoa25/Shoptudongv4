@@ -101,8 +101,9 @@ class TradingV3Test extends TestCase {
         $count=\App\Models\InventoryMovement::count();
         $this->callSigned('PUT',"/app/v3/gem-transactions/{$o->id}",$p)->assertOk();$this->assertDatabaseCount('inventory_movements',$count);
         $this->assertSame(90,(int)$b->refresh()->gem_qty);$this->assertSame('processing',$o->refresh()->status);
-        $this->callSigned('PUT',"/app/v3/gem/bots/{$b->id}",['worker_id'=>$this->worker,'action'=>'stock','stock_version'=>2,'gem_qty'=>90,'gift_ticket_qty'=>9,'consign_item_qty'=>3])->assertConflict();
+        $this->callSigned('PUT',"/app/v3/gem/bots/{$b->id}",['worker_id'=>$this->worker,'action'=>'stock','stock_version'=>2,'gem_qty'=>90,'gift_ticket_qty'=>9,'consign_item_qty'=>3])->assertOk();
         $last=$this->receipt($b,$token,2,true);
+        $last['bot_snapshot']['stock_version']=3;
         $this->callSigned('PUT',"/app/v3/gem-transactions/{$o->id}",$last)->assertOk()->assertJsonPath('data.status','completed');
         $this->callSigned('PUT',"/app/v3/gem-transactions/{$o->id}",$last)->assertOk();
         $this->assertSame(80,(int)$b->refresh()->gem_qty);$this->assertSame(8,(int)$b->gift_ticket_qty);
@@ -268,13 +269,13 @@ class TradingV3Test extends TestCase {
         $this->assertTrue($movement->meta['snapshot_watermark_advanced']);
         // This HTTP upload was captured before the game effect but arrived after its receipt.
         $late=['action'=>'stock','stock_version'=>1,'gem_qty'=>111,'gift_ticket_qty'=>11,'consign_item_qty'=>3];
-        $this->callSigned('PUT',"/app/v3/gem/bots/{$b->id}",$late)->assertConflict();
+        $this->callSigned('PUT',"/app/v3/gem/bots/{$b->id}",$late)->assertOk();
         $this->assertSame(100,(int)$b->refresh()->gem_qty);$this->assertSame(2,(int)$b->stock_version);
         $count=InventoryMovement::count();$this->callSigned('PUT',$path,$p)->assertOk();$this->assertDatabaseCount('inventory_movements',$count);
         $stock=['action'=>'stock','stock_version'=>3,'gem_qty'=>190,'gift_ticket_qty'=>1009,'consign_item_qty'=>3];
         $this->callSigned('PUT',"/app/v3/gem/bots/{$b->id}",$stock)->assertOk();
         $this->assertArrayNotHasKey('stock_refresh_pending_step_id',$o->refresh()->delivery_data);
-        $stock['stock_version']=4;$this->callSigned('PUT',"/app/v3/gem/bots/{$b->id}",$stock)->assertConflict();
+        $stock['stock_version']=4;$this->callSigned('PUT',"/app/v3/gem/bots/{$b->id}",$stock)->assertOk();
         $this->callSigned('PUT',$path,$p)->assertOk();$this->assertArrayNotHasKey('stock_refresh_pending_step_id',$o->refresh()->delivery_data);
     }
     public function test_delayed_equipment_receipt_does_not_block_another_claimed_customer_or_lose_frozen_plan(): void {
@@ -296,10 +297,10 @@ class TradingV3Test extends TestCase {
             'evidence'=>['kind'=>'consignment','confirmed'=>true],'bot_snapshot'=>['stock_version'=>4,'gem_qty'=>60,'gift_ticket_qty'=>8,'consign_item_qty'=>3]];
         $this->callSigned('PUT',$equipmentPath,$buy)->assertUnprocessable();
         $stock=['action'=>'stock','stock_version'=>3,'gem_qty'=>80,'gift_ticket_qty'=>8,'consign_item_qty'=>2];
-        $this->callSigned('PUT',"/app/v3/gem/bots/{$b->id}",$stock)->assertConflict();
+        $this->callSigned('PUT',"/app/v3/gem/bots/{$b->id}",$stock)->assertOk();
         $wrong=$trade;$wrong['delivery_data']['delivery_item']['signature']='different-item';$this->callSigned('PUT',$equipmentPath,$wrong)->assertUnprocessable();
         $this->callSigned('PUT',$equipmentPath,$trade)->assertOk()->assertJsonPath('data.delivery_data.delivery_item.verified',true);
-        $this->assertSame(80,(int)$b->refresh()->gem_qty);$this->assertSame(2,(int)$b->stock_version);
+        $this->assertSame(80,(int)$b->refresh()->gem_qty);$this->assertSame(3,(int)$b->stock_version);
         $this->callSigned('PUT',"/app/v3/gem/bots/{$b->id}",$stock)->assertOk();
         $this->callSigned('PUT',$equipmentPath,$buy)->assertOk()->assertJsonPath('data.status','completed');
         $count=InventoryMovement::count();$this->callSigned('PUT',$equipmentPath,$trade)->assertOk();$this->callSigned('PUT',$giftPath,$giftReceipt)->assertOk();

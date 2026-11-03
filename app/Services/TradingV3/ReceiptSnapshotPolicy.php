@@ -44,7 +44,8 @@ final class ReceiptSnapshotPolicy
             $toValid = self::goldProof($to, $intent, $d, 'to_trade_session_id', 'to_character_id', 'from_character_id');
             $valid = ($intent['id'] ?? null) === $d['step_id'] && ($fromValid || $toValid)
                 && (!$from || $fromValid) && (!$to || $toValid)
-                && empty($intent['from_game_cancelled']) && empty($intent['to_game_cancelled']);
+                && empty($intent['from_game_cancelled']) && empty($intent['to_game_cancelled'])
+                && empty($intent['from_game_failed']) && empty($intent['to_game_failed']);
         }
         abort_unless($valid, 422, 'A pending inventory snapshot requires the current gold step success proof.');
         return true;

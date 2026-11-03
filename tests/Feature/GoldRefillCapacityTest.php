@@ -74,6 +74,12 @@ class GoldRefillCapacityTest extends TestCase
         ]);
         $this->signed("/app/v3/gold-transactions/{$order->id}", [
             'action' => 'start', 'bot_id' => $bot->id, 'gold_bar_template_id' => $asset, 'character_id' => 1234,
+        ])->assertOk()->assertJsonPath('data.delivery_phase', 'waiting_customer');
+        // The tool parks a round from its live inventory, independently of the cached web stock.
+        $this->signed("/app/v3/gold-transactions/{$order->id}", [
+            'action' => 'phase', 'bot_id' => $bot->id, 'gold_bar_template_id' => $asset,
+            'phase' => 'waiting_stock', 'step_id' => (string) Str::uuid(),
+            'evidence' => ['confirmed' => true, 'no_effect' => true],
         ])->assertOk()->assertJsonPath('data.delivery_phase', 'waiting_stock');
 
         return $order;

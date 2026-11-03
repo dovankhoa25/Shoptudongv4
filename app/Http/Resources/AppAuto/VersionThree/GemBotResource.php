@@ -16,6 +16,7 @@ class GemBotResource extends JsonResource {
             'gem_qty'=>(int)$this->gem_qty, 'gift_ticket_qty'=>$this->gift_ticket_qty,
             'consign_item_qty'=>$this->consign_item_qty, 'stock_version'=>(int)$this->stock_version,
             'last_synced_at'=>$this->last_synced_at,
+            ...($this->resource->relationLoaded('tradingV3StockAck') ? $this->resource->getRelation('tradingV3StockAck') : []),
         ];
     }
 }

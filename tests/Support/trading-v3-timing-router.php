@@ -16,6 +16,8 @@ if (!$app->environment('testing') || config('database.default') !== 'sqlite'
     http_response_code(403); echo 'Isolated test backend required.'; return;
 }
 $path = (string) parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+$loginServer = (int) (getenv('TRADING_TEST_LOGIN_SERVER') ?: 6);
+if (!in_array($loginServer, [6, 7], true)) { http_response_code(403); return; }
 $methods = (string) (getenv('NRO_TRADING_V3_TIMING_METHODS') ?: 'both');
 if (!in_array($methods, ['both', 'gift_ticket', 'gift_shop_interleave', 'concurrent_receipt'], true)) { http_response_code(403); return; }
 $concurrent = $methods === 'concurrent_receipt';
@@ -52,12 +54,12 @@ if (str_starts_with($path, '/testing/')) {
             || array_filter($names, fn ($name) => !is_string($name) || !preg_match('/^[a-zA-Z0-9_-]{3,30}$/D', $name))) {
             http_response_code(422); $record(422); echo json_encode(['success' => false, 'message' => 'One or two distinct test customers required.']); return;
         }
-        $created = Illuminate\Support\Facades\DB::transaction(function () use ($names) {
+        $created = Illuminate\Support\Facades\DB::transaction(function () use ($names, $loginServer) {
             if (App\Models\GemTransaction::query()->lockForUpdate()->exists()) return null;
             $bot = App\Models\GemBot::sole();
-            if ((int) $bot->server_game_id !== 6 || (int) $bot->map_id !== 84
+            if ((int) $bot->server_game_id !== $loginServer || (int) $bot->map_id !== 84
                 || (int) $bot->area_number !== 41 || $bot->coordinates !== '652-336') {
-                throw new RuntimeException('Fixture must remain at the authorized SV6 location.');
+                throw new RuntimeException('Fixture must remain at the authorized server location.');
             }
             $user = App\Models\User::firstOrCreate(['email' => 'v3-timing-test@example.invalid'],
                 ['username' => 'v3timingtester', 'password' => Illuminate\Support\Facades\Hash::make(Illuminate\Support\Str::random(32))]);
@@ -88,15 +90,15 @@ if (str_starts_with($path, '/testing/')) {
                 ? 'This fixture permits only one 10-gem ticket order; consignment was already tested.'
                 : 'Only a 30-gem consignment and a 10-gem ticket order are allowed.']); return;
         }
-        $result = Illuminate\Support\Facades\DB::transaction(function () use ($method, $name, $allowedMethods, $maximumGems) {
+        $result = Illuminate\Support\Facades\DB::transaction(function () use ($method, $name, $allowedMethods, $maximumGems, $loginServer) {
             $orders = App\Models\GemTransaction::query()->lockForUpdate()->get();
             if ($orders->count() >= count($allowedMethods) || $orders->contains('delivery_method', $method)) return null;
             $quantity = $method === 'gift_ticket' ? 10 : 30;
             if ($orders->sum('gem_qty') + $quantity > $maximumGems) return null;
             $bot = App\Models\GemBot::sole();
-            if ((int) $bot->server_game_id !== 6 || (int) $bot->map_id !== 84
+            if ((int) $bot->server_game_id !== $loginServer || (int) $bot->map_id !== 84
                 || (int) $bot->area_number !== 41 || $bot->coordinates !== '652-336') {
-                throw new RuntimeException('Fixture must remain at the authorized SV6 location.');
+                throw new RuntimeException('Fixture must remain at the authorized server location.');
             }
             $user = App\Models\User::firstOrCreate(['email' => 'v3-timing-test@example.invalid'],
                 ['username' => 'v3timingtester', 'password' => Illuminate\Support\Facades\Hash::make(Illuminate\Support\Str::random(32))]);

@@ -95,7 +95,9 @@ class GoldNrjTradingTest extends TestCase
     }
     public function test_standard_stock_does_not_fulfil_nrj_and_each_capacity_is_independent(): void {
         $bot=$this->bot('selling_main,import_main',999,0);$o=$this->order($bot);$this->start($bot,$o);
-        $this->assertSame('waiting_stock',$o->refresh()->delivery_phase);
+        $this->assertSame('waiting_customer',$o->refresh()->delivery_phase);
+        $this->signed('PUT',"/app/v3/gold-transactions/{$o->id}",['action'=>'phase','bot_id'=>$bot->id,
+            'gold_bar_template_id'=>2032,'phase'=>'waiting_stock','step_id'=>(string)Str::uuid(),'evidence'=>['confirmed'=>true,'no_effect'=>true]])->assertOk();
         $import=$this->order($bot,2032,'import',999);$this->start($bot,$import);
         $this->assertSame('waiting_customer',$import->refresh()->delivery_phase);
         $this->signed('GET','/app/v3/gold/bots')->assertOk()->assertJsonPath('data.0.nrj_receive_room',0)

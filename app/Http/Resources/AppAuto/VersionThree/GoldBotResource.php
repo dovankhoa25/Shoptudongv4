@@ -20,6 +20,7 @@ class GoldBotResource extends JsonResource {
             'radar_available'=>$stock['radar_available']??GoldTradingService::available($this->resource,template:281),
             'radar_receive_room'=>$stock['radar_receive_room']??GoldTradingService::receiveRoom($this->resource,template:281),
             'last_synced_at'=>$this->last_synced_at,
+            ...($this->resource->relationLoaded('tradingV3StockAck') ? $this->resource->getRelation('tradingV3StockAck') : []),
             'available'=>$stock['available']??GoldTradingService::available($this->resource),
             'receive_room'=>$stock['receive_room']??GoldTradingService::receiveRoom($this->resource),
             'nrj_available'=>$stock['nrj_available']??GoldTradingService::available($this->resource,template:2032),

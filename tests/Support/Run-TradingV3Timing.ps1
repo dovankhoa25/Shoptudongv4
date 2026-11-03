@@ -5,6 +5,7 @@ param(
     [Parameter(Mandatory)][string]$ReportDirectory,
     [ValidateSet('both','gift_ticket','gift_shop_interleave','concurrent_receipt')][string]$Methods='both',
     [ValidateRange(180,1800)][int]$MaximumSeconds=900,
+    [ValidateSet(6,7)][int]$LoginServer=6,
     [switch]$Preflight,
     [switch]$ResumeConcurrent,
     [string]$Php='D:\laragon\bin\php\php-8.3.30-Win32-vs16-x64\php.exe',
@@ -72,6 +73,7 @@ $settings=@{
     NRO_TRADING_V3_SMOKE_SECONDS=$MaximumSeconds.ToString()
     TRADING_TEST_BOT_USERNAME=$BotUsername;TRADING_TEST_BOT_PASSWORD=$BotPassword
     TRADING_TEST_CUSTOMERS_FILE=$CustomersCredentialPath
+    TRADING_TEST_LOGIN_SERVER=$LoginServer.ToString()
 }
 $redactions=@($BotUsername,$BotPassword,$settings.NRO_TRADING_V3_HMAC_SECRET,$settings.APP_KEY)
 foreach($customer in $customers){$redactions+=@([string]$customer.username,[string]$customer.password)}
@@ -85,7 +87,7 @@ try {
         if(-not $ResumeConcurrent){& $Php artisan migrate --force --no-interaction | Out-Null;if($LASTEXITCODE -ne 0){throw 'Isolated SQLite migration failed.'}}
         $seedOutput=if($ResumeConcurrent){& $Php tests/Support/trading-v3-timing.php restore 2>&1}else{& $Php tests/Support/trading-v3-timing.php seed 2>&1}
         [IO.File]::WriteAllText((Join-Path $fixtureRoot 'seed.log'),(& $redact ([string]($seedOutput -join [Environment]::NewLine))))
-        if($LASTEXITCODE -ne 0){throw 'Isolated SV6 fixture failed.'}
+        if($LASTEXITCODE -ne 0){throw 'Isolated game-server fixture failed.'}
     }finally{Pop-Location}
     $phpServer=Start-Process -FilePath $Php -ArgumentList @('-S',"127.0.0.1:$listenPort",'-t','public','tests/Support/trading-v3-timing-router.php') -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $fixtureRoot 'php.out') -RedirectStandardError (Join-Path $fixtureRoot 'php.err')
     $testHeaders=@{'X-Test-Key'=$settings.NRO_TRADING_V3_HMAC_SECRET;'Accept'='application/json'}

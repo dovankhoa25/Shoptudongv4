@@ -44,6 +44,10 @@ class GoldController extends Controller {
     public function updateTransfer(GoldTransferUpdateRequest $r,string $transfer,GoldTradingService $service) {
         return response()->json(['success'=>true,'ack_id'=>$r->input('step_id'),'data'=>$service->updateTransfer($transfer,$r->validated())]);
     }
+    public function transfer(Request $r,string $transfer,GoldTradingService $service) {
+        $r->validate(['worker_id'=>['nullable','uuid']]);
+        return response()->json(['success'=>true,'data'=>$service->transfer($transfer)]);
+    }
     public function activity(GoldActivityRequest $r,Bot $bot) {
         $data=$r->validated();
         $orderId=$data['order_id']??null;$notice=$data['customer_message']??null;

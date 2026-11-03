@@ -31,8 +31,7 @@ class GoldTradingService {
         return self::settledStockWait($order) || ($order->status==='processing'
             && $order->delivery_phase==='waiting_stock' && self::hasCheckpoint($order)
             && ($order->delivery_data['stock_transfer_settled']??false)===true
-            && !empty($order->delivery_data['last_step_id'])
-            && empty($order->delivery_data['stock_refresh_pending_step_id']));
+            && !empty($order->delivery_data['last_step_id']));
     }
     public static function activeTransfers(?int $botId=null): \Illuminate\Support\Collection {
         return InventoryMovement::where('transaction_type','gold_transfer')->where('movement_type','reservation')
@@ -130,18 +129,15 @@ class GoldTradingService {
         $bot=DB::transaction(function() use($id,$d) {
             $bot=Bot::whereKey($id)->lockForUpdate()->firstOrFail();
             $orders=GoldTransaction::where('bot_id',$id)->where('status','processing')->get();
-            $transfers=self::activeTransfers($id);
-            abort_if($transfers->isNotEmpty(),409,'Unfinished gold transfers must be reconciled first.');
-            foreach($orders as $order) abort_unless(self::passiveLegacyWait($order) || ($this->hasCheckpoint($order)
-                && (self::settledTransferWait($order) || !empty($order->delivery_data['stock_refresh_pending_step_id']))),409,'Stock correction requires a settled waiting-stock boundary.');
             if($bot->server?->gold_radar_enabled) { RadarTradingService::assertBot($bot,281); $this->assertRadarSnapshot($d); }
-            $this->applySnapshot($bot,$d,'sync_correction',null,null);
-            foreach($orders as $order) if(!empty($order->delivery_data['stock_refresh_pending_step_id'])) {
+            $ack=StockSnapshotAcknowledgement::inspect($bot,$d,['gold_qty','gold_bar_qty','nrj_gold_bar_qty','radar_qty','bag_capacity','bag_free_slots','name']);
+            if($ack['snapshot_applied'])$this->applySnapshot($bot,$d,'sync_correction',null,null);
+            foreach($orders as $order) if(!$ack['snapshot_stale'] && !empty($order->delivery_data['stock_refresh_pending_step_id'])) {
                 $data=$order->delivery_data;unset($data['stock_refresh_pending_step_id']);$order->forceFill(['delivery_data'=>$data])->save();
             }
-            return $bot->fresh(['server','loginServer']);
+            return $bot->fresh(['server','loginServer'])->setRelation('tradingV3StockAck',$ack);
         },3);
-        ApiCache::clearGroups(['public:bots']);return $bot;
+        if($bot->getRelation('tradingV3StockAck')['snapshot_applied'])ApiCache::clearGroups(['public:bots']);return $bot;
     }
     /** Settle already-confirmed predecessors and claim the next order atomically. */
     public function updateOrderWithReceipts(int $id,array $d): array {
@@ -235,13 +231,9 @@ class GoldTradingService {
                         abort_if($order->character_id && (int)$order->character_id!==$d['character_id'],409,'Customer character ID changed.');
                         if(!$order->character_id) {$order->character_id=$d['character_id'];$order->save();}
                     }
-                    if(self::settledStockWait($order)) {
-                        $this->assertCustomerBoundary($bot,$id);
-                        $this->assertCustomerRole($bot,$order);
-                        if($this->canFulfil($bot,$order)) {
-                            $data=$order->delivery_data;unset($data['stock_wait_settled']);
-                            $order->forceFill(['delivery_phase'=>'waiting_customer','delivery_data'=>$data])->save();
-                        }
+                    if(self::settledTransferWait($order)) {
+                        $data=$order->delivery_data;unset($data['stock_wait_settled'],$data['stock_transfer_settled']);
+                        $order->forceFill(['delivery_phase'=>'waiting_customer','delivery_data'=>$data])->save();
                     }
                     return $order;
                 }
@@ -249,15 +241,10 @@ class GoldTradingService {
                 RadarTradingService::assertBot($bot,$template);
                 $role=$order->type==='order'?'selling_main':'import_main';
                 abort_unless(in_array($role,self::types($bot),true) && in_array($order->type,['order','import'],true),422,'Bot role does not match order direction.');
-                $this->assertCustomerBoundary($bot,$id);
                 $terms=$this->validatedTerms($order);
-                $a=self::available($bot,$id,template:$template);
-                $nextBars=min($terms['bars'],GoldBarAsset::roundLimit($template));
-                if($template===281) $nextBars=min($nextBars,$order->type==='order'?$a['bars']:self::receiveRoom($bot,$id,template:$template));$nextPure=min($terms['pure'],2147483647);
-                $waiting=($template===281 && $nextBars===0) || ($order->type==='order' ? ($a['bars']<$nextBars || $a['pure']<$nextPure) : (self::receiveRoom($bot,$id,template:$template)<$nextBars));
                 abort_unless(!isset($d['phase']) || $d['phase']==='waiting_customer',422,'Invalid initial delivery phase.');
-                $order->forceFill(['bot_id'=>$bot->id,'status'=>'processing','character_id'=>$d['character_id']??null,'delivery_phase'=>$waiting?'waiting_stock':'waiting_customer',
-                    'delivery_data'=>['claim'=>$terms,'progress'=>['bars'=>0,'pure'=>0],...($waiting?['stock_wait_settled'=>true]:[])],
+                $order->forceFill(['bot_id'=>$bot->id,'status'=>'processing','character_id'=>$d['character_id']??null,'delivery_phase'=>'waiting_customer',
+                    'delivery_data'=>['claim'=>$terms,'progress'=>['bars'=>0,'pure'=>0]],
                     'processing_started_at'=>now(),'updated_by'=>'app'])->save();
                 return $order;
             }
@@ -270,7 +257,6 @@ class GoldTradingService {
                     && in_array($order->delivery_phase,['waiting_customer','trading','waiting_login'],true)
                     && !(int)($progress['bars']??0) && !(int)($progress['pure']??0)
                     && empty($order->delivery_data['last_step_id']) && !empty($d['evidence']['no_effect']),409,'Only a confirmed unapplied pre-delivery action can return to pending.');
-                abort_if(self::activeTransfers($bot->id)->isNotEmpty(),409,'Unfinished gold transfers must be reconciled first.');
                 abort_if(InventoryMovement::where('transaction_type','gold_transaction')->where('transaction_id',$id)
                     ->where('asset_type','pure_gold')->whereNotNull('idempotency_key')->exists(),409,'An acknowledged receipt must not be released.');
                 $data=$order->delivery_data??[];
@@ -286,11 +272,10 @@ class GoldTradingService {
                 $order->character_id=$d['character_id'];
             }
             if($d['action']==='phase') {
-                abort_if(self::activeTransfers($bot->id)->isNotEmpty(),409,'A reserved transfer must be settled first.');
                 $data=$order->delivery_data;
                 if($d['phase']==='waiting_stock') {
                     $progress=$data['progress']??[];
-                    abort_unless(empty($data['stock_refresh_pending_step_id']) && !empty($d['evidence']['confirmed'])
+                    abort_unless(!empty($d['evidence']['confirmed'])
                         && !empty($d['evidence']['no_effect']),409,'Stock waiting requires a confirmed no-effect boundary.');
                     if(!(int)($progress['bars']??0) && !(int)($progress['pure']??0) && empty($data['last_step_id'])) {
                         abort_if(InventoryMovement::where('transaction_type','gold_transaction')->where('transaction_id',$id)
@@ -303,9 +288,6 @@ class GoldTradingService {
                     }
                 }
                 if(in_array($d['phase'],['trading','waiting_customer'],true)) {
-                    $this->assertCustomerRole($bot,$order);
-                    $this->assertCustomerBoundary($bot,$id);
-                    if(self::settledStockWait($order) || self::passiveLegacyWait($order)) abort_unless($this->canFulfil($bot,$order),409,'Waiting order still lacks available stock or account room.');
                     unset($data['stock_wait_settled'],$data['stock_transfer_settled']);
                 }
                 $order->delivery_phase=$d['phase'];
@@ -320,7 +302,6 @@ class GoldTradingService {
             }
             abort_unless($order->character_id,422,'A verified customer character ID is required.');
             abort_if(self::settledStockWait($order),409,'A parked order must resume before a new delivery receipt.');
-            abort_if(self::activeTransfers($bot->id)->isNotEmpty(),409,'Receipt cannot overlap an unsettled transfer.');
             $bars=(int)$d['bars_qty'];$pure=(int)$d['pure_gold_qty'];$r=self::remaining($order);
             abort_if($template===281 && ($pure!==0 || $bars>20),422,'Radar receipts contain only radar, at most 20 slots.');
             abort_unless(($bars>0 || $pure>0) && $bars<=$r['bars'] && $pure<=$r['pure'],422,'Receipt exceeds remaining order quantities.');
@@ -408,6 +389,11 @@ class GoldTradingService {
     public function transferList(?string $worker=null): array {
         return self::activeTransfers()->map(fn($m)=>$this->transferResponse($m->meta))->values()->all();
     }
+    public function transfer(string $id): array {
+        $key='trading-v3:gold-transfer:'.$id;
+        $row=InventoryMovement::where('idempotency_key',$key)->firstOrFail();
+        return [...$this->transferResponse($row->meta),'replay_request'=>GoldTransferAcknowledgement::read($row->meta,$key)];
+    }
     public function updateTransfer(string $id,array $d): array {
         $d['pure_gold_qty']??=0;
         $result=DB::transaction(function() use($id,$d) {
@@ -420,6 +406,7 @@ class GoldTradingService {
             $template=GoldBarAsset::template($d['gold_bar_template_id']??457);
             $terms=['id'=>$id,'from_bot_id'=>$from->id,'to_bot_id'=>$to->id,'gold_bar_template_id'=>$template,
                 'server_id'=>(int)$from->server_id,'bars_qty'=>(int)$d['bars_qty'],'pure_gold_qty'=>(int)$d['pure_gold_qty']];
+            abort_unless(!isset($d['server_id']) || (int)$d['server_id']===$terms['server_id'],422,'Transfer business server differs.');
             if($row) {
                 $original=$row->meta;$original['gold_bar_template_id']??=457;
                 foreach($terms as $field=>$value)abort_unless(($original[$field]??null)===$value,409,'Transfer UUID was already used for different terms.');
@@ -429,6 +416,14 @@ class GoldTradingService {
                         && hash_equals((string)($row->meta['payload_hash']??''),$this->digest($d)),409,'Transfer is terminal or acknowledged body differs.');
                     return $row->meta;
                 }
+            } elseif(in_array($template,[457,2032],true) && $d['action']==='receipt' && ($d['evidence']['intent']['local_transfer']??false)===true) {
+                $direction=LocalGoldTransferReceipt::direction($d,$terms,$from,$to);
+                $meta=[...$terms,'status'=>'claimed','direction'=>$direction,'local_transfer'=>true,
+                    'from_before'=>$from->only(['gold_qty','gold_bar_qty','nrj_gold_bar_qty','radar_qty','stock_version']),
+                    'to_before'=>$to->only(['gold_qty','gold_bar_qty','nrj_gold_bar_qty','radar_qty','stock_version']),
+                    'created_at'=>now()->toIso8601String()];
+                $this->workflow($from,$key,'reservation',null,'gold_transfer',$meta);
+                $row=InventoryMovement::where('idempotency_key',$key)->lockForUpdate()->firstOrFail();
             } elseif($template===281 && $d['action']==='receipt') {
                 // Radar is decided and journaled locally by the single tool. No web claim/lease precedes the game trade.
                 $intent=$d['evidence']['intent']??[];
@@ -473,9 +468,11 @@ class GoldTradingService {
             if($d['action']==='cancel') {
                 abort_unless($d['evidence']['unchanged']??false,422,'Cancellation requires a confirmed unchanged game state.');
                 $field=GoldBarAsset::field($template);
-                foreach(['from_before'=>$from,'to_before'=>$to] as $prefix=>$b) abort_unless((int)$b->{$field}===($meta[$prefix][$field]??0)
-                    && (!$meta['pure_gold_qty'] || (int)$b->gold_qty===$meta[$prefix]['gold_qty'])
-                    && (int)$b->stock_version===$meta[$prefix]['stock_version'],409,'Reserved stock changed; reconcile transfer receipt.');
+                if(!GoldTransferFailureEvidence::confirmed($d,$terms,$from,$to)) {
+                    foreach(['from_before'=>$from,'to_before'=>$to] as $prefix=>$b) abort_unless((int)$b->{$field}===($meta[$prefix][$field]??0)
+                        && (!$meta['pure_gold_qty'] || (int)$b->gold_qty===$meta[$prefix]['gold_qty'])
+                        && (int)$b->stock_version===$meta[$prefix]['stock_version'],409,'Reserved stock changed; reconcile transfer receipt.');
+                }
                 $meta['status']='cancelled';
             } else {
                 $bars=$meta['bars_qty'];$pure=$meta['pure_gold_qty'];
@@ -487,13 +484,14 @@ class GoldTradingService {
                 $meta['status']='completed';
             }
             $meta['last_step_id']=$d['step_id'];$meta['last_action']=$d['action'];$meta['payload_hash']=$this->digest($d);$meta['completed_at']=now()->toIso8601String();
+            $meta['acknowledged_request']=GoldTransferAcknowledgement::request($d,$terms);
             $row->update(['meta'=>$meta]);return $meta;
         },3);
         ApiCache::clearGroups(['public:bots']);return $this->transferResponse($result);
     }
     private function transferResponse(array $data): array {
         $data['gold_bar_template_id']??=457;$data['gold_per_bar']=GoldBarAsset::value($data['gold_bar_template_id']);
-        return array_diff_key($data,array_flip(['processing_owner','processing_token']));
+        return array_diff_key($data,array_flip(['processing_owner','processing_token','acknowledged_request']));
     }
     private function assertTransferBoundary(Bot $bot): void {
         abort_if(self::activeTransfers($bot->id)->isNotEmpty(),409,'Bot already has a reserved transfer.');
